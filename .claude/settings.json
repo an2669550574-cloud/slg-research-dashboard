@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh api *)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(curl -s \"https://raw.githubusercontent.com/anthropics/skills/refs/heads/main/skills/frontend-design/SKILL.md\")",
+      "Read(//c/Users/admin/.claude/**)",
+      "WebFetch(domain:github.com)",
+      "Bash(curl -s \"https://raw.githubusercontent.com/obra/superpowers/main/CLAUDE.md\")",
+      "WebFetch(domain:api.github.com)",
+      "Bash(curl -s \"https://raw.githubusercontent.com/pytorch/pytorch/main/.claude/skills/skill-writer/SKILL.md\")"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\admin\\.claude"
+    ]
+  }
+}

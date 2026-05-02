@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/lib/api.ts","./src/lib/utils.ts","./src/pages/dashboard.tsx","./src/pages/gamedetail.tsx","./src/pages/materials.tsx","./src/pages/rankings.tsx"],"version":"5.9.3"}
