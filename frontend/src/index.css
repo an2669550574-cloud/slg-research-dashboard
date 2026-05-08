@@ -3,10 +3,70 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --bg-base: 3 7 18;
+    --bg-surface: 17 24 39;
+    --bg-elevated: 31 41 55;
+    --border-default: 31 41 55;
+    --text-primary: 249 250 251;
+    --text-secondary: 209 213 219;
+    --text-muted: 107 114 128;
+    --scrollbar-track: 17 24 39;
+    --scrollbar-thumb: 55 65 81;
+  }
+
+  :root[data-theme="light"] {
+    --bg-base: 248 250 252;
+    --bg-surface: 255 255 255;
+    --bg-elevated: 241 245 249;
+    --border-default: 226 232 240;
+    --text-primary: 15 23 42;
+    --text-secondary: 51 65 85;
+    --text-muted: 100 116 139;
+    --scrollbar-track: 241 245 249;
+    --scrollbar-thumb: 203 213 225;
+  }
+
   body {
-    @apply bg-gray-950 text-gray-100 antialiased;
+    background-color: rgb(var(--bg-base));
+    color: rgb(var(--text-primary));
+    @apply antialiased;
   }
   ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { @apply bg-gray-900; }
-  ::-webkit-scrollbar-thumb { @apply bg-gray-700 rounded-full; }
+  ::-webkit-scrollbar-track { background-color: rgb(var(--scrollbar-track)); }
+  ::-webkit-scrollbar-thumb {
+    background-color: rgb(var(--scrollbar-thumb));
+    @apply rounded-full;
+  }
+}
+
+/*
+ * 兼容层：组件里大量 hardcoded gray-XXX 类，未逐个替换。
+ * 这里在 light 主题下批量重写它们的颜色，保证切换主题立即生效。
+ * 如果未来彻底替换为 surface/base/elevated/border-default token，可以删掉本段。
+ */
+:root[data-theme="light"] {
+  & .bg-gray-950 { background-color: rgb(248 250 252) !important; }
+  & .bg-gray-900 { background-color: rgb(255 255 255) !important; }
+  & .bg-gray-800 { background-color: rgb(241 245 249) !important; }
+  & .bg-gray-800\/50 { background-color: rgb(241 245 249 / 0.7) !important; }
+  & .bg-gray-700 { background-color: rgb(226 232 240) !important; }
+  & .hover\:bg-gray-800:hover { background-color: rgb(241 245 249) !important; }
+  & .hover\:bg-gray-800\/50:hover { background-color: rgb(241 245 249 / 0.6) !important; }
+  & .hover\:bg-gray-700:hover { background-color: rgb(203 213 225) !important; }
+  & .hover\:bg-gray-600:hover { background-color: rgb(203 213 225) !important; }
+
+  & .border-gray-800 { border-color: rgb(226 232 240) !important; }
+  & .border-gray-700 { border-color: rgb(203 213 225) !important; }
+  & .hover\:border-gray-700:hover { border-color: rgb(148 163 184) !important; }
+  & .divide-gray-800 > :not([hidden]) ~ :not([hidden]) { border-color: rgb(226 232 240) !important; }
+
+  & .text-white { color: rgb(15 23 42) !important; }
+  & .text-gray-100 { color: rgb(15 23 42) !important; }
+  & .text-gray-300 { color: rgb(51 65 85) !important; }
+  & .text-gray-400 { color: rgb(71 85 105) !important; }
+  & .text-gray-500 { color: rgb(100 116 139) !important; }
+  & .text-gray-600 { color: rgb(148 163 184) !important; }
+  & .placeholder-gray-500::placeholder { color: rgb(148 163 184) !important; }
+  & .hover\:text-white:hover { color: rgb(15 23 42) !important; }
 }
