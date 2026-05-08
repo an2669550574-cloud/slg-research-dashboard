@@ -4,13 +4,17 @@
 #   - SLG_DOMAIN=example.com → real Let's Encrypt cert
 #   - SLG_DOMAIN=localhost   → Caddy local CA (only trusted on this machine)
 #
+# Custom HTTPS port (when 443 is taken by something else, e.g. a proxy panel):
+#   - SLG_HTTPS_PORT=8443 → site served on https://example.com:8443
+#                            (port 80 still required for ACME HTTP-01 challenge)
+#
 # Variables come from docker-compose.prod.yml environment.
 
 {
 	email {$SLG_TLS_EMAIL}
 }
 
-{$SLG_DOMAIN} {
+{$SLG_DOMAIN}:{$SLG_HTTPS_PORT} {
 	encode gzip zstd
 
 	# Security headers

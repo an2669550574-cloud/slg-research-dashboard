@@ -4,7 +4,9 @@
 #   1) Create .env at repo root with SLG_DOMAIN / SLG_TLS_EMAIL / API_KEY etc.
 #   2) docker compose -f docker-compose.prod.yml --env-file .env up -d --build
 #
-# Exposes 80/443 only; backend & frontend stay on internal network.
+# Default exposes 80/443. If 443 is already taken on the host (e.g. by an
+# existing proxy panel), set SLG_HTTPS_PORT=8443 in .env to bind a non-standard
+# HTTPS port instead. Port 80 is still needed for Let's Encrypt validation.
 version: "3.9"
 
 services:
@@ -14,7 +16,7 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
-      - "443:443"
+      - "${SLG_HTTPS_PORT:-443}:${SLG_HTTPS_PORT:-443}"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -22,6 +24,7 @@ services:
     environment:
       - SLG_DOMAIN=${SLG_DOMAIN:-localhost}
       - SLG_TLS_EMAIL=${SLG_TLS_EMAIL:-internal}
+      - SLG_HTTPS_PORT=${SLG_HTTPS_PORT:-443}
     depends_on:
       - frontend
       - backend
@@ -37,7 +40,8 @@ services:
       - DATABASE_URL=sqlite+aiosqlite:////app/data/slg_research.db
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - API_KEY=${API_KEY:?API_KEY is required in production}
-      - CORS_ORIGINS=${CORS_ORIGINS:-https://${SLG_DOMAIN}}
+      # 没显式配 CORS_ORIGINS 时按 SLG_DOMAIN + 端口拼一个；非 443 端口需要把端口写进去
+      - CORS_ORIGINS=${CORS_ORIGINS:-https://${SLG_DOMAIN}:${SLG_HTTPS_PORT:-443}}
       - RATE_LIMIT_DEFAULT=${RATE_LIMIT_DEFAULT:-120/minute}
     volumes:
       - ./data:/app/data
