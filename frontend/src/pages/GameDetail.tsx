@@ -1,46 +1,153 @@
 import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import toast from 'react-hot-toast'
 import { gamesApi, historyApi, materialsApi } from '../lib/api'
 import { formatNumber, formatRevenue, EVENT_TYPE_CONFIG, PLATFORM_CONFIG } from '../lib/utils'
+import { downloadCsv } from '../lib/csv'
+import { useT } from '../i18n'
 import {
-  ArrowLeft, RefreshCw, Plus, Trash2, ExternalLink,
-  ChevronDown, ChevronUp, Loader2
+  ArrowLeft, RefreshCw, Plus, Trash2, ExternalLink, Download as DownloadIcon, Loader2
 } from 'lucide-react'
-import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, LineChart, Line
-} from 'recharts'
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
-// ── Timeline ──────────────────────────────────────────────────────────────────
+const EMPTY_EVENT = { event_date: '', event_type: 'version', title: '', description: '' }
+
+function eventTypeLabel(t: ReturnType<typeof useT>, kind: string): string {
+  return t.events[kind as keyof typeof t.events] || kind
+}
+
 function Timeline({ appId }: { appId: string }) {
+  const t = useT()
   const qc = useQueryClient()
+  const [showForm, setShowForm] = useState(false)
+  const [form, setForm] = useState(EMPTY_EVENT)
+
   const { data: events = [], isLoading } = useQuery({
     queryKey: ['history', appId],
     queryFn: () => historyApi.get(appId),
   })
   const syncMut = useMutation({
     mutationFn: () => historyApi.sync(appId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['history', appId] }),
+    onSuccess: (data: any) => {
+      qc.invalidateQueries({ queryKey: ['history', appId] })
+      toast.success(data?.message || t.gameDetail.aiSyncedToast)
+    },
   })
   const deleteMut = useMutation({
     mutationFn: (id: number) => historyApi.delete(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['history', appId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['history', appId] })
+      toast.success(t.gameDetail.eventDeletedToast)
+    },
   })
+  const createMut = useMutation({
+    mutationFn: (data: any) => historyApi.create(data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['history', appId] })
+      setShowForm(false)
+      setForm(EMPTY_EVENT)
+      toast.success(t.gameDetail.eventAddedToast)
+    },
+  })
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    createMut.mutate({ ...form, app_id: appId, source: 'manual' })
+  }
 
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-sm font-semibold text-gray-300">发展历程</h2>
-        <button
-          onClick={() => syncMut.mutate()}
-          disabled={syncMut.isPending}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 rounded-lg text-xs text-white transition-colors"
-        >
-          {syncMut.isPending ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-          AI 自动同步
-        </button>
+        <h2 className="text-sm font-semibold text-gray-300">{t.gameDetail.timelineTitle}</h2>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              if (events.length === 0) { toast.error(t.gameDetail.timelineExportEmpty); return }
+              downloadCsv(`timeline-${appId}.csv`, events, [
+                { header: t.csv.date, get: (e: any) => e.event_date },
+                { header: t.csv.type, get: (e: any) => eventTypeLabel(t, e.event_type) },
+                { header: t.csv.title, get: (e: any) => e.title },
+                { header: t.csv.description, get: (e: any) => e.description },
+                { header: t.csv.source, get: (e: any) => e.source },
+              ])
+              toast.success(t.common.exported(events.length))
+            }}
+            className="flex items-center gap-1.5 px-2 py-1.5 text-gray-400 hover:text-white text-xs transition-colors"
+            title={t.common.export}
+          >
+            <DownloadIcon size={12} />
+          </button>
+          <button
+            onClick={() => setShowForm(s => !s)}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs text-white transition-colors"
+          >
+            <Plus size={12} />
+            {t.gameDetail.addEventButton}
+          </button>
+          <button
+            onClick={() => syncMut.mutate()}
+            disabled={syncMut.isPending}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 rounded-lg text-xs text-white transition-colors"
+          >
+            {syncMut.isPending ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+            {t.gameDetail.aiSyncButton}
+          </button>
+        </div>
       </div>
+
+      {showForm && (
+        <form onSubmit={handleSubmit} className="bg-gray-800 rounded-xl p-4 mb-4 space-y-3 border border-gray-700">
+          <div className="grid grid-cols-2 gap-3">
+            <input
+              required
+              type="date"
+              value={form.event_date}
+              onChange={e => setForm(f => ({ ...f, event_date: e.target.value }))}
+              className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand-500"
+            />
+            <select
+              value={form.event_type}
+              onChange={e => setForm(f => ({ ...f, event_type: e.target.value }))}
+              className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand-500"
+            >
+              {Object.keys(EVENT_TYPE_CONFIG).map(k => (
+                <option key={k} value={k}>{eventTypeLabel(t, k)}</option>
+              ))}
+            </select>
+            <input
+              required
+              placeholder={t.gameDetail.eventTitle}
+              value={form.title}
+              onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
+              className="col-span-2 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-brand-500"
+            />
+            <textarea
+              rows={3}
+              placeholder={t.gameDetail.eventDescription}
+              value={form.description}
+              onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+              className="col-span-2 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-brand-500 resize-none"
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => { setShowForm(false); setForm(EMPTY_EVENT) }}
+              className="px-3 py-1.5 text-sm text-gray-400 hover:text-white"
+            >
+              {t.common.cancel}
+            </button>
+            <button
+              type="submit"
+              disabled={createMut.isPending}
+              className="px-4 py-1.5 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 rounded-lg text-sm text-white transition-colors"
+            >
+              {createMut.isPending ? t.common.saving : t.common.save}
+            </button>
+          </div>
+        </form>
+      )}
 
       {isLoading ? (
         <div className="space-y-4">
@@ -56,20 +163,20 @@ function Timeline({ appId }: { appId: string }) {
         </div>
       ) : events.length === 0 ? (
         <div className="py-12 text-center">
-          <p className="text-gray-600 text-sm mb-3">暂无历程数据</p>
+          <p className="text-gray-600 text-sm mb-3">{t.gameDetail.timelineEmpty}</p>
           <button
             onClick={() => syncMut.mutate()}
             disabled={syncMut.isPending}
             className="text-brand-500 text-sm hover:text-brand-400"
           >
-            点击 AI 自动同步 →
+            {t.gameDetail.timelineEmptyHint}
           </button>
         </div>
       ) : (
         <div className="relative">
           <div className="absolute left-[5.5rem] top-0 bottom-0 w-px bg-gray-800" />
           <div className="space-y-0">
-            {events.map((e: any, i: number) => {
+            {events.map((e: any) => {
               const cfg = EVENT_TYPE_CONFIG[e.event_type] || EVENT_TYPE_CONFIG.version
               return (
                 <div key={e.id} className="flex gap-4 group pb-6">
@@ -81,7 +188,7 @@ function Timeline({ appId }: { appId: string }) {
                     <div className="flex-1 bg-gray-800/50 rounded-xl p-3 border border-gray-800 hover:border-gray-700 transition-colors">
                       <div className="flex items-start justify-between gap-2">
                         <div>
-                          <span className={`text-xs font-medium ${cfg.color} mr-2`}>{cfg.label}</span>
+                          <span className={`text-xs font-medium ${cfg.color} mr-2`}>{eventTypeLabel(t, e.event_type)}</span>
                           <span className="text-sm font-medium text-white">{e.title}</span>
                         </div>
                         <button
@@ -106,8 +213,8 @@ function Timeline({ appId }: { appId: string }) {
   )
 }
 
-// ── Materials ─────────────────────────────────────────────────────────────────
 function MaterialsPanel({ appId }: { appId: string }) {
+  const t = useT()
   const qc = useQueryClient()
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ title: '', url: '', platform: 'youtube', material_type: 'video', tags: '', notes: '' })
@@ -118,68 +225,78 @@ function MaterialsPanel({ appId }: { appId: string }) {
   })
   const createMut = useMutation({
     mutationFn: (data: any) => materialsApi.create(data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['materials', appId] }); setShowForm(false); setForm({ title: '', url: '', platform: 'youtube', material_type: 'video', tags: '', notes: '' }) },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['materials', appId] })
+      setShowForm(false)
+      setForm({ title: '', url: '', platform: 'youtube', material_type: 'video', tags: '', notes: '' })
+      toast.success(t.gameDetail.addedMaterialToast)
+    },
   })
   const deleteMut = useMutation({
     mutationFn: (id: number) => materialsApi.delete(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['materials', appId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['materials', appId] })
+      toast.success(t.gameDetail.deletedMaterialToast)
+    },
   })
+
+  const typeLabel = (kind: string) => t.materials.types[kind as keyof typeof t.materials.types] || kind
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    createMut.mutate({ ...form, app_id: appId, tags: form.tags ? form.tags.split(',').map(t => t.trim()) : [] })
+    createMut.mutate({ ...form, app_id: appId, tags: form.tags ? form.tags.split(',').map((s: string) => s.trim()) : [] })
   }
 
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-sm font-semibold text-gray-300">素材库</h2>
+        <h2 className="text-sm font-semibold text-gray-300">{t.gameDetail.materialsTitle}</h2>
         <button
           onClick={() => setShowForm(!showForm)}
           className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs text-white transition-colors"
         >
           <Plus size={12} />
-          添加素材
+          {t.materials.addMaterial}
         </button>
       </div>
 
       {showForm && (
         <form onSubmit={handleSubmit} className="bg-gray-800 rounded-xl p-4 mb-4 space-y-3 border border-gray-700">
           <div className="grid grid-cols-2 gap-3">
-            <input required placeholder="素材标题 *" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
+            <input required placeholder={t.materials.titlePlaceholder} value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
               className="col-span-2 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-brand-500" />
-            <input required placeholder="链接 URL *" value={form.url} onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
+            <input required placeholder={t.materials.urlPlaceholder} value={form.url} onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
               className="col-span-2 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-brand-500" />
             <select value={form.platform} onChange={e => setForm(f => ({ ...f, platform: e.target.value }))}
               className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand-500">
               <option value="youtube">YouTube</option>
               <option value="tiktok">TikTok</option>
               <option value="meta">Meta Ads</option>
-              <option value="other">其他</option>
+              <option value="other">{t.materials.platforms.other}</option>
             </select>
             <select value={form.material_type} onChange={e => setForm(f => ({ ...f, material_type: e.target.value }))}
               className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand-500">
-              <option value="video">视频</option>
-              <option value="image">图片</option>
-              <option value="playable">试玩广告</option>
+              <option value="video">{t.materials.types.video}</option>
+              <option value="image">{t.materials.types.image}</option>
+              <option value="playable">{t.materials.types.playable}</option>
             </select>
-            <input placeholder="标签（逗号分隔）" value={form.tags} onChange={e => setForm(f => ({ ...f, tags: e.target.value }))}
+            <input placeholder={t.materials.tagsPlaceholder} value={form.tags} onChange={e => setForm(f => ({ ...f, tags: e.target.value }))}
               className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-brand-500" />
-            <input placeholder="备注" value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+            <input placeholder={t.materials.notesPlaceholder} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
               className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-brand-500" />
           </div>
           <div className="flex justify-end gap-2">
-            <button type="button" onClick={() => setShowForm(false)} className="px-3 py-1.5 text-sm text-gray-400 hover:text-white">取消</button>
+            <button type="button" onClick={() => setShowForm(false)} className="px-3 py-1.5 text-sm text-gray-400 hover:text-white">{t.common.cancel}</button>
             <button type="submit" disabled={createMut.isPending}
               className="px-4 py-1.5 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 rounded-lg text-sm text-white transition-colors">
-              {createMut.isPending ? '保存中...' : '保存'}
+              {createMut.isPending ? t.common.saving : t.common.save}
             </button>
           </div>
         </form>
       )}
 
       {materials.length === 0 ? (
-        <div className="py-10 text-center text-gray-600 text-sm">暂无素材，点击"添加素材"开始收集</div>
+        <div className="py-10 text-center text-gray-600 text-sm">{t.materials.emptyHint}</div>
       ) : (
         <div className="space-y-2">
           {materials.map((m: any) => {
@@ -190,14 +307,14 @@ function MaterialsPanel({ appId }: { appId: string }) {
                   <div className="flex items-center gap-2 mb-0.5">
                     <span className={`text-xs font-medium ${platCfg.color}`}>{platCfg.label}</span>
                     <span className="text-xs text-gray-600">·</span>
-                    <span className="text-xs text-gray-500">{m.material_type === 'video' ? '视频' : m.material_type === 'image' ? '图片' : '试玩广告'}</span>
+                    <span className="text-xs text-gray-500">{typeLabel(m.material_type)}</span>
                   </div>
                   <div className="text-sm font-medium text-white truncate">{m.title}</div>
                   {m.notes && <div className="text-xs text-gray-500 mt-0.5 truncate">{m.notes}</div>}
                   {m.tags?.length > 0 && (
                     <div className="flex gap-1 mt-1.5 flex-wrap">
-                      {m.tags.map((t: string) => (
-                        <span key={t} className="px-1.5 py-0.5 bg-gray-700 rounded text-xs text-gray-400">{t}</span>
+                      {m.tags.map((tag: string) => (
+                        <span key={tag} className="px-1.5 py-0.5 bg-gray-700 rounded text-xs text-gray-400">{tag}</span>
                       ))}
                     </div>
                   )}
@@ -222,15 +339,26 @@ function MaterialsPanel({ appId }: { appId: string }) {
   )
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
+type RangeMode = { kind: 'preset'; days: number } | { kind: 'custom'; start: string; end: string }
+
 export default function GameDetail() {
   const { appId } = useParams<{ appId: string }>()
   const navigate = useNavigate()
-  const [days, setDays] = useState(30)
+  const t = useT()
+  const [range, setRange] = useState<RangeMode>({ kind: 'preset', days: 30 })
+  const [showCustom, setShowCustom] = useState(false)
+  const today = new Date().toISOString().slice(0, 10)
+  const monthAgo = new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10)
+  const [customStart, setCustomStart] = useState(monthAgo)
+  const [customEnd, setCustomEnd] = useState(today)
+
+  const queryParams = range.kind === 'preset'
+    ? { days: range.days }
+    : { start_date: range.start, end_date: range.end }
 
   const { data: metrics, isLoading: metricsLoading } = useQuery({
-    queryKey: ['metrics', appId, days],
-    queryFn: () => gamesApi.metrics(appId!, days),
+    queryKey: ['metrics', appId, range],
+    queryFn: () => gamesApi.metrics(appId!, queryParams),
     enabled: !!appId,
   })
 
@@ -242,14 +370,20 @@ export default function GameDetail() {
   const game = rankings?.find((g: any) => g.app_id === appId)
 
   const chartTooltipStyle = {
-    contentStyle: { background: '#111827', border: '1px solid #374151', borderRadius: 8 },
-    labelStyle: { color: '#f9fafb' },
+    contentStyle: { background: 'rgb(var(--bg-elevated))', border: '1px solid rgb(var(--border-default))', borderRadius: 8 },
+    labelStyle: { color: 'rgb(var(--text-primary))' },
   }
+
+  const chartCards = [
+    { key: 'revenue' as const, dataKey: 'value', label: t.gameDetail.chartRevenue, color: '#8b5cf6', formatter: (v: any) => formatRevenue(v) },
+    { key: 'downloads' as const, dataKey: 'value', label: t.gameDetail.chartDownloads, color: '#10b981', formatter: (v: any) => formatNumber(v) },
+    { key: 'rankings' as const, dataKey: 'rank', label: t.gameDetail.chartRanking, color: '#f59e0b', formatter: (v: any) => `#${v}` },
+  ]
 
   return (
     <div className="p-6 space-y-6">
       <button onClick={() => navigate(-1)} className="flex items-center gap-2 text-sm text-gray-400 hover:text-white transition-colors">
-        <ArrowLeft size={16} /> 返回
+        <ArrowLeft size={16} /> {t.common.back}
       </button>
 
       {game && (
@@ -262,33 +396,69 @@ export default function GameDetail() {
             <h1 className="text-xl font-bold text-white">{game.name}</h1>
             <p className="text-gray-500 text-sm mt-0.5">{game.publisher}</p>
             <div className="flex items-center gap-3 mt-2">
-              <span className="text-xs text-yellow-400 font-medium">排名 #{game.rank}</span>
-              <span className="text-xs text-emerald-400">{formatRevenue(game.revenue)} / 今日</span>
-              <span className="text-xs text-gray-400">{formatNumber(game.downloads)} 下载</span>
+              <span className="text-xs text-yellow-400 font-medium">{t.gameDetail.rankPrefix} #{game.rank}</span>
+              <span className="text-xs text-emerald-400">{formatRevenue(game.revenue)} / {t.gameDetail.today}</span>
+              <span className="text-xs text-gray-400">{formatNumber(game.downloads)} {t.dashboard.downloadsSuffix}</span>
             </div>
           </div>
         </div>
       )}
 
-      <div className="flex gap-2">
-        {[7, 30, 90].map(d => (
-          <button key={d} onClick={() => setDays(d)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${days === d ? 'bg-brand-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}>
-            {d} 天
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center gap-2">
+        {[7, 30, 90].map(d => {
+          const active = range.kind === 'preset' && range.days === d
+          return (
+            <button key={d}
+              onClick={() => { setRange({ kind: 'preset', days: d }); setShowCustom(false) }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${active ? 'bg-brand-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}>
+              {t.common.days(d)}
+            </button>
+          )
+        })}
+        <button
+          onClick={() => setShowCustom(s => !s)}
+          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${range.kind === 'custom' ? 'bg-brand-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
+        >
+          {t.common.custom}{range.kind === 'custom' ? `: ${range.start} → ${range.end}` : ''}
+        </button>
+        {showCustom && (
+          <div className="flex items-center gap-2 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5">
+            <input
+              type="date"
+              value={customStart}
+              max={customEnd}
+              onChange={e => setCustomStart(e.target.value)}
+              className="bg-transparent text-xs text-white focus:outline-none"
+            />
+            <span className="text-gray-500 text-xs">→</span>
+            <input
+              type="date"
+              value={customEnd}
+              min={customStart}
+              max={today}
+              onChange={e => setCustomEnd(e.target.value)}
+              className="bg-transparent text-xs text-white focus:outline-none"
+            />
+            <button
+              onClick={() => {
+                if (!customStart || !customEnd) { toast.error(t.common.pickRange); return }
+                setRange({ kind: 'custom', start: customStart, end: customEnd })
+                setShowCustom(false)
+              }}
+              className="px-2 py-1 bg-brand-600 hover:bg-brand-700 rounded text-xs text-white"
+            >
+              {t.common.apply}
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-3 gap-4">
-        {[
-          { key: 'revenue', label: '收入趋势（$）', color: '#8b5cf6', formatter: (v: any) => formatRevenue(v) },
-          { key: 'downloads', label: '下载量趋势', color: '#10b981', formatter: (v: any) => formatNumber(v) },
-          { key: 'rankings', label: '排名趋势（越低越好）', color: '#f59e0b', formatter: (v: any) => `#${v}` },
-        ].map(({ key, label, color, formatter }) => (
+        {chartCards.map(({ key, dataKey, label, color, formatter }) => (
           <div key={key} className="bg-gray-900 border border-gray-800 rounded-xl p-4">
             <h3 className="text-xs font-medium text-gray-400 mb-3">{label}</h3>
             {metricsLoading ? (
-              <div className="h-28 flex items-center justify-center text-gray-600 text-xs">加载中...</div>
+              <div className="h-28 flex items-center justify-center text-gray-600 text-xs">{t.common.loading}</div>
             ) : (
               <ResponsiveContainer width="100%" height={110}>
                 <AreaChart data={metrics?.[key] || []} margin={{ top: 0, right: 0, left: -30, bottom: 0 }}>
@@ -302,7 +472,7 @@ export default function GameDetail() {
                   <XAxis dataKey="date" tick={false} />
                   <YAxis tick={{ fill: '#4b5563', fontSize: 10 }} reversed={key === 'rankings'} />
                   <Tooltip {...chartTooltipStyle} formatter={(v: any) => [formatter(v), label]} />
-                  <Area type="monotone" dataKey="value" stroke={color} strokeWidth={2}
+                  <Area type="monotone" dataKey={dataKey} stroke={color} strokeWidth={2}
                     fill={`url(#grad-${key})`} dot={false} />
                 </AreaChart>
               </ResponsiveContainer>
