@@ -1,0 +1,40 @@
+# Caddy v2 configuration for SLG Research Dashboard.
+#
+# Auto HTTPS:
+#   - SLG_DOMAIN=example.com → real Let's Encrypt cert
+#   - SLG_DOMAIN=localhost   → Caddy local CA (only trusted on this machine)
+#
+# Variables come from docker-compose.prod.yml environment.
+
+{
+	email {$SLG_TLS_EMAIL}
+}
+
+{$SLG_DOMAIN} {
+	encode gzip zstd
+
+	# Security headers
+	header {
+		# Allow images from CDN sources used by iTunes
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		X-Frame-Options DENY
+		# 不暴露 Caddy 版本
+		-Server
+	}
+
+	# API → backend container（FastAPI 路由挂在 /api/*，所以保留前缀，用 handle 而非 handle_path）
+	handle /api/* {
+		reverse_proxy backend:8000 {
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
+	# 其它路径都交给前端 nginx 容器（已含 SPA fallback）
+	handle {
+		reverse_proxy frontend:80
+	}
+}

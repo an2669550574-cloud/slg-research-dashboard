@@ -1,0 +1,73 @@
+# Production stack with Caddy as front door (auto HTTPS via Let's Encrypt).
+#
+# Usage:
+#   1) Create .env at repo root with SLG_DOMAIN / SLG_TLS_EMAIL / API_KEY etc.
+#   2) docker compose -f docker-compose.prod.yml --env-file .env up -d --build
+#
+# Exposes 80/443 only; backend & frontend stay on internal network.
+version: "3.9"
+
+services:
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: slg_caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      - SLG_DOMAIN=${SLG_DOMAIN:-localhost}
+      - SLG_TLS_EMAIL=${SLG_TLS_EMAIL:-internal}
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - slg_net
+
+  backend:
+    build: ./backend
+    container_name: slg_backend
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:////app/data/slg_research.db
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - API_KEY=${API_KEY:?API_KEY is required in production}
+      - CORS_ORIGINS=${CORS_ORIGINS:-https://${SLG_DOMAIN}}
+      - RATE_LIMIT_DEFAULT=${RATE_LIMIT_DEFAULT:-120/minute}
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - slg_net
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # 注入到 Vite 构建产物中，作为 axios 默认头
+        VITE_API_KEY: ${API_KEY}
+    container_name: slg_frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - slg_net
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  slg_net:
+    driver: bridge

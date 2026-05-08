@@ -22,6 +22,14 @@ backend/*.sqlite
 # Logs
 *.log
 
+# Backups
+backups/
+data/
+
+# Caddy state（生产挂载到容器卷，本地不应入仓）
+caddy_data/
+caddy_config/
+
 # OS
 .DS_Store
 Thumbs.db
