@@ -1,7 +1,11 @@
+import logging
 import httpx
 import random
 from datetime import datetime, timedelta
 from app.config import settings
+from app.cache import sensor_tower_cache
+
+logger = logging.getLogger(__name__)
 
 MOCK_SLG_GAMES = [
     {"app_id": "com.lilithgames.rok", "name": "Rise of Kingdoms", "publisher": "Lilith Games", "icon_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/c4/6e/2b/c46e2b1f-1c97-3b53-5b76-b9e6a3e06f44/AppIcon-0-0-1x_U007emarketing-0-0-0-7-0-0-sRGB-0-0-0-GLES2_U002c0-512MB-85-220-0-0.png/512x512bb.jpg", "platform": "ios", "release_date": "2018-09-17"},
@@ -14,117 +18,158 @@ MOCK_SLG_GAMES = [
     {"app_id": "com.machines.atwar", "name": "Whiteout Survival", "publisher": "Century Games", "icon_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/f2/6a/22/f26a22b1-d4c1-af5d-f23e-a2c53a8e4741/AppIcon-0-0-1x_U007emarketing-0-0-0-7-0-0-sRGB-0-0-0-GLES2_U002c0-512MB-85-220-0-0.png/512x512bb.jpg", "platform": "ios", "release_date": "2022-02-17"},
 ]
 
-def _mock_trend(base: float, days: int, volatility: float = 0.1) -> list[dict]:
-    result = []
+HTTP_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
+
+
+def _date_range(start: datetime, end: datetime) -> list[str]:
+    days = max(1, (end.date() - start.date()).days + 1)
+    return [(start + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
+
+
+def _resolve_window(days: int, start_date: str | None, end_date: str | None) -> list[str]:
+    """根据 days 或显式 start/end 返回日期序列（升序）。"""
+    if start_date and end_date:
+        start = datetime.strptime(start_date, "%Y-%m-%d")
+        end = datetime.strptime(end_date, "%Y-%m-%d")
+        if end < start:
+            start, end = end, start
+        return _date_range(start, end)
+    end = datetime.now()
+    start = end - timedelta(days=days - 1)
+    return _date_range(start, end)
+
+
+def _mock_trend(base: float, days: int, start_date: str | None = None, end_date: str | None = None, volatility: float = 0.1) -> list[dict]:
+    dates = _resolve_window(days, start_date, end_date)
     value = base
-    for i in range(days):
-        date = (datetime.now() - timedelta(days=days - i)).strftime("%Y-%m-%d")
+    result = []
+    for d in dates:
         value = value * (1 + random.uniform(-volatility, volatility))
-        result.append({"date": date, "value": round(value, 0)})
+        result.append({"date": d, "value": round(value, 0)})
     return result
 
-def _mock_rankings(days: int = 30) -> list[dict]:
-    result = []
-    for game in MOCK_SLG_GAMES:
-        base_rank = random.randint(1, 50)
-        for i in range(days):
-            date = (datetime.now() - timedelta(days=days - i)).strftime("%Y-%m-%d")
-            rank = max(1, base_rank + random.randint(-5, 5))
-            result.append({
-                "app_id": game["app_id"],
-                "name": game["name"],
-                "date": date,
-                "rank": rank,
-                "downloads": round(random.uniform(5000, 80000), 0),
-                "revenue": round(random.uniform(50000, 2000000), 0),
-            })
-    return result
+
+def _mock_rank_series(days: int, start_date: str | None = None, end_date: str | None = None) -> list[dict]:
+    dates = _resolve_window(days, start_date, end_date)
+    base_rank = random.randint(1, 30)
+    return [{"date": d, "rank": max(1, base_rank + random.randint(-3, 3))} for d in dates]
+
+
+def _mock_today_rankings() -> list[dict]:
+    today = datetime.now().strftime("%Y-%m-%d")
+    return [
+        {
+            "app_id": g["app_id"],
+            "name": g["name"],
+            "publisher": g["publisher"],
+            "icon_url": g["icon_url"],
+            "rank": i + 1,
+            "downloads": round(random.uniform(5000, 80000), 0),
+            "revenue": round(random.uniform(50000, 2000000), 0),
+            "date": today,
+        }
+        for i, g in enumerate(MOCK_SLG_GAMES)
+    ]
+
 
 class SensorTowerService:
     def __init__(self):
         self.use_mock = settings.USE_MOCK_DATA or not settings.SENSOR_TOWER_API_KEY
         self.headers = {"Authorization": f"Bearer {settings.SENSOR_TOWER_API_KEY}"} if settings.SENSOR_TOWER_API_KEY else {}
+        # mock 数据每次都是 random，不缓存（否则永远不变）。真实请求才缓存。
+        self.cache_ttl = settings.SENSOR_TOWER_CACHE_TTL
+
+    async def _get(self, path: str, params: dict) -> dict:
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+            resp = await client.get(
+                f"{settings.SENSOR_TOWER_BASE_URL}{path}",
+                params=params,
+                headers=self.headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def _cached_get(self, cache_key: str, path: str, params: dict, fallback) -> list[dict]:
+        """真实请求走缓存 + single-flight；失败/网络错时降级到 fallback()。"""
+        async def loader():
+            data = await self._get(path, params)
+            # 顶层结构因端点不同而异，由调用方在 fallback 之前解析。这里只缓存 .json() 原始 dict
+            return data
+        try:
+            return await sensor_tower_cache.get_or_set(cache_key, self.cache_ttl, loader)
+        except (httpx.HTTPError, ValueError) as e:
+            logger.warning("Sensor Tower fetch failed (%s), falling back: %s", cache_key, e)
+            return fallback()
 
     async def get_top_slg_games(self, country: str = "US", platform: str = "ios", limit: int = 20) -> list[dict]:
         if self.use_mock:
             return MOCK_SLG_GAMES[:limit]
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{settings.SENSOR_TOWER_BASE_URL}/v1/{platform}/category/top_apps",
-                params={"category": "6014", "country": country, "limit": limit},
-                headers=self.headers,
-            )
-            resp.raise_for_status()
-            return resp.json().get("apps", [])
+        key = f"top:{platform}:{country}:{limit}"
+        data = await self._cached_get(
+            key,
+            f"/v1/{platform}/category/top_apps",
+            {"category": "6014", "country": country, "limit": limit},
+            fallback=lambda: {"apps": MOCK_SLG_GAMES[:limit]},
+        )
+        return data.get("apps", [])
 
-    async def get_rankings(self, app_id: str, country: str = "US", platform: str = "ios", days: int = 30) -> list[dict]:
-        if self.use_mock:
-            game = next((g for g in MOCK_SLG_GAMES if g["app_id"] == app_id), MOCK_SLG_GAMES[0])
-            base_rank = random.randint(1, 30)
-            result = []
-            for i in range(days):
-                date = (datetime.now() - timedelta(days=days - i)).strftime("%Y-%m-%d")
-                result.append({
-                    "date": date,
-                    "rank": max(1, base_rank + random.randint(-3, 3)),
-                })
-            return result
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{settings.SENSOR_TOWER_BASE_URL}/v1/{platform}/apps/{app_id}/rankings",
-                params={"country": country, "start_date": (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")},
-                headers=self.headers,
-            )
-            resp.raise_for_status()
-            return resp.json().get("rankings", [])
+    def _real_window(self, days: int, start_date: str | None, end_date: str | None) -> dict:
+        if start_date and end_date:
+            return {"start_date": start_date, "end_date": end_date}
+        return {"start_date": (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")}
 
-    async def get_downloads(self, app_id: str, country: str = "WW", platform: str = "ios", days: int = 30) -> list[dict]:
-        if self.use_mock:
-            return _mock_trend(random.uniform(20000, 100000), days)
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{settings.SENSOR_TOWER_BASE_URL}/v1/{platform}/apps/{app_id}/downloads",
-                params={"country": country, "start_date": (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")},
-                headers=self.headers,
-            )
-            resp.raise_for_status()
-            return resp.json().get("downloads", [])
+    def _window_key(self, days: int, start_date: str | None, end_date: str | None) -> str:
+        if start_date and end_date:
+            return f"{start_date}_{end_date}"
+        return f"d{days}"
 
-    async def get_revenue(self, app_id: str, country: str = "WW", platform: str = "ios", days: int = 30) -> list[dict]:
+    async def get_rankings(self, app_id: str, country: str = "US", platform: str = "ios", days: int = 30, start_date: str | None = None, end_date: str | None = None) -> list[dict]:
         if self.use_mock:
-            return _mock_trend(random.uniform(100000, 3000000), days)
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{settings.SENSOR_TOWER_BASE_URL}/v1/{platform}/apps/{app_id}/revenue",
-                params={"country": country, "start_date": (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")},
-                headers=self.headers,
-            )
-            resp.raise_for_status()
-            return resp.json().get("revenue", [])
+            return _mock_rank_series(days, start_date, end_date)
+        key = f"rank:{platform}:{country}:{app_id}:{self._window_key(days, start_date, end_date)}"
+        data = await self._cached_get(
+            key,
+            f"/v1/{platform}/apps/{app_id}/rankings",
+            {"country": country, **self._real_window(days, start_date, end_date)},
+            fallback=lambda: {"rankings": _mock_rank_series(days, start_date, end_date)},
+        )
+        return data.get("rankings", [])
+
+    async def get_downloads(self, app_id: str, country: str = "WW", platform: str = "ios", days: int = 30, start_date: str | None = None, end_date: str | None = None) -> list[dict]:
+        if self.use_mock:
+            return _mock_trend(random.uniform(20000, 100000), days, start_date, end_date)
+        key = f"dl:{platform}:{country}:{app_id}:{self._window_key(days, start_date, end_date)}"
+        data = await self._cached_get(
+            key,
+            f"/v1/{platform}/apps/{app_id}/downloads",
+            {"country": country, **self._real_window(days, start_date, end_date)},
+            fallback=lambda: {"downloads": _mock_trend(random.uniform(20000, 100000), days, start_date, end_date)},
+        )
+        return data.get("downloads", [])
+
+    async def get_revenue(self, app_id: str, country: str = "WW", platform: str = "ios", days: int = 30, start_date: str | None = None, end_date: str | None = None) -> list[dict]:
+        if self.use_mock:
+            return _mock_trend(random.uniform(100000, 3000000), days, start_date, end_date)
+        key = f"rev:{platform}:{country}:{app_id}:{self._window_key(days, start_date, end_date)}"
+        data = await self._cached_get(
+            key,
+            f"/v1/{platform}/apps/{app_id}/revenue",
+            {"country": country, **self._real_window(days, start_date, end_date)},
+            fallback=lambda: {"revenue": _mock_trend(random.uniform(100000, 3000000), days, start_date, end_date)},
+        )
+        return data.get("revenue", [])
 
     async def get_all_rankings_today(self, country: str = "US", platform: str = "ios") -> list[dict]:
         if self.use_mock:
-            today = datetime.now().strftime("%Y-%m-%d")
-            result = []
-            for i, game in enumerate(MOCK_SLG_GAMES):
-                result.append({
-                    "app_id": game["app_id"],
-                    "name": game["name"],
-                    "publisher": game["publisher"],
-                    "icon_url": game["icon_url"],
-                    "rank": i + 1,
-                    "downloads": round(random.uniform(5000, 80000), 0),
-                    "revenue": round(random.uniform(50000, 2000000), 0),
-                    "date": today,
-                })
-            return result
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{settings.SENSOR_TOWER_BASE_URL}/v1/{platform}/category/top_apps",
-                params={"category": "6014", "country": country},
-                headers=self.headers,
-            )
-            resp.raise_for_status()
-            return resp.json().get("apps", [])
+            return _mock_today_rankings()
+        key = f"today:{platform}:{country}"
+        data = await self._cached_get(
+            key,
+            f"/v1/{platform}/category/top_apps",
+            {"category": "6014", "country": country},
+            fallback=lambda: {"apps": _mock_today_rankings()},
+        )
+        return data.get("apps", [])
+
 
 sensor_tower_service = SensorTowerService()

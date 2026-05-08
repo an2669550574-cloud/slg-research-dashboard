@@ -1,32 +1,28 @@
-from fastapi import APIRouter, Depends, BackgroundTasks
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
-from pydantic import BaseModel
-from typing import Optional
 from app.database import get_db
 from app.models.history import GameHistory
 from app.models.game import Game
 from app.services.ai_history import generate_history
+from app.schemas import HistoryCreate, HistoryOut
+from app.rate_limit import limiter
+from app.config import settings
 
 router = APIRouter(prefix="/api/history", tags=["history"])
 
-class HistoryCreate(BaseModel):
-    app_id: str
-    event_date: str
-    event_type: str
-    title: str
-    description: Optional[str] = None
-    source: str = "manual"
 
-@router.get("/{app_id}")
+@router.get("/{app_id}", response_model=list[HistoryOut])
 async def get_history(app_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(GameHistory).where(GameHistory.app_id == app_id).order_by(GameHistory.event_date)
     )
-    return [h.__dict__ for h in result.scalars().all()]
+    return result.scalars().all()
+
 
 @router.post("/sync/{app_id}")
-async def sync_history(app_id: str, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
+@limiter.limit(lambda: settings.RATE_LIMIT_AI_SYNC)
+async def sync_history(request: Request, app_id: str, db: AsyncSession = Depends(get_db)):
     """触发 AI 自动生成发展历程"""
     game_result = await db.execute(select(Game).where(Game.app_id == app_id))
     game = game_result.scalar_one_or_none()
@@ -52,13 +48,15 @@ async def sync_history(app_id: str, background_tasks: BackgroundTasks, db: Async
     await db.commit()
     return {"message": f"已同步 {len(events)} 条历程数据"}
 
-@router.post("/")
+
+@router.post("/", response_model=HistoryOut, status_code=201)
 async def create_history(data: HistoryCreate, db: AsyncSession = Depends(get_db)):
     h = GameHistory(**data.model_dump())
     db.add(h)
     await db.commit()
     await db.refresh(h)
-    return h.__dict__
+    return h
+
 
 @router.delete("/{history_id}")
 async def delete_history(history_id: int, db: AsyncSession = Depends(get_db)):

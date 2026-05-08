@@ -1,5 +1,9 @@
+import json
+import logging
 import anthropic
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 MOCK_HISTORIES = {
     "com.lilithgames.rok": [
@@ -26,14 +30,25 @@ DEFAULT_HISTORY = [
     {"event_date": "2021-03-01", "event_type": "ranking", "title": "进入美国策略榜 Top 20", "description": "产品在北美市场取得重大突破，排名持续攀升。"},
 ]
 
+
+def _parse_json_array(text: str) -> list[dict]:
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("```")[1]
+        if text.startswith("json"):
+            text = text[4:]
+    text = text.strip()
+    return json.loads(text)
+
+
 async def generate_history(app_id: str, game_name: str, publisher: str) -> list[dict]:
+    """生成游戏发展历程。优先级：手工 mock → Claude API → 通用兜底。"""
     if app_id in MOCK_HISTORIES:
         return MOCK_HISTORIES[app_id]
 
     if not settings.ANTHROPIC_API_KEY:
         return DEFAULT_HISTORY
 
-    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
     prompt = f"""你是一名海外手游市场分析师。请为以下 SLG 游戏生成一份精简的发展历程时间线，要求：
 1. 包含 5-8 个关键节点
 2. 每个节点包含：日期(YYYY-MM-DD)、事件类型(launch/version/ranking/revenue/marketing)、标题(一句话)、描述(2-3句话)
@@ -46,15 +61,18 @@ App ID：{app_id}
 
 直接输出 JSON 数组，不要其他内容。"""
 
-    message = client.messages.create(
-        model="claude-opus-4-7",
-        max_tokens=2000,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    import json
-    text = message.content[0].text.strip()
-    if text.startswith("```"):
-        text = text.split("```")[1]
-        if text.startswith("json"):
-            text = text[4:]
-    return json.loads(text.strip())
+    try:
+        client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+        message = client.messages.create(
+            model="claude-opus-4-7",
+            max_tokens=2000,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = message.content[0].text
+        events = _parse_json_array(text)
+        if not isinstance(events, list) or not events:
+            raise ValueError("model returned empty or non-list payload")
+        return events
+    except (anthropic.APIError, ValueError, KeyError, IndexError) as e:
+        logger.warning("AI history generation failed for %s, falling back to default: %s", app_id, e)
+        return DEFAULT_HISTORY
