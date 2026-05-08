@@ -55,6 +55,11 @@ export const en: Translations = {
     downloads: 'Downloads',
     downloadsSuffix: 'downloads',
     worldwide: 'Worldwide',
+    quotaLabel: 'Sensor Tower API this month',
+    quotaUsage: (used: number, limit: number) => `${used} / ${limit} calls`,
+    quotaResetHint: (ym: string) => `${ym} · resets on the 1st`,
+    quotaExhausted: 'Monthly quota exhausted — serving last cached snapshots',
+    quotaWarning: 'Monthly quota over 80% — please use carefully',
   },
   rankings: {
     title: 'Rankings',

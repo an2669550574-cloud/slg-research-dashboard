@@ -31,18 +31,21 @@ async def app(tmp_db_url, monkeypatch):
             del sys.modules[mod]
 
     from app import database, scheduler
-    from app.main import app as fastapi_app
+    from app import main as app_main
+    fastapi_app = app_main.app
 
     # 用 SQLAlchemy 直接建表（更轻量；alembic 已在另外的迁移单测覆盖）
     async with database.engine.begin() as conn:
-        from app.models import game, history, material  # noqa: F401
+        from app.models import game, history, material, quota  # noqa: F401
         await conn.run_sync(database.Base.metadata.create_all)
 
-    # 屏蔽 lifespan 中的 alembic 调用与 scheduler 启动
-    monkeypatch.setattr(database, "init_db", _noop_async)
-    monkeypatch.setattr(scheduler, "start_scheduler", lambda: None)
-    monkeypatch.setattr(scheduler, "shutdown_scheduler", lambda: None)
-    monkeypatch.setattr(scheduler, "sync_seed_games_if_empty", _noop_async)
+    # 屏蔽 lifespan 中的 alembic 调用与 scheduler 启动。
+    # 注意：main.py 用 `from app.database import init_db` 把名字绑到自己 namespace，
+    # 所以必须 patch app.main.* 而不是 app.database.*，否则 monkeypatch 不影响调用点。
+    monkeypatch.setattr(app_main, "init_db", _noop_async)
+    monkeypatch.setattr(app_main, "start_scheduler", lambda: None)
+    monkeypatch.setattr(app_main, "shutdown_scheduler", lambda: None)
+    monkeypatch.setattr(app_main, "sync_seed_games_if_empty", _noop_async)
 
     yield fastapi_app
 

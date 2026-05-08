@@ -22,6 +22,9 @@ class Settings(BaseSettings):
 
     # Sensor Tower 真实接口缓存 TTL（秒）。榜单变化频率不高，半小时已足够新鲜
     SENSOR_TOWER_CACHE_TTL: int = 1800
+    # 每月最多调用 Sensor Tower 真实 API 的次数。公司账号 3000/月共享，留 500 给本项目；
+    # 超额后自动降级到 sensor_tower_snapshots 表里的最后一次成功响应。
+    SENSOR_TOWER_MONTHLY_LIMIT: int = 500
 
     # Sentry：留空时不上报。生产环境填入 DSN 即开启
     SENTRY_DSN: Optional[str] = None

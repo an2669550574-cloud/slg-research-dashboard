@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
-import { gamesApi } from '../lib/api'
+import { gamesApi, quotaApi } from '../lib/api'
 import { formatNumber, formatRevenue } from '../lib/utils'
 import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
@@ -37,6 +37,13 @@ export default function Dashboard() {
   const { data: rankings = [], isLoading, refetch } = useQuery({
     queryKey: ['rankings'],
     queryFn: () => gamesApi.rankings(),
+  })
+
+  // 当月 Sensor Tower API 配额
+  const { data: quota } = useQuery({
+    queryKey: ['quota'],
+    queryFn: () => quotaApi.get(),
+    refetchInterval: 60_000,
   })
 
   const top5 = rankings.slice(0, 5)
@@ -88,6 +95,45 @@ export default function Dashboard() {
           </button>
         </div>
       </div>
+
+      {quota && (
+        <div className={`rounded-xl border px-4 py-3 ${
+          quota.exhausted
+            ? 'bg-red-950/40 border-red-900/60'
+            : quota.percentage >= 80
+              ? 'bg-yellow-950/40 border-yellow-900/60'
+              : 'bg-gray-900 border-gray-800'
+        }`}>
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-gray-400">{t.dashboard.quotaLabel}</span>
+              <span className={`font-semibold ${
+                quota.exhausted ? 'text-red-400' : quota.percentage >= 80 ? 'text-yellow-400' : 'text-white'
+              }`}>
+                {t.dashboard.quotaUsage(quota.used, quota.limit)}
+              </span>
+              <span className="text-xs text-gray-500">{t.dashboard.quotaResetHint(quota.year_month)}</span>
+            </div>
+            <span className={`text-xs ${
+              quota.exhausted ? 'text-red-400' : quota.percentage >= 80 ? 'text-yellow-400' : 'text-gray-500'
+            }`}>{quota.percentage}%</span>
+          </div>
+          <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+            <div
+              className={`h-full transition-all ${
+                quota.exhausted ? 'bg-red-500' : quota.percentage >= 80 ? 'bg-yellow-500' : 'bg-emerald-500'
+              }`}
+              style={{ width: `${Math.min(100, quota.percentage)}%` }}
+            />
+          </div>
+          {quota.exhausted && (
+            <div className="mt-2 text-xs text-red-300">{t.dashboard.quotaExhausted}</div>
+          )}
+          {!quota.exhausted && quota.percentage >= 80 && (
+            <div className="mt-2 text-xs text-yellow-300">{t.dashboard.quotaWarning}</div>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-4 gap-4">
         <StatCard icon={Trophy} label={t.dashboard.statGames} value={trackedGames.length} sub={t.dashboard.statCategory} color="bg-brand-600" />

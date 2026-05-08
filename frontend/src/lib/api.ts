@@ -43,6 +43,17 @@ export const historyApi = {
   delete: (id: number) => api.delete(`/history/${id}`).then(r => r.data),
 }
 
+export const quotaApi = {
+  get: () => api.get('/quota/').then(r => r.data) as Promise<{
+    year_month: string
+    used: number
+    limit: number
+    remaining: number
+    percentage: number
+    exhausted: boolean
+  }>,
+}
+
 export const materialsApi = {
   list: (appId?: string, params?: Record<string, any>) =>
     api.get('/materials/', { params: { ...(appId ? { app_id: appId } : {}), ...params } }).then(r => r.data),

@@ -14,16 +14,17 @@ async def test_api_key_enforced_when_set(monkeypatch, tmp_db_url):
         if mod.startswith("app"):
             del sys.modules[mod]
 
-    from app import database, scheduler
-    from app.main import app as fastapi_app
+    from app import database
+    from app import main as app_main
+    fastapi_app = app_main.app
 
     async with database.engine.begin() as conn:
-        from app.models import game, history, material  # noqa
+        from app.models import game, history, material, quota  # noqa
         await conn.run_sync(database.Base.metadata.create_all)
-    monkeypatch.setattr(database, "init_db", _noop)
-    monkeypatch.setattr(scheduler, "start_scheduler", lambda: None)
-    monkeypatch.setattr(scheduler, "shutdown_scheduler", lambda: None)
-    monkeypatch.setattr(scheduler, "sync_seed_games_if_empty", _noop)
+    monkeypatch.setattr(app_main, "init_db", _noop)
+    monkeypatch.setattr(app_main, "start_scheduler", lambda: None)
+    monkeypatch.setattr(app_main, "shutdown_scheduler", lambda: None)
+    monkeypatch.setattr(app_main, "sync_seed_games_if_empty", _noop)
 
     from httpx import AsyncClient, ASGITransport
     from asgi_lifespan import LifespanManager

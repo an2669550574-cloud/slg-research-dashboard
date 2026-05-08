@@ -4,6 +4,7 @@ import random
 from datetime import datetime, timedelta
 from app.config import settings
 from app.cache import sensor_tower_cache
+from app.services import quota
 
 logger = logging.getLogger(__name__)
 
@@ -89,16 +90,33 @@ class SensorTowerService:
             resp.raise_for_status()
             return resp.json()
 
-    async def _cached_get(self, cache_key: str, path: str, params: dict, fallback) -> list[dict]:
-        """真实请求走缓存 + single-flight；失败/网络错时降级到 fallback()。"""
+    async def _cached_get(self, cache_key: str, path: str, params: dict, fallback) -> dict:
+        """真实请求走缓存 + single-flight；月度配额超限时降级到持久化快照；
+        快照也没有 / 网络失败时再降级到 fallback()。"""
         async def loader():
+            allowed = await quota.try_consume()
+            if not allowed:
+                snapshot = await quota.load_snapshot(cache_key)
+                if snapshot is not None:
+                    logger.info("Sensor Tower quota exhausted, serving snapshot for %s", cache_key)
+                    return snapshot
+                logger.warning("Sensor Tower quota exhausted and no snapshot for %s, using mock", cache_key)
+                return fallback()
             data = await self._get(path, params)
-            # 顶层结构因端点不同而异，由调用方在 fallback 之前解析。这里只缓存 .json() 原始 dict
+            # 真实调用成功 → 持久化一份"最后已知好数据"，月底超额时回读
+            try:
+                await quota.save_snapshot(cache_key, data)
+            except Exception as e:
+                logger.warning("Failed to save snapshot for %s: %s", cache_key, e)
             return data
         try:
             return await sensor_tower_cache.get_or_set(cache_key, self.cache_ttl, loader)
         except (httpx.HTTPError, ValueError) as e:
             logger.warning("Sensor Tower fetch failed (%s), falling back: %s", cache_key, e)
+            # 网络失败时也尝试快照
+            snapshot = await quota.load_snapshot(cache_key)
+            if snapshot is not None:
+                return snapshot
             return fallback()
 
     async def get_top_slg_games(self, country: str = "US", platform: str = "ios", limit: int = 20) -> list[dict]:

@@ -53,6 +53,11 @@ export const zh = {
     downloads: '下载量',
     downloadsSuffix: '下载',
     worldwide: '全球 WW',
+    quotaLabel: '本月 Sensor Tower API',
+    quotaUsage: (used: number, limit: number) => `${used} / ${limit} 次`,
+    quotaResetHint: (ym: string) => `${ym} · 月初 1 号自动重置`,
+    quotaExhausted: '本月配额已用尽，正在显示历史快照数据',
+    quotaWarning: '本月配额已用 80%，请节约调用',
   },
   rankings: {
     title: '排行榜',
