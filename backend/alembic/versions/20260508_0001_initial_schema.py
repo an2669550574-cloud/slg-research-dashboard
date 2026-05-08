@@ -18,6 +18,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # 注意：Column(unique=True, index=True) 会让 SQLAlchemy 在 create_table 时
+    # 自动创建相应的 UNIQUE INDEX，无需再 op.create_index() 否则会重复。
     op.create_table(
         "games",
         sa.Column("id", sa.Integer, primary_key=True),
@@ -34,7 +36,6 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime, nullable=False, server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime, nullable=False, server_default=sa.func.now()),
     )
-    op.create_index("ix_games_app_id", "games", ["app_id"], unique=True)
 
     op.create_table(
         "game_rankings",
@@ -48,8 +49,6 @@ def upgrade() -> None:
         sa.Column("platform", sa.String(20), nullable=False, server_default="ios"),
         sa.Column("created_at", sa.DateTime, nullable=False, server_default=sa.func.now()),
     )
-    op.create_index("ix_game_rankings_app_id", "game_rankings", ["app_id"])
-    op.create_index("ix_game_rankings_date", "game_rankings", ["date"])
 
     op.create_table(
         "game_histories",
@@ -62,7 +61,6 @@ def upgrade() -> None:
         sa.Column("source", sa.String(50), nullable=False, server_default="manual"),
         sa.Column("created_at", sa.DateTime, nullable=False, server_default=sa.func.now()),
     )
-    op.create_index("ix_game_histories_app_id", "game_histories", ["app_id"])
 
     op.create_table(
         "materials",
@@ -76,16 +74,11 @@ def upgrade() -> None:
         sa.Column("notes", sa.Text, nullable=True),
         sa.Column("created_at", sa.DateTime, nullable=False, server_default=sa.func.now()),
     )
-    op.create_index("ix_materials_app_id", "materials", ["app_id"])
 
 
 def downgrade() -> None:
-    op.drop_index("ix_materials_app_id", table_name="materials")
+    # SQLAlchemy 在 drop_table 时会一并清掉 column-level 自动索引
     op.drop_table("materials")
-    op.drop_index("ix_game_histories_app_id", table_name="game_histories")
     op.drop_table("game_histories")
-    op.drop_index("ix_game_rankings_date", table_name="game_rankings")
-    op.drop_index("ix_game_rankings_app_id", table_name="game_rankings")
     op.drop_table("game_rankings")
-    op.drop_index("ix_games_app_id", table_name="games")
     op.drop_table("games")
