@@ -67,3 +67,6 @@ jobs:
 
       - name: Typecheck + production build
         run: npm run build
+
+      - name: Run vitest
+        run: npm test

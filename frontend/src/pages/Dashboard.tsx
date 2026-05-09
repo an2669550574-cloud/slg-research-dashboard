@@ -7,6 +7,7 @@ import { useT } from '../i18n'
 import { TrendingUp, Download, DollarSign, Trophy, RefreshCw, Download as DownloadIcon } from 'lucide-react'
 import { CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis } from 'recharts'
 import { useNavigate } from 'react-router-dom'
+import { QuotaBanner } from '../components/QuotaBanner'
 
 function StatCard({ icon: Icon, label, value, sub, color }: any) {
   return (
@@ -96,44 +97,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {quota && (
-        <div className={`rounded-xl border px-4 py-3 ${
-          quota.exhausted
-            ? 'bg-red-950/40 border-red-900/60'
-            : quota.percentage >= 80
-              ? 'bg-yellow-950/40 border-yellow-900/60'
-              : 'bg-surface border-default'
-        }`}>
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-secondary">{t.dashboard.quotaLabel}</span>
-              <span className={`font-semibold ${
-                quota.exhausted ? 'text-red-400' : quota.percentage >= 80 ? 'text-yellow-400' : 'text-primary'
-              }`}>
-                {t.dashboard.quotaUsage(quota.used, quota.limit)}
-              </span>
-              <span className="text-xs text-muted">{t.dashboard.quotaResetHint(quota.year_month)}</span>
-            </div>
-            <span className={`text-xs ${
-              quota.exhausted ? 'text-red-400' : quota.percentage >= 80 ? 'text-yellow-400' : 'text-muted'
-            }`}>{quota.percentage}%</span>
-          </div>
-          <div className="h-1.5 bg-elevated rounded-full overflow-hidden">
-            <div
-              className={`h-full transition-all ${
-                quota.exhausted ? 'bg-red-500' : quota.percentage >= 80 ? 'bg-yellow-500' : 'bg-emerald-500'
-              }`}
-              style={{ width: `${Math.min(100, quota.percentage)}%` }}
-            />
-          </div>
-          {quota.exhausted && (
-            <div className="mt-2 text-xs text-red-300">{t.dashboard.quotaExhausted}</div>
-          )}
-          {!quota.exhausted && quota.percentage >= 80 && (
-            <div className="mt-2 text-xs text-yellow-300">{t.dashboard.quotaWarning}</div>
-          )}
-        </div>
-      )}
+      <QuotaBanner quota={quota} />
 
       <div className="grid grid-cols-4 gap-4">
         <StatCard icon={Trophy} label={t.dashboard.statGames} value={trackedGames.length} sub={t.dashboard.statCategory} color="bg-brand-600" />
