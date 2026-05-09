@@ -90,3 +90,7 @@ curl -H "X-API-Key: $API_KEY" https://<SLG_DOMAIN>/api/games/ | head
 
 - SQLite 单机部署的备份足够；生产长期运营建议迁移 Postgres，用 `pg_dump` 走逻辑备份 + WAL archiving 做 point-in-time 恢复
 - `backups/` 目录要放到 `.gitignore`（已在内）
+
+## 迁移到新服务器
+
+`scripts/backup.sh` 产出的 `.db.gz` 也是迁移流程的输入。换机器时把它 + `.env` + `backend/.env` 一起 scp 到新主机，再走 [`docs/MIGRATION.md`](MIGRATION.md) 的步骤。

@@ -72,6 +72,10 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 参考 [`docs/BACKUP.md`](BACKUP.md)。
 
+## 八、迁移到另一台服务器
+
+换云厂商、换 IP、换机房，参考 [`docs/MIGRATION.md`](MIGRATION.md)。本质上是 备份 + scp + 在新机器走一遍这份文档，约 30–60 分钟。
+
 ## 常见问题
 
 **Caddy 一直拿不到证书？**
