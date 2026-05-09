@@ -62,6 +62,47 @@ async def test_cached_get_calls_api_and_writes_snapshot_on_l2_miss(client):
 
 
 @pytest.mark.asyncio
+async def test_force_refresh_bypasses_both_caches_and_consumes_quota(client):
+    """force_refresh_today_rankings 必然调真实 API、消耗一次配额、写新 snapshot。"""
+    from app.services import quota
+    from app.services.sensor_tower import SensorTowerService
+    from app.cache import sensor_tower_cache
+
+    cache_key = "today:ios:US"
+    stale_snapshot = {"apps": [{"app_id": "stale", "rank": 99}]}
+    await quota.save_snapshot(cache_key, stale_snapshot)
+    # 把它放进 L1 也填上（模拟 force refresh 之前刚被普通查询缓存过）
+    await sensor_tower_cache.set(cache_key, stale_snapshot, ttl_seconds=86400)
+
+    api_response = {"apps": [{"app_id": "fresh", "rank": 1, "name": "Fresh", "publisher": "Test"}]}
+
+    svc = SensorTowerService()
+    svc.use_mock = False
+    svc._get = AsyncMock(return_value=api_response)
+
+    used_before = (await quota.current_usage())["used"]
+
+    result = await svc.force_refresh_today_rankings("US", "ios")
+
+    assert result == api_response["apps"], "应返回真实 API 数据，不能是 stale 快照"
+    assert svc._get.await_count == 1
+    assert (await quota.current_usage())["used"] == used_before + 1
+    # snapshot 已被覆盖为新数据
+    assert await quota.load_snapshot(cache_key) == api_response
+
+
+@pytest.mark.asyncio
+async def test_force_refresh_endpoint_returns_fresh_data(client):
+    """通过 router POST /api/games/rankings/refresh 走的端到端集成。"""
+    # mock 模式下直接返回 mock 数据；测试主要验证路由可达 + 200
+    resp = await client.post("/api/games/rankings/refresh", params={"country": "US", "platform": "ios"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert isinstance(body, list)
+    assert len(body) > 0
+
+
+@pytest.mark.asyncio
 async def test_cached_get_serves_stale_snapshot_when_quota_exhausted(client):
     """配额耗尽时，过期 snapshot 也能用作降级数据，不再调 API。"""
     from app.services import quota

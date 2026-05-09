@@ -204,5 +204,18 @@ class SensorTowerService:
         )
         return data.get("apps", [])
 
+    async def force_refresh_today_rankings(self, country: str = "US", platform: str = "ios") -> list[dict]:
+        """绕过 L1+L2 缓存，强制重新拉取今日榜单。会消耗一次月度配额。
+
+        典型用例：dashboard 上的"刷新数据"按钮——用户明确想看最新数据。
+        清完两层缓存后再调 _cached_get，必然 miss → 走真实 API → 写新 snapshot。
+        """
+        if self.use_mock:
+            return _mock_today_rankings()
+        key = f"today:{platform}:{country}"
+        await sensor_tower_cache.invalidate(key)
+        await quota.delete_snapshot(key)
+        return await self.get_all_rankings_today(country, platform)
+
 
 sensor_tower_service = SensorTowerService()

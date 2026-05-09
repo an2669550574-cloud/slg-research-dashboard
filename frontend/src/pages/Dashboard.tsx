@@ -1,10 +1,10 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { gamesApi, quotaApi } from '../lib/api'
 import { formatNumber, formatRevenue } from '../lib/utils'
 import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
-import { TrendingUp, Download, DollarSign, Trophy, RefreshCw, Download as DownloadIcon } from 'lucide-react'
+import { TrendingUp, Download, DollarSign, Trophy, RefreshCw, Download as DownloadIcon, Loader2 } from 'lucide-react'
 import { CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis } from 'recharts'
 import { useNavigate } from 'react-router-dom'
 import { QuotaBanner } from '../components/QuotaBanner'
@@ -27,6 +27,7 @@ function StatCard({ icon: Icon, label, value, sub, color }: any) {
 export default function Dashboard() {
   const navigate = useNavigate()
   const t = useT()
+  const qc = useQueryClient()
 
   // 已追踪的游戏（来自 DB），用于"监控游戏数"卡片
   const { data: trackedGames = [] } = useQuery({
@@ -36,7 +37,7 @@ export default function Dashboard() {
 
   // 今日榜单（来自 Sensor Tower 真实/mock）
   // queryKey 必须跟 Rankings.tsx 的形态一致 ['rankings', country, platform]，否则同一份数据会被前端当成两个 query 各自 fetch
-  const { data: rankings = [], isLoading, refetch } = useQuery({
+  const { data: rankings = [], isLoading } = useQuery({
     queryKey: ['rankings', 'US', 'ios'],
     queryFn: () => gamesApi.rankings('US', 'ios'),
   })
@@ -46,6 +47,16 @@ export default function Dashboard() {
     queryKey: ['quota'],
     queryFn: () => quotaApi.get(),
     refetchInterval: 60_000,
+  })
+
+  // 刷新按钮：调后端 force-refresh 接口绕过 L1+L2 缓存。会消耗一次配额、写新 snapshot。
+  const refreshMut = useMutation({
+    mutationFn: () => gamesApi.refreshRankings('US', 'ios'),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['rankings', 'US', 'ios'] })
+      qc.invalidateQueries({ queryKey: ['quota'] })
+      toast.success(t.common.refreshed)
+    },
   })
 
   const top5 = rankings.slice(0, 5)
@@ -89,10 +100,11 @@ export default function Dashboard() {
             {t.common.export}
           </button>
           <button
-            onClick={() => { refetch().then(() => toast.success(t.common.refreshed)) }}
-            className="flex items-center gap-2 px-3 py-2 bg-elevated hover:bg-elevated/70 rounded-lg text-sm text-primary transition-colors"
+            onClick={() => refreshMut.mutate()}
+            disabled={refreshMut.isPending}
+            className="flex items-center gap-2 px-3 py-2 bg-elevated hover:bg-elevated/70 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm text-primary transition-colors"
           >
-            <RefreshCw size={14} />
+            {refreshMut.isPending ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
             {t.common.refresh}
           </button>
         </div>

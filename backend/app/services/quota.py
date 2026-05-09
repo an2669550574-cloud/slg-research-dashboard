@@ -105,6 +105,16 @@ async def load_snapshot(cache_key: str) -> Optional[Any]:
         return json.loads(row[0])
 
 
+async def delete_snapshot(cache_key: str) -> None:
+    """显式清除某个 cache_key 的持久快照。force-refresh 路径用：
+    清掉 L2 后再调真实 API，确保下次 _cached_get 不会再看到旧快照。"""
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            text("DELETE FROM sensor_tower_snapshots WHERE cache_key = :k").bindparams(k=cache_key)
+        )
+        await session.commit()
+
+
 async def load_snapshot_if_fresh(cache_key: str, max_age_seconds: float) -> Optional[Any]:
     """读取尚在新鲜窗口内的快照；过期或不存在返回 None。
 

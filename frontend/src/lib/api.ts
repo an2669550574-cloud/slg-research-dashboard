@@ -34,6 +34,9 @@ export const gamesApi = {
   lookup: (appId: string, country = 'us') => api.post('/games/lookup', null, { params: { app_id: appId, country } }).then(r => r.data),
   syncRankings: (country = 'US', platform = 'ios') =>
     api.post('/games/sync-rankings', null, { params: { country, platform } }).then(r => r.data),
+  // dashboard "刷新数据"按钮专用：绕过 L1+L2 缓存强制重拉，会消耗一次月度配额
+  refreshRankings: (country = 'US', platform = 'ios') =>
+    api.post('/games/rankings/refresh', null, { params: { country, platform } }).then(r => r.data),
 }
 
 export const historyApi = {

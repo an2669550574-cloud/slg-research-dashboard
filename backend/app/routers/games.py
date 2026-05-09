@@ -59,6 +59,13 @@ async def get_rankings(country: str = "US", platform: str = "ios"):
     return await sensor_tower_service.get_all_rankings_today(country, platform)
 
 
+@router.post("/rankings/refresh", response_model=list[RankingTodayOut])
+async def force_refresh_rankings(country: str = "US", platform: str = "ios"):
+    """绕过缓存强制重拉今日榜单——dashboard 的"刷新数据"按钮调这里。
+    会消耗一次月度配额。"""
+    return await sensor_tower_service.force_refresh_today_rankings(country, platform)
+
+
 @router.post("/sync-rankings")
 async def trigger_sync_rankings(country: str = "US", platform: str = "ios"):
     """手动触发一次每日榜单抓取（与定时任务同一逻辑）。"""
