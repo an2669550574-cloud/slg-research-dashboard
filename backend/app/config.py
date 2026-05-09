@@ -20,11 +20,15 @@ class Settings(BaseSettings):
     # AI 历程同步是高成本端点，独立限制
     RATE_LIMIT_AI_SYNC: str = "10/hour"
 
-    # Sensor Tower 真实接口缓存 TTL（秒）。榜单变化频率不高，半小时已足够新鲜
-    SENSOR_TOWER_CACHE_TTL: int = 1800
+    # Sensor Tower 内存级缓存 TTL（秒）。Sensor Tower 数据本身是 T+1 日级，
+    # 缓存比源头还短就纯属浪费配额。默认 24 小时。
+    SENSOR_TOWER_CACHE_TTL: int = 86400
     # 每月最多调用 Sensor Tower 真实 API 的次数。公司账号 3000/月共享，留 500 给本项目；
     # 超额后自动降级到 sensor_tower_snapshots 表里的最后一次成功响应。
     SENSOR_TOWER_MONTHLY_LIMIT: int = 500
+    # SQLite 持久化快照"新鲜窗口"（小时）。内存缓存 miss 时若 SQLite 里已有
+    # 不超过这个时长的快照，直接返回不消耗配额。设成跟 CACHE_TTL 一致即可。
+    SENSOR_TOWER_SNAPSHOT_FRESH_HOURS: int = 24
 
     # Sentry：留空时不上报。生产环境填入 DSN 即开启
     SENTRY_DSN: Optional[str] = None

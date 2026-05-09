@@ -360,9 +360,10 @@ export default function GameDetail() {
     enabled: !!appId,
   })
 
+  // queryKey 跟 Rankings.tsx / Dashboard.tsx 保持一致，共享缓存
   const { data: rankings } = useQuery({
-    queryKey: ['rankings'],
-    queryFn: () => gamesApi.rankings(),
+    queryKey: ['rankings', 'US', 'ios'],
+    queryFn: () => gamesApi.rankings('US', 'ios'),
   })
 
   const game = rankings?.find((g: any) => g.app_id === appId)

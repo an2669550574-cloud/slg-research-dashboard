@@ -79,6 +79,7 @@ class SensorTowerService:
         self.headers = {"Authorization": f"Bearer {settings.SENSOR_TOWER_API_KEY}"} if settings.SENSOR_TOWER_API_KEY else {}
         # mock 数据每次都是 random，不缓存（否则永远不变）。真实请求才缓存。
         self.cache_ttl = settings.SENSOR_TOWER_CACHE_TTL
+        self.snapshot_fresh_seconds = settings.SENSOR_TOWER_SNAPSHOT_FRESH_HOURS * 3600
 
     async def _get(self, path: str, params: dict) -> dict:
         async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
@@ -91,19 +92,33 @@ class SensorTowerService:
             return resp.json()
 
     async def _cached_get(self, cache_key: str, path: str, params: dict, fallback) -> dict:
-        """真实请求走缓存 + single-flight；月度配额超限时降级到持久化快照；
-        快照也没有 / 网络失败时再降级到 fallback()。"""
+        """缓存层级：
+            L1: 进程内 InMemoryTTLCache（cache_ttl 秒）
+            L2: SQLite sensor_tower_snapshots（snapshot_fresh_seconds 秒）
+            真实 API 仅在 L1+L2 都 miss 且配额允许时调用。
+
+        月度配额仅在真正打 Sensor Tower 时消耗。L2 命中等于免费一天。
+        """
         async def loader():
+            # L2: SQLite 里若有日级新鲜快照，直接返回，不消耗配额
+            fresh = await quota.load_snapshot_if_fresh(cache_key, self.snapshot_fresh_seconds)
+            if fresh is not None:
+                logger.debug("Sensor Tower snapshot-fresh hit for %s", cache_key)
+                return fresh
+
+            # L2 也 miss → 占用月度配额
             allowed = await quota.try_consume()
             if not allowed:
-                snapshot = await quota.load_snapshot(cache_key)
-                if snapshot is not None:
-                    logger.info("Sensor Tower quota exhausted, serving snapshot for %s", cache_key)
-                    return snapshot
+                # 配额耗尽 → 拿任何快照（即使过期）作为最后已知好数据
+                stale = await quota.load_snapshot(cache_key)
+                if stale is not None:
+                    logger.info("Sensor Tower quota exhausted, serving stale snapshot for %s", cache_key)
+                    return stale
                 logger.warning("Sensor Tower quota exhausted and no snapshot for %s, using mock", cache_key)
                 return fallback()
+
             data = await self._get(path, params)
-            # 真实调用成功 → 持久化一份"最后已知好数据"，月底超额时回读
+            # 真实调用成功 → 持久化一份"最后已知好数据"
             try:
                 await quota.save_snapshot(cache_key, data)
             except Exception as e:
@@ -113,7 +128,7 @@ class SensorTowerService:
             return await sensor_tower_cache.get_or_set(cache_key, self.cache_ttl, loader)
         except (httpx.HTTPError, ValueError) as e:
             logger.warning("Sensor Tower fetch failed (%s), falling back: %s", cache_key, e)
-            # 网络失败时也尝试快照
+            # 网络失败时也尝试任何快照
             snapshot = await quota.load_snapshot(cache_key)
             if snapshot is not None:
                 return snapshot

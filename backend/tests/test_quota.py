@@ -53,6 +53,38 @@ async def test_snapshot_round_trip(client):
 
 
 @pytest.mark.asyncio
+async def test_load_snapshot_if_fresh(client):
+    """新鲜窗口内的快照命中；过期则不命中。"""
+    from app.services import quota
+    from sqlalchemy import text
+    from app.database import AsyncSessionLocal
+
+    payload = {"apps": [{"rank": 1}]}
+    await quota.save_snapshot("fresh_key", payload)
+
+    # 1 小时内的快照在 24h 窗口内应命中
+    assert await quota.load_snapshot_if_fresh("fresh_key", max_age_seconds=86400) == payload
+
+    # 把 updated_at 强行回退 25 小时，模拟过期
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            text(
+                "UPDATE sensor_tower_snapshots "
+                "SET updated_at = datetime('now', '-25 hours') "
+                "WHERE cache_key = 'fresh_key'"
+            )
+        )
+        await session.commit()
+
+    # 24h 窗口下应失效，但 load_snapshot 不带过期检查仍能拿到
+    assert await quota.load_snapshot_if_fresh("fresh_key", max_age_seconds=86400) is None
+    assert await quota.load_snapshot("fresh_key") == payload
+
+    # 不存在的 key 也返回 None
+    assert await quota.load_snapshot_if_fresh("missing", max_age_seconds=86400) is None
+
+
+@pytest.mark.asyncio
 async def test_month_boundary_separate_counters(client):
     """模拟跨月：不同的 year_month 字符串各自计数互不干扰。"""
     from app.services import quota

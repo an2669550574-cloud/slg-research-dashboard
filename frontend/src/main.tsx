@@ -7,7 +7,16 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import './index.css'
 
 const queryClient = new QueryClient({
-  defaultOptions: { queries: { staleTime: 60_000, retry: 1 } }
+  defaultOptions: {
+    queries: {
+      // 后端缓存就是日级（24h），前端没必要比它频繁多少。
+      // 5 分钟内同 query 不 refetch，用户切页面/Modal 几乎都靠缓存。
+      staleTime: 5 * 60_000,
+      retry: 1,
+      // 切回标签页不再触发 refetch；Sensor Tower 数据本身一天一更，没必要这么神经质。
+      refetchOnWindowFocus: false,
+    },
+  },
 })
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

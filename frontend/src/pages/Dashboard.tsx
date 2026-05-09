@@ -35,9 +35,10 @@ export default function Dashboard() {
   })
 
   // 今日榜单（来自 Sensor Tower 真实/mock）
+  // queryKey 必须跟 Rankings.tsx 的形态一致 ['rankings', country, platform]，否则同一份数据会被前端当成两个 query 各自 fetch
   const { data: rankings = [], isLoading, refetch } = useQuery({
-    queryKey: ['rankings'],
-    queryFn: () => gamesApi.rankings(),
+    queryKey: ['rankings', 'US', 'ios'],
+    queryFn: () => gamesApi.rankings('US', 'ios'),
   })
 
   // 当月 Sensor Tower API 配额

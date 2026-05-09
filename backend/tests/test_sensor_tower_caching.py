@@ -1,0 +1,96 @@
+"""验证 SensorTowerService._cached_get 的两层缓存策略。
+
+关注点：snapshot-first 路径在快照新鲜时跳过真实 API 且不消耗月度配额。
+"""
+import pytest
+from unittest.mock import AsyncMock, patch
+
+
+@pytest.mark.asyncio
+async def test_cached_get_uses_fresh_snapshot_without_consuming_quota(client):
+    """L1 miss + L2 fresh hit → 不调 httpx、不消耗配额。"""
+    from app.services import quota
+    from app.services.sensor_tower import SensorTowerService
+
+    cache_key = "rank:ios:US:com.fresh.x:d30"
+    snapshot_payload = {"rankings": [{"date": "2026-05-08", "rank": 5}]}
+    await quota.save_snapshot(cache_key, snapshot_payload)
+
+    svc = SensorTowerService()
+    svc.use_mock = False  # 强制走真实路径
+
+    # 把 _get（httpx 出网）替换成会失败的 spy，这样如果路径错误就会暴露
+    svc._get = AsyncMock(side_effect=AssertionError("应当不调用真实 API"))
+
+    used_before = (await quota.current_usage())["used"]
+
+    result = await svc._cached_get(cache_key, "/v1/x/y", {}, fallback=lambda: {"never": "used"})
+
+    assert result == snapshot_payload, "应直接返回 SQLite 里的 fresh 快照"
+    assert svc._get.await_count == 0, "fresh snapshot 命中时不能调 httpx"
+
+    used_after = (await quota.current_usage())["used"]
+    assert used_after == used_before, "fresh snapshot 命中不应消耗配额"
+
+
+@pytest.mark.asyncio
+async def test_cached_get_calls_api_and_writes_snapshot_on_l2_miss(client):
+    """L1+L2 都 miss → 调 httpx、消耗一次配额、回写 snapshot。"""
+    from app.services import quota
+    from app.services.sensor_tower import SensorTowerService
+
+    cache_key = "rank:ios:US:com.cold.y:d30"
+    api_response = {"rankings": [{"date": "2026-05-09", "rank": 1}]}
+
+    svc = SensorTowerService()
+    svc.use_mock = False
+    svc._get = AsyncMock(return_value=api_response)
+
+    used_before = (await quota.current_usage())["used"]
+    assert await quota.load_snapshot(cache_key) is None, "前置：无快照"
+
+    result = await svc._cached_get(cache_key, "/v1/x/y", {}, fallback=lambda: {"fb": True})
+
+    assert result == api_response
+    assert svc._get.await_count == 1, "无快照时应该调一次真实 API"
+
+    used_after = (await quota.current_usage())["used"]
+    assert used_after == used_before + 1, "应消耗一次配额"
+
+    # snapshot 已经被持久化
+    assert await quota.load_snapshot(cache_key) == api_response
+
+
+@pytest.mark.asyncio
+async def test_cached_get_serves_stale_snapshot_when_quota_exhausted(client):
+    """配额耗尽时，过期 snapshot 也能用作降级数据，不再调 API。"""
+    from app.services import quota
+    from app.services.sensor_tower import SensorTowerService
+    from app.config import settings
+    from sqlalchemy import text
+    from app.database import AsyncSessionLocal
+
+    cache_key = "rank:ios:US:com.stale.z:d30"
+    stale_payload = {"rankings": [{"date": "2026-04-01", "rank": 99}]}
+    await quota.save_snapshot(cache_key, stale_payload)
+
+    # 把 snapshot 时间回退 48 小时，使其不在 24h 新鲜窗口内
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            text(
+                "UPDATE sensor_tower_snapshots SET updated_at = datetime('now', '-48 hours') "
+                "WHERE cache_key = :k"
+            ).bindparams(k=cache_key)
+        )
+        await session.commit()
+
+    svc = SensorTowerService()
+    svc.use_mock = False
+    svc._get = AsyncMock(side_effect=AssertionError("配额耗尽时不应该调 API"))
+
+    # 把 limit 调到 0，模拟"配额耗尽"
+    with patch.object(settings, "SENSOR_TOWER_MONTHLY_LIMIT", 0):
+        result = await svc._cached_get(cache_key, "/v1/x/y", {}, fallback=lambda: {"fb": True})
+
+    assert result == stale_payload, "配额耗尽时应回退到任意快照（即使过期）"
+    assert svc._get.await_count == 0

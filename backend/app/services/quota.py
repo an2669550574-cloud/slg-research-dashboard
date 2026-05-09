@@ -103,3 +103,23 @@ async def load_snapshot(cache_key: str) -> Optional[Any]:
         if not row:
             return None
         return json.loads(row[0])
+
+
+async def load_snapshot_if_fresh(cache_key: str, max_age_seconds: float) -> Optional[Any]:
+    """读取尚在新鲜窗口内的快照；过期或不存在返回 None。
+
+    用于 snapshot-first 缓存路径：内存 TTL miss 时先查 SQLite，命中就直接
+    返回，不消耗月度配额。julianday() 在 SQLite 里是天数差，乘 86400 转秒。
+    """
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            text(
+                "SELECT payload FROM sensor_tower_snapshots "
+                "WHERE cache_key = :k "
+                "AND (julianday('now') - julianday(updated_at)) * 86400 < :max_age"
+            ).bindparams(k=cache_key, max_age=max_age_seconds)
+        )
+        row = result.first()
+        if not row:
+            return None
+        return json.loads(row[0])
