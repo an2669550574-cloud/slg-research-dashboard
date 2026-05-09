@@ -29,5 +29,5 @@ export const PLATFORM_CONFIG: Record<string, { label: string; color: string }> =
   youtube: { label: 'YouTube', color: 'text-red-400' },
   tiktok:  { label: 'TikTok',  color: 'text-pink-400' },
   meta:    { label: 'Meta Ads', color: 'text-blue-400' },
-  other:   { label: '其他',     color: 'text-gray-400' },
+  other:   { label: '其他',     color: 'text-muted' },
 }

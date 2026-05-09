@@ -29,7 +29,6 @@ export default function Compare() {
     })),
   })
 
-  // 把多款游戏的同一指标 join 成 [{date, [name1]: v1, [name2]: v2, ...}]
   const chartData = (() => {
     if (selected.length === 0) return []
     const series = selected.map((appId, idx) => {
@@ -72,22 +71,22 @@ export default function Compare() {
   return (
     <div className="p-6 space-y-5">
       <div>
-        <h1 className="text-xl font-bold text-white">{t.compare.title}</h1>
-        <p className="text-gray-500 text-sm mt-0.5">{t.compare.subtitle}</p>
+        <h1 className="text-xl font-bold text-primary">{t.compare.title}</h1>
+        <p className="text-muted text-sm mt-0.5">{t.compare.subtitle}</p>
       </div>
 
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
+      <div className="bg-surface border border-default rounded-xl p-5 space-y-4">
         <div className="flex flex-wrap items-center gap-2">
           {selected.map((appId, idx) => {
             const game = games.find((g: any) => g.app_id === appId)
             return (
-              <div key={appId} className="flex items-center gap-2 bg-gray-800 border border-gray-700 rounded-lg pl-2 pr-1 py-1">
+              <div key={appId} className="flex items-center gap-2 bg-elevated border border-default rounded-lg pl-2 pr-1 py-1">
                 <span className="w-2.5 h-2.5 rounded-full" style={{ background: COLORS[idx] }} />
                 {game?.icon_url && <img src={game.icon_url} alt="" className="w-5 h-5 rounded" />}
-                <span className="text-sm text-white">{game?.name || appId}</span>
+                <span className="text-sm text-primary">{game?.name || appId}</span>
                 <button
                   onClick={() => setSelected(s => s.filter(a => a !== appId))}
-                  className="p-1 text-gray-500 hover:text-red-400"
+                  className="p-1 text-muted hover:text-red-400"
                 >
                   <X size={12} />
                 </button>
@@ -99,7 +98,7 @@ export default function Compare() {
             <select
               value=""
               onChange={e => { if (e.target.value) setSelected(s => [...s, e.target.value]) }}
-              className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-brand-500"
+              className="bg-elevated border border-default rounded-lg px-3 py-1.5 text-sm text-primary focus:outline-none focus:border-brand-500"
             >
               <option value="">{selected.length === 0 ? t.compare.selectGame : t.compare.addAnother}</option>
               {availableGames.map((g: any) => (
@@ -108,14 +107,14 @@ export default function Compare() {
             </select>
           )}
           {!canAddMore && (
-            <span className="text-xs text-gray-500">{t.compare.selectMore}</span>
+            <span className="text-xs text-muted">{t.compare.selectMore}</span>
           )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-4 pt-2 border-t border-gray-800">
+        <div className="flex flex-wrap items-center gap-4 pt-2 border-t border-default">
           <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-400">{t.compare.metric}:</span>
-            <div className="flex gap-1 bg-gray-800 rounded-lg p-1">
+            <span className="text-xs text-secondary">{t.compare.metric}:</span>
+            <div className="flex gap-1 bg-elevated rounded-lg p-1">
               {([
                 ['revenue', t.compare.revenue],
                 ['downloads', t.compare.downloads],
@@ -124,7 +123,7 @@ export default function Compare() {
                 <button
                   key={key}
                   onClick={() => setMetric(key)}
-                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${metric === key ? 'bg-brand-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${metric === key ? 'bg-brand-600 text-white' : 'text-secondary hover:text-primary'}`}
                 >
                   {label}
                 </button>
@@ -133,8 +132,8 @@ export default function Compare() {
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-400">{t.compare.days}:</span>
-            <div className="flex gap-1 bg-gray-800 rounded-lg p-1">
+            <span className="text-xs text-secondary">{t.compare.days}:</span>
+            <div className="flex gap-1 bg-elevated rounded-lg p-1">
               {[
                 [7, t.compare.days7],
                 [30, t.compare.days30],
@@ -143,7 +142,7 @@ export default function Compare() {
                 <button
                   key={d as number}
                   onClick={() => setDays(d as number)}
-                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${days === d ? 'bg-brand-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${days === d ? 'bg-brand-600 text-white' : 'text-secondary hover:text-primary'}`}
                 >
                   {label}
                 </button>
@@ -153,20 +152,20 @@ export default function Compare() {
         </div>
       </div>
 
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+      <div className="bg-surface border border-default rounded-xl p-5">
         {selected.length < 2 ? (
-          <div className="py-24 text-center text-gray-600 text-sm">
-            <Plus className="mx-auto mb-2 text-gray-700" size={24} />
+          <div className="py-24 text-center text-muted text-sm">
+            <Plus className="mx-auto mb-2 text-muted" size={24} />
             {t.compare.pickGames}
           </div>
         ) : metricsQueries.some(q => q.isLoading) ? (
-          <div className="h-80 flex items-center justify-center text-gray-600 text-sm">{t.common.loading}</div>
+          <div className="h-80 flex items-center justify-center text-muted text-sm">{t.common.loading}</div>
         ) : (
           <ResponsiveContainer width="100%" height={360}>
             <LineChart data={chartData} margin={{ top: 16, right: 24, left: 8, bottom: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-              <XAxis dataKey="date" tick={{ fill: '#6b7280', fontSize: 11 }} minTickGap={32} />
-              <YAxis tick={{ fill: '#6b7280', fontSize: 11 }} reversed={metric === 'rank'} tickFormatter={formatter} />
+              <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--border-default))" />
+              <XAxis dataKey="date" tick={{ fill: 'rgb(var(--text-muted))', fontSize: 11 }} minTickGap={32} />
+              <YAxis tick={{ fill: 'rgb(var(--text-muted))', fontSize: 11 }} reversed={metric === 'rank'} tickFormatter={formatter} />
               <Tooltip {...tooltipStyle} formatter={formatter} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               {seriesNames.map((name, idx) => (

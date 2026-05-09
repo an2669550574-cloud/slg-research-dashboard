@@ -10,15 +10,15 @@ import { useNavigate } from 'react-router-dom'
 
 function StatCard({ icon: Icon, label, value, sub, color }: any) {
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+    <div className="bg-surface border border-default rounded-xl p-5">
       <div className="flex items-center justify-between mb-3">
-        <span className="text-gray-400 text-sm">{label}</span>
+        <span className="text-secondary text-sm">{label}</span>
         <div className={`p-2 rounded-lg ${color}`}>
           <Icon size={16} className="text-white" />
         </div>
       </div>
-      <div className="text-2xl font-bold text-white">{value}</div>
-      {sub && <div className="text-xs text-gray-500 mt-1">{sub}</div>}
+      <div className="text-2xl font-bold text-primary">{value}</div>
+      {sub && <div className="text-xs text-muted mt-1">{sub}</div>}
     </div>
   )
 }
@@ -75,20 +75,20 @@ export default function Dashboard() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-white">{t.dashboard.title}</h1>
-          <p className="text-gray-500 text-sm mt-0.5">{t.dashboard.subtitle}</p>
+          <h1 className="text-xl font-bold text-primary">{t.dashboard.title}</h1>
+          <p className="text-muted text-sm mt-0.5">{t.dashboard.subtitle}</p>
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={handleExport}
-            className="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm text-gray-300 transition-colors"
+            className="flex items-center gap-2 px-3 py-2 bg-elevated hover:bg-elevated/70 rounded-lg text-sm text-primary transition-colors"
           >
             <DownloadIcon size={14} />
             {t.common.export}
           </button>
           <button
             onClick={() => { refetch().then(() => toast.success(t.common.refreshed)) }}
-            className="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm text-gray-300 transition-colors"
+            className="flex items-center gap-2 px-3 py-2 bg-elevated hover:bg-elevated/70 rounded-lg text-sm text-primary transition-colors"
           >
             <RefreshCw size={14} />
             {t.common.refresh}
@@ -102,23 +102,23 @@ export default function Dashboard() {
             ? 'bg-red-950/40 border-red-900/60'
             : quota.percentage >= 80
               ? 'bg-yellow-950/40 border-yellow-900/60'
-              : 'bg-gray-900 border-gray-800'
+              : 'bg-surface border-default'
         }`}>
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2 text-sm">
-              <span className="text-gray-400">{t.dashboard.quotaLabel}</span>
+              <span className="text-secondary">{t.dashboard.quotaLabel}</span>
               <span className={`font-semibold ${
-                quota.exhausted ? 'text-red-400' : quota.percentage >= 80 ? 'text-yellow-400' : 'text-white'
+                quota.exhausted ? 'text-red-400' : quota.percentage >= 80 ? 'text-yellow-400' : 'text-primary'
               }`}>
                 {t.dashboard.quotaUsage(quota.used, quota.limit)}
               </span>
-              <span className="text-xs text-gray-500">{t.dashboard.quotaResetHint(quota.year_month)}</span>
+              <span className="text-xs text-muted">{t.dashboard.quotaResetHint(quota.year_month)}</span>
             </div>
             <span className={`text-xs ${
-              quota.exhausted ? 'text-red-400' : quota.percentage >= 80 ? 'text-yellow-400' : 'text-gray-500'
+              quota.exhausted ? 'text-red-400' : quota.percentage >= 80 ? 'text-yellow-400' : 'text-muted'
             }`}>{quota.percentage}%</span>
           </div>
-          <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+          <div className="h-1.5 bg-elevated rounded-full overflow-hidden">
             <div
               className={`h-full transition-all ${
                 quota.exhausted ? 'bg-red-500' : quota.percentage >= 80 ? 'bg-yellow-500' : 'bg-emerald-500'
@@ -143,16 +143,16 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-2 gap-4">
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-          <h2 className="text-sm font-semibold text-gray-300 mb-4">{t.dashboard.chartRevenue}</h2>
+        <div className="bg-surface border border-default rounded-xl p-5">
+          <h2 className="text-sm font-semibold text-primary mb-4">{t.dashboard.chartRevenue}</h2>
           {isLoading ? (
-            <div className="h-48 flex items-center justify-center text-gray-600 text-sm">{t.common.loading}</div>
+            <div className="h-48 flex items-center justify-center text-muted text-sm">{t.common.loading}</div>
           ) : (
             <ResponsiveContainer width="100%" height={200}>
               <BarChart data={revenueChartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-                <XAxis dataKey="name" tick={{ fill: '#6b7280', fontSize: 11 }} />
-                <YAxis tick={{ fill: '#6b7280', fontSize: 11 }} />
+                <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--border-default))" />
+                <XAxis dataKey="name" tick={{ fill: 'rgb(var(--text-muted))', fontSize: 11 }} />
+                <YAxis tick={{ fill: 'rgb(var(--text-muted))', fontSize: 11 }} />
                 <Tooltip
                   contentStyle={{ background: 'rgb(var(--bg-elevated))', border: '1px solid rgb(var(--border-default))', borderRadius: 8 }}
                   labelStyle={{ color: 'rgb(var(--text-primary))' }}
@@ -164,16 +164,16 @@ export default function Dashboard() {
           )}
         </div>
 
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-          <h2 className="text-sm font-semibold text-gray-300 mb-4">{t.dashboard.chartDownloads}</h2>
+        <div className="bg-surface border border-default rounded-xl p-5">
+          <h2 className="text-sm font-semibold text-primary mb-4">{t.dashboard.chartDownloads}</h2>
           {isLoading ? (
-            <div className="h-48 flex items-center justify-center text-gray-600 text-sm">{t.common.loading}</div>
+            <div className="h-48 flex items-center justify-center text-muted text-sm">{t.common.loading}</div>
           ) : (
             <ResponsiveContainer width="100%" height={200}>
               <BarChart data={revenueChartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-                <XAxis dataKey="name" tick={{ fill: '#6b7280', fontSize: 11 }} />
-                <YAxis tick={{ fill: '#6b7280', fontSize: 11 }} />
+                <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--border-default))" />
+                <XAxis dataKey="name" tick={{ fill: 'rgb(var(--text-muted))', fontSize: 11 }} />
+                <YAxis tick={{ fill: 'rgb(var(--text-muted))', fontSize: 11 }} />
                 <Tooltip
                   contentStyle={{ background: 'rgb(var(--bg-elevated))', border: '1px solid rgb(var(--border-default))', borderRadius: 8 }}
                   labelStyle={{ color: 'rgb(var(--text-primary))' }}
@@ -186,41 +186,41 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="bg-gray-900 border border-gray-800 rounded-xl">
-        <div className="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-gray-300">{t.dashboard.todayRanking}</h2>
+      <div className="bg-surface border border-default rounded-xl">
+        <div className="px-5 py-4 border-b border-default flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-primary">{t.dashboard.todayRanking}</h2>
           <button onClick={() => navigate('/rankings')} className="text-xs text-brand-500 hover:text-brand-400">{t.common.viewAll}</button>
         </div>
-        <div className="divide-y divide-gray-800">
+        <div className="divide-y divide-default">
           {isLoading
             ? Array.from({ length: 5 }).map((_, i) => (
                 <div key={i} className="px-5 py-3 flex items-center gap-4 animate-pulse">
-                  <div className="w-8 h-4 bg-gray-800 rounded" />
-                  <div className="w-8 h-8 bg-gray-800 rounded-lg" />
-                  <div className="flex-1 h-4 bg-gray-800 rounded" />
-                  <div className="w-20 h-4 bg-gray-800 rounded" />
+                  <div className="w-8 h-4 bg-elevated rounded" />
+                  <div className="w-8 h-8 bg-elevated rounded-lg" />
+                  <div className="flex-1 h-4 bg-elevated rounded" />
+                  <div className="w-20 h-4 bg-elevated rounded" />
                 </div>
               ))
             : rankings.slice(0, 8).map((g: any) => (
                 <div
                   key={g.app_id}
-                  className="px-5 py-3 flex items-center gap-4 hover:bg-gray-800/50 cursor-pointer transition-colors"
+                  className="px-5 py-3 flex items-center gap-4 hover:bg-elevated/50 cursor-pointer transition-colors"
                   onClick={() => navigate(`/game/${g.app_id}`)}
                 >
-                  <span className={`w-7 text-center text-sm font-bold ${g.rank <= 3 ? 'text-yellow-400' : 'text-gray-500'}`}>
+                  <span className={`w-7 text-center text-sm font-bold ${g.rank <= 3 ? 'text-yellow-400' : 'text-muted'}`}>
                     #{g.rank}
                   </span>
                   {g.icon_url
                     ? <img src={g.icon_url} alt={g.name} className="w-9 h-9 rounded-xl object-cover" />
-                    : <div className="w-9 h-9 rounded-xl bg-gray-700 flex items-center justify-center text-gray-400 text-xs">?</div>
+                    : <div className="w-9 h-9 rounded-xl bg-elevated flex items-center justify-center text-secondary text-xs">?</div>
                   }
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-white truncate">{g.name}</div>
-                    <div className="text-xs text-gray-500 truncate">{g.publisher}</div>
+                    <div className="text-sm font-medium text-primary truncate">{g.name}</div>
+                    <div className="text-xs text-muted truncate">{g.publisher}</div>
                   </div>
                   <div className="text-right">
                     <div className="text-sm font-medium text-emerald-400">{formatRevenue(g.revenue)}</div>
-                    <div className="text-xs text-gray-500">{formatNumber(g.downloads)} {t.dashboard.downloadsSuffix}</div>
+                    <div className="text-xs text-muted">{formatNumber(g.downloads)} {t.dashboard.downloadsSuffix}</div>
                   </div>
                 </div>
               ))

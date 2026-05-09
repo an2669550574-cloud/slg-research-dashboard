@@ -24,13 +24,13 @@ function Sidebar() {
   ]
 
   return (
-    <aside className="w-56 shrink-0 bg-gray-900 border-r border-gray-800 flex flex-col">
-      <div className="px-5 py-5 border-b border-gray-800">
+    <aside className="w-56 shrink-0 bg-surface border-r border-default flex flex-col">
+      <div className="px-5 py-5 border-b border-default">
         <div className="flex items-center gap-2">
           <Gamepad2 className="text-brand-500" size={22} />
-          <span className="font-bold text-white text-base leading-tight">{t.app.title}</span>
+          <span className="font-bold text-primary text-base leading-tight">{t.app.title}</span>
         </div>
-        <p className="text-xs text-gray-500 mt-1">{t.app.subtitle}</p>
+        <p className="text-xs text-muted mt-1">{t.app.subtitle}</p>
       </div>
       <nav className="flex-1 p-3 space-y-1">
         {NAV.map(({ to, icon: Icon, label }) => (
@@ -42,7 +42,7 @@ function Sidebar() {
               cn('flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors',
                 isActive
                   ? 'bg-brand-600 text-white'
-                  : 'text-gray-400 hover:text-white hover:bg-gray-800')
+                  : 'text-secondary hover:text-primary hover:bg-elevated')
             }
           >
             <Icon size={16} />
@@ -50,22 +50,22 @@ function Sidebar() {
           </NavLink>
         ))}
       </nav>
-      <div className="p-3 border-t border-gray-800 space-y-2">
+      <div className="p-3 border-t border-default space-y-2">
         <button
           onClick={() => setLocale(locale === 'zh' ? 'en' : 'zh')}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs text-secondary hover:text-primary hover:bg-elevated transition-colors"
         >
           <Languages size={14} />
           {locale === 'zh' ? 'English' : '中文'}
         </button>
         <button
           onClick={toggle}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs text-secondary hover:text-primary hover:bg-elevated transition-colors"
         >
           {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
           {theme === 'dark' ? t.app.themeLight : t.app.themeDark}
         </button>
-        <p className="text-xs text-gray-600 text-center">{t.app.powered}</p>
+        <p className="text-xs text-muted text-center">{t.app.powered}</p>
       </div>
     </aside>
   )
