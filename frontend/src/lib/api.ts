@@ -54,6 +54,8 @@ export const quotaApi = {
     remaining: number
     percentage: number
     exhausted: boolean
+    data_source?: 'real_api' | 'mock' | 'snapshot_stale'
+    data_updated_at?: string | null
   }>,
 }
 

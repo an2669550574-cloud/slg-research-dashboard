@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { gamesApi, quotaApi } from '../lib/api'
@@ -28,6 +29,8 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const t = useT()
   const qc = useQueryClient()
+  const [cooldown, setCooldown] = useState(false)
+  const [cooldownLeft, setCooldownLeft] = useState(0)
 
   // 已追踪的游戏（来自 DB），用于"监控游戏数"卡片
   const { data: trackedGames = [] } = useQuery({
@@ -56,6 +59,14 @@ export default function Dashboard() {
       qc.invalidateQueries({ queryKey: ['rankings', 'US', 'ios'] })
       qc.invalidateQueries({ queryKey: ['quota'] })
       toast.success(t.common.refreshed)
+      setCooldown(true)
+      setCooldownLeft(5)
+      const timer = setInterval(() => {
+        setCooldownLeft(prev => {
+          if (prev <= 1) { clearInterval(timer); setCooldown(false); return 0 }
+          return prev - 1
+        })
+      }, 1000)
     },
   })
 
@@ -101,11 +112,11 @@ export default function Dashboard() {
           </button>
           <button
             onClick={() => refreshMut.mutate()}
-            disabled={refreshMut.isPending}
+            disabled={refreshMut.isPending || cooldown}
             className="flex items-center gap-2 px-3 py-2 bg-elevated hover:bg-elevated/70 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm text-primary transition-colors"
           >
             {refreshMut.isPending ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-            {t.common.refresh}
+            {cooldown ? t.common.refreshCooldown(cooldownLeft) : t.common.refresh}
           </button>
         </div>
       </div>

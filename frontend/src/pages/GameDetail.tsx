@@ -351,8 +351,8 @@ export default function GameDetail() {
   const [customEnd, setCustomEnd] = useState(today)
 
   const queryParams = range.kind === 'preset'
-    ? { days: range.days }
-    : { start_date: range.start, end_date: range.end }
+    ? { days: range.days, country: 'US', platform: 'ios' }
+    : { start_date: range.start, end_date: range.end, country: 'US', platform: 'ios' }
 
   const { data: metrics, isLoading: metricsLoading } = useQuery({
     queryKey: ['metrics', appId, range],

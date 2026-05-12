@@ -24,7 +24,7 @@ export default function Compare() {
   const metricsQueries = useQueries({
     queries: selected.map(appId => ({
       queryKey: ['metrics', appId, { days }],
-      queryFn: () => gamesApi.metrics(appId, { days }),
+      queryFn: () => gamesApi.metrics(appId, { days, country: 'US', platform: 'ios' }),
       enabled: !!appId,
     })),
   })

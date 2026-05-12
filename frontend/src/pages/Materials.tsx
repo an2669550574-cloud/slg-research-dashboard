@@ -21,9 +21,9 @@ export default function Materials() {
     queryKey: ['materials'],
     queryFn: () => materialsApi.list(),
   })
-  const { data: rankings = [] } = useQuery({
-    queryKey: ['rankings'],
-    queryFn: () => gamesApi.rankings(),
+  const { data: allGames = [] } = useQuery({
+    queryKey: ['games', 'tracked'],
+    queryFn: () => gamesApi.list({ limit: 200 }),
   })
 
   const createMut = useMutation({
@@ -49,7 +49,7 @@ export default function Materials() {
     return matchSearch && matchPlatform
   })
 
-  const gameMap = Object.fromEntries(rankings.map((g: any) => [g.app_id, g]))
+  const gameMap = Object.fromEntries(allGames.map((g: any) => [g.app_id, g]))
 
   const typeLabel = (kind: string) => t.materials.types[kind as keyof typeof t.materials.types] || kind
 
@@ -109,7 +109,7 @@ export default function Materials() {
               className={`col-span-2 ${inputClass}`} />
             <select value={form.app_id} onChange={e => setForm(f => ({ ...f, app_id: e.target.value }))} className={inputClass}>
               <option value="">{t.materials.selectGame}</option>
-              {rankings.map((g: any) => <option key={g.app_id} value={g.app_id}>{g.name}</option>)}
+              {allGames.map((g: any) => <option key={g.app_id} value={g.app_id}>{g.name}</option>)}
             </select>
             <select value={form.platform} onChange={e => setForm(f => ({ ...f, platform: e.target.value }))} className={inputClass}>
               <option value="youtube">YouTube</option>

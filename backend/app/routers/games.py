@@ -168,7 +168,7 @@ async def get_game_metrics(
     end_date: Optional[str] = Query(None, description="YYYY-MM-DD"),
 ):
     kw = {"country": country, "platform": platform, "days": days, "start_date": start_date, "end_date": end_date}
-    rankings = await sensor_tower_service.get_rankings(app_id, **{**kw, "country": "US"})
+    rankings = await sensor_tower_service.get_rankings(app_id, **kw)
     downloads = await sensor_tower_service.get_downloads(app_id, **kw)
     revenue = await sensor_tower_service.get_revenue(app_id, **kw)
     return {"rankings": rankings, "downloads": downloads, "revenue": revenue}

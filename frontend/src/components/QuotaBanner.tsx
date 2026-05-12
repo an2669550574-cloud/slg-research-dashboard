@@ -1,5 +1,7 @@
 import { useT } from '../i18n'
 
+export type DataSource = 'real_api' | 'mock' | 'snapshot_stale'
+
 export interface QuotaInfo {
   year_month: string
   used: number
@@ -7,6 +9,8 @@ export interface QuotaInfo {
   remaining: number
   percentage: number
   exhausted: boolean
+  data_source?: DataSource
+  data_updated_at?: string | null
 }
 
 interface Props {
@@ -67,6 +71,21 @@ export function QuotaBanner({ quota }: Props) {
       )}
       {isWarning && (
         <div className="mt-2 text-xs text-yellow-300">{t.dashboard.quotaWarning}</div>
+      )}
+      {(quota.data_source && quota.data_source !== 'real_api') && (
+        <div className="mt-2 flex items-center gap-3 text-xs text-muted">
+          <span>
+            {t.dashboard.dataSourceLabel}: <span className="text-primary font-medium">{t.dashboard.dataSource(quota.data_source)}</span>
+          </span>
+          {quota.data_updated_at && (
+            <span>
+              {t.dashboard.dataUpdatedAt}: {quota.data_updated_at.slice(0, 19).replace('T', ' ')}
+            </span>
+          )}
+        </div>
+      )}
+      {quota.data_source === 'snapshot_stale' && (
+        <div className="mt-1.5 text-xs text-yellow-300">{t.dashboard.dataStaleWarning}</div>
       )}
     </div>
   )

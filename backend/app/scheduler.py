@@ -68,7 +68,7 @@ def start_scheduler() -> None:
     # 每日 02:30 UTC 抓 US/iOS 与 US/android 榜单
     scheduler.add_job(
         sync_daily_rankings,
-        CronTrigger(hour=2, minute=30),
+        CronTrigger(hour=2, minute=30, timezone="UTC"),
         id="sync_daily_rankings_us_ios",
         kwargs={"country": "US", "platform": "ios"},
         replace_existing=True,
@@ -76,7 +76,7 @@ def start_scheduler() -> None:
     )
     scheduler.add_job(
         sync_daily_rankings,
-        CronTrigger(hour=2, minute=35),
+        CronTrigger(hour=2, minute=35, timezone="UTC"),
         id="sync_daily_rankings_us_android",
         kwargs={"country": "US", "platform": "android"},
         replace_existing=True,

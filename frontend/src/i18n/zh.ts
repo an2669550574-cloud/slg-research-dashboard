@@ -23,6 +23,7 @@ export const zh = {
     add: '添加',
     apply: '应用',
     refresh: '刷新数据',
+    refreshCooldown: (s: number) => `刷新 (${s}s)`,
     refreshed: '已刷新榜单',
     export: '导出 CSV',
     exported: (n: number) => `已导出 ${n} 条`,
@@ -58,6 +59,10 @@ export const zh = {
     quotaResetHint: (ym: string) => `${ym} · 月初 1 号自动重置`,
     quotaExhausted: '本月配额已用尽，正在显示历史快照数据',
     quotaWarning: '本月配额已用 80%，请节约调用',
+    dataSourceLabel: '数据来源',
+    dataSource: (src: string) => ({ real_api: '实时 API', mock: 'Mock 数据', snapshot_stale: '历史快照' }[src] || src),
+    dataUpdatedAt: '更新时间',
+    dataStaleWarning: '当前数据为历史快照，可能不是最新值',
   },
   rankings: {
     title: '排行榜',

@@ -25,6 +25,7 @@ export const en: Translations = {
     add: 'Add',
     apply: 'Apply',
     refresh: 'Refresh',
+    refreshCooldown: (s: number) => `Refresh (${s}s)`,
     refreshed: 'Rankings refreshed',
     export: 'Export CSV',
     exported: (n: number) => `Exported ${n} rows`,
@@ -60,6 +61,10 @@ export const en: Translations = {
     quotaResetHint: (ym: string) => `${ym} · resets on the 1st`,
     quotaExhausted: 'Monthly quota exhausted — serving last cached snapshots',
     quotaWarning: 'Monthly quota over 80% — please use carefully',
+    dataSourceLabel: 'Data source',
+    dataSource: (src: string) => ({ real_api: 'Live API', mock: 'Mock data', snapshot_stale: 'Cached snapshot' }[src] || src),
+    dataUpdatedAt: 'Updated',
+    dataStaleWarning: 'Showing cached snapshot — data may not be up-to-date',
   },
   rankings: {
     title: 'Rankings',

@@ -58,7 +58,7 @@ async def try_consume() -> bool:
 
 
 async def current_usage() -> dict:
-    """返回 {year_month, used, limit, remaining, percentage} 供前端展示。"""
+    """返回 {year_month, used, limit, remaining, percentage, data_source, data_updated_at} 供前端展示。"""
     limit = settings.SENSOR_TOWER_MONTHLY_LIMIT
     ym = current_year_month()
     async with AsyncSessionLocal() as session:
@@ -67,6 +67,29 @@ async def current_usage() -> dict:
         )
         row = result.first()
         used = row[0] if row else 0
+
+        # 查最近一次 snapshot 的 updated_at，用于前端展示数据新鲜度
+        snap_result = await session.execute(
+            text("SELECT MAX(updated_at) FROM sensor_tower_snapshots")
+        )
+        snap_row = snap_result.first()
+        data_updated_at = snap_row[0] if snap_row and snap_row[0] else None
+        if data_updated_at is not None:
+            data_updated_at = str(data_updated_at)
+
+    exhausted = used >= limit
+
+    # 判定当前数据来源
+    if settings.USE_MOCK_DATA:
+        data_source = "mock"
+    elif exhausted:
+        data_source = "snapshot_stale"
+    else:
+        # 存在 snapshot 但未过期 → 可能从 snapshot 中读取（不消耗配额）
+        # 由 _cached_get 的 L2 逻辑决定；这里无法确定单次请求走哪条路，
+        # 所以标记为 active（真实 API 可用）
+        data_source = "real_api"
+
     remaining = max(0, limit - used)
     return {
         "year_month": ym,
@@ -74,7 +97,9 @@ async def current_usage() -> dict:
         "limit": limit,
         "remaining": remaining,
         "percentage": round(used / limit * 100, 1) if limit > 0 else 0.0,
-        "exhausted": used >= limit,
+        "exhausted": exhausted,
+        "data_source": data_source,
+        "data_updated_at": data_updated_at,
     }
 
 
