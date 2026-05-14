@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "gen:types": "python ../backend/scripts/dump_openapi.py ../backend/openapi.json && openapi-typescript ../backend/openapi.json -o src/lib/types.gen.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.40.0",
@@ -32,6 +33,7 @@
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.19",
     "jsdom": "^29.1.1",
+    "openapi-typescript": "^7.4.0",
     "postcss": "^8.4.39",
     "tailwindcss": "^3.4.4",
     "typescript": "^5.4.5",

@@ -1,5 +1,23 @@
 import axios, { AxiosError } from 'axios'
 import toast from 'react-hot-toast'
+import type {
+  AppLookupResult,
+  DeleteResponse,
+  GameCreate,
+  GameOut,
+  GameUpdate,
+  HistoryCreate,
+  HistoryOut,
+  MaterialCreate,
+  MaterialOut,
+  MaterialUpdate,
+  MetricsOut,
+  QuotaInfo,
+  RankingTodayOut,
+  SeedResponse,
+  SyncHistoryResponse,
+  SyncRankingsResponse,
+} from './types'
 
 const apiKey = import.meta.env.VITE_API_KEY as string | undefined
 
@@ -20,49 +38,82 @@ api.interceptors.response.use(
   }
 )
 
+export interface GameListParams {
+  platform?: string
+  country?: string
+  publisher?: string
+  q?: string
+  sort_by?: 'name' | 'publisher' | 'release_date' | 'created_at' | 'updated_at'
+  order?: 'asc' | 'desc'
+  limit?: number
+  offset?: number
+}
+
+export interface MetricsParams {
+  days?: number
+  country?: string
+  platform?: string
+  start_date?: string
+  end_date?: string
+}
+
 export const gamesApi = {
-  list: (params?: Record<string, any>) => api.get('/games/', { params }).then(r => r.data),
-  rankings: (country = 'US', platform = 'ios') =>
+  list: (params?: GameListParams): Promise<GameOut[]> =>
+    api.get('/games/', { params }).then(r => r.data),
+  rankings: (country = 'US', platform = 'ios'): Promise<RankingTodayOut[]> =>
     api.get('/games/rankings', { params: { country, platform } }).then(r => r.data),
-  get: (appId: string) => api.get(`/games/${appId}`).then(r => r.data),
-  metrics: (appId: string, params: { days?: number; country?: string; start_date?: string; end_date?: string } = {}) =>
+  get: (appId: string): Promise<GameOut> =>
+    api.get(`/games/${appId}`).then(r => r.data),
+  metrics: (appId: string, params: MetricsParams = {}): Promise<MetricsOut> =>
     api.get(`/games/${appId}/metrics`, { params: { country: 'WW', days: 30, ...params } }).then(r => r.data),
-  seed: () => api.get('/games/seed').then(r => r.data),
-  create: (data: any) => api.post('/games/', data).then(r => r.data),
-  update: (appId: string, data: any) => api.put(`/games/${appId}`, data).then(r => r.data),
-  delete: (appId: string) => api.delete(`/games/${appId}`).then(r => r.data),
-  lookup: (appId: string, country = 'us') => api.post('/games/lookup', null, { params: { app_id: appId, country } }).then(r => r.data),
-  syncRankings: (country = 'US', platform = 'ios') =>
+  seed: (): Promise<SeedResponse> => api.get('/games/seed').then(r => r.data),
+  create: (data: GameCreate): Promise<GameOut> =>
+    api.post('/games/', data).then(r => r.data),
+  update: (appId: string, data: GameUpdate): Promise<GameOut> =>
+    api.put(`/games/${appId}`, data).then(r => r.data),
+  delete: (appId: string): Promise<DeleteResponse> =>
+    api.delete(`/games/${appId}`).then(r => r.data),
+  lookup: (appId: string, country = 'us'): Promise<AppLookupResult> =>
+    api.post('/games/lookup', null, { params: { app_id: appId, country } }).then(r => r.data),
+  syncRankings: (country = 'US', platform = 'ios'): Promise<SyncRankingsResponse> =>
     api.post('/games/sync-rankings', null, { params: { country, platform } }).then(r => r.data),
   // dashboard "刷新数据"按钮专用：绕过 L1+L2 缓存强制重拉，会消耗一次月度配额
-  refreshRankings: (country = 'US', platform = 'ios') =>
+  refreshRankings: (country = 'US', platform = 'ios'): Promise<RankingTodayOut[]> =>
     api.post('/games/rankings/refresh', null, { params: { country, platform } }).then(r => r.data),
 }
 
 export const historyApi = {
-  get: (appId: string) => api.get(`/history/${appId}`).then(r => r.data),
-  sync: (appId: string) => api.post(`/history/sync/${appId}`).then(r => r.data),
-  create: (data: any) => api.post('/history/', data).then(r => r.data),
-  delete: (id: number) => api.delete(`/history/${id}`).then(r => r.data),
+  get: (appId: string): Promise<HistoryOut[]> =>
+    api.get(`/history/${appId}`).then(r => r.data),
+  sync: (appId: string): Promise<SyncHistoryResponse> =>
+    api.post(`/history/sync/${appId}`).then(r => r.data),
+  create: (data: HistoryCreate): Promise<HistoryOut> =>
+    api.post('/history/', data).then(r => r.data),
+  delete: (id: number): Promise<DeleteResponse> =>
+    api.delete(`/history/${id}`).then(r => r.data),
 }
 
 export const quotaApi = {
-  get: () => api.get('/quota/').then(r => r.data) as Promise<{
-    year_month: string
-    used: number
-    limit: number
-    remaining: number
-    percentage: number
-    exhausted: boolean
-    data_source?: 'real_api' | 'mock' | 'snapshot_stale'
-    data_updated_at?: string | null
-  }>,
+  get: (): Promise<QuotaInfo> => api.get('/quota/').then(r => r.data),
+}
+
+export interface MaterialListParams {
+  platform?: string
+  material_type?: string
+  q?: string
+  sort_by?: 'created_at' | 'title'
+  order?: 'asc' | 'desc'
+  limit?: number
+  offset?: number
 }
 
 export const materialsApi = {
-  list: (appId?: string, params?: Record<string, any>) =>
+  list: (appId?: string, params?: MaterialListParams): Promise<MaterialOut[]> =>
     api.get('/materials/', { params: { ...(appId ? { app_id: appId } : {}), ...params } }).then(r => r.data),
-  create: (data: any) => api.post('/materials/', data).then(r => r.data),
-  update: (id: number, data: any) => api.put(`/materials/${id}`, data).then(r => r.data),
-  delete: (id: number) => api.delete(`/materials/${id}`).then(r => r.data),
+  create: (data: MaterialCreate): Promise<MaterialOut> =>
+    api.post('/materials/', data).then(r => r.data),
+  update: (id: number, data: MaterialUpdate): Promise<MaterialOut> =>
+    api.put(`/materials/${id}`, data).then(r => r.data),
+  delete: (id: number): Promise<DeleteResponse> =>
+    api.delete(`/materials/${id}`).then(r => r.data),
 }

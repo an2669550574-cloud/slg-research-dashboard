@@ -1,17 +1,7 @@
 import { useT } from '../i18n'
+import type { QuotaInfo } from '../lib/types'
 
-export type DataSource = 'real_api' | 'mock' | 'snapshot_stale'
-
-export interface QuotaInfo {
-  year_month: string
-  used: number
-  limit: number
-  remaining: number
-  percentage: number
-  exhausted: boolean
-  data_source?: DataSource
-  data_updated_at?: string | null
-}
+export type { QuotaInfo, DataSource } from '../lib/types'
 
 interface Props {
   quota: QuotaInfo | undefined
