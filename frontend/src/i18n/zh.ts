@@ -163,6 +163,8 @@ export const zh = {
     days30: '30 天',
     days90: '90 天',
     addAnother: '+ 增加一款',
+    quotaCostHint: (calls: number) => `本次切换最多消耗 ~${calls} 次 Sensor Tower 调用`,
+    quotaExhaustedHint: '配额已用尽：图表使用历史快照，新区间可能空白',
   },
   csv: {
     rank: '排名',

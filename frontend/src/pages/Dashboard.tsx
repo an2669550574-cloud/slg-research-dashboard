@@ -53,6 +53,9 @@ export default function Dashboard() {
   })
 
   // 刷新按钮：调后端 force-refresh 接口绕过 L1+L2 缓存。会消耗一次配额、写新 snapshot。
+  // 客户端冷却时长必须不短于服务端 refresh_cooldown（rate_limit.py），否则按钮提前
+  // 可点但服务端会 429。
+  const REFRESH_COOLDOWN_SEC = 30
   const refreshMut = useMutation({
     mutationFn: () => gamesApi.refreshRankings('US', 'ios'),
     onSuccess: () => {
@@ -60,7 +63,7 @@ export default function Dashboard() {
       qc.invalidateQueries({ queryKey: ['quota'] })
       toast.success(t.common.refreshed)
       setCooldown(true)
-      setCooldownLeft(5)
+      setCooldownLeft(REFRESH_COOLDOWN_SEC)
       const timer = setInterval(() => {
         setCooldownLeft(prev => {
           if (prev <= 1) { clearInterval(timer); setCooldown(false); return 0 }

@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { useQueries, useQuery } from '@tanstack/react-query'
-import { gamesApi } from '../lib/api'
+import { gamesApi, quotaApi } from '../lib/api'
 import { useT } from '../i18n'
 import { formatNumber, formatRevenue } from '../lib/utils'
 import { X, Plus } from 'lucide-react'
 import { CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, XAxis, YAxis, Legend } from 'recharts'
+import { QuotaBanner } from '../components/QuotaBanner'
 
 type Metric = 'revenue' | 'downloads' | 'rank'
 
@@ -21,6 +22,12 @@ export default function Compare() {
     queryFn: () => gamesApi.list({ limit: 200 }),
   })
 
+  const { data: quota } = useQuery({
+    queryKey: ['quota'],
+    queryFn: () => quotaApi.get(),
+    refetchInterval: 60_000,
+  })
+
   const metricsQueries = useQueries({
     queries: selected.map(appId => ({
       queryKey: ['metrics', appId, { days }],
@@ -28,6 +35,10 @@ export default function Compare() {
       enabled: !!appId,
     })),
   })
+
+  // 每个游戏 × 3 个 metric (rank/dl/rev)；切换 days 会产生新 cache key,
+  // L2 snapshot 没命中时每个 metric 都消耗 1 次配额
+  const worstCaseCalls = selected.length * 3
 
   const chartData = (() => {
     if (selected.length === 0) return []
@@ -74,6 +85,8 @@ export default function Compare() {
         <h1 className="text-xl font-bold text-primary">{t.compare.title}</h1>
         <p className="text-muted text-sm mt-0.5">{t.compare.subtitle}</p>
       </div>
+
+      <QuotaBanner quota={quota} />
 
       <div className="bg-surface border border-default rounded-xl p-5 space-y-4">
         <div className="flex flex-wrap items-center gap-2">
@@ -149,6 +162,14 @@ export default function Compare() {
               ))}
             </div>
           </div>
+
+          {selected.length > 0 && (
+            quota?.exhausted ? (
+              <span className="text-xs text-yellow-400">{t.compare.quotaExhaustedHint}</span>
+            ) : worstCaseCalls > 0 ? (
+              <span className="text-xs text-muted">{t.compare.quotaCostHint(worstCaseCalls)}</span>
+            ) : null
+          )}
         </div>
       </div>
 

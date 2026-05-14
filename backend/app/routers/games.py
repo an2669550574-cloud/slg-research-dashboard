@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from typing import Optional, Literal
-from app.database import get_db
-from app.models.game import Game
+from app.database import get_db, utcnow_naive
+from app.models.game import Game, GameRanking
+from app.rate_limit import refresh_cooldown
 from app.services.sensor_tower import sensor_tower_service, MOCK_SLG_GAMES
 from app.services.appstore import fetch_app_info
 from app.scheduler import sync_daily_rankings
@@ -55,15 +56,61 @@ async def list_games(
 
 
 @router.get("/rankings", response_model=list[RankingTodayOut])
-async def get_rankings(country: str = "US", platform: str = "ios"):
+async def get_rankings(
+    country: str = "US",
+    platform: str = "ios",
+    db: AsyncSession = Depends(get_db),
+):
+    """今日榜单。优先读 game_rankings 表（scheduler 02:30 UTC 写入），
+    缺当日数据时才回退 Sensor Tower（消耗配额）。
+
+    Dashboard 每次打开调这里——走 DB 路径意味着 0 配额。
+    """
+    today = utcnow_naive().strftime("%Y-%m-%d")
+    result = await db.execute(
+        select(GameRanking)
+        .where(
+            GameRanking.date == today,
+            GameRanking.country == country,
+            GameRanking.platform == platform,
+        )
+        .order_by(GameRanking.rank.asc().nulls_last())
+    )
+    rows = result.scalars().all()
+    if rows:
+        return [
+            {
+                "app_id": r.app_id,
+                "name": r.name or r.app_id,
+                "publisher": r.publisher,
+                "icon_url": r.icon_url,
+                "rank": r.rank,
+                "downloads": r.downloads,
+                "revenue": r.revenue,
+                "date": r.date,
+            }
+            for r in rows
+        ]
+    # DB 当日无数据 → 回退 Sensor Tower（可能消耗配额 / 也可能命中 24h snapshot）
     return await sensor_tower_service.get_all_rankings_today(country, platform)
 
 
-@router.post("/rankings/refresh", response_model=list[RankingTodayOut])
+@router.post(
+    "/rankings/refresh",
+    response_model=list[RankingTodayOut],
+    dependencies=[Depends(refresh_cooldown)],
+)
 async def force_refresh_rankings(country: str = "US", platform: str = "ios"):
     """绕过缓存强制重拉今日榜单——dashboard 的"刷新数据"按钮调这里。
-    会消耗一次月度配额。"""
-    return await sensor_tower_service.force_refresh_today_rankings(country, platform)
+    会消耗一次月度配额。服务端 30s cooldown 防止前端 disable 被绕过。
+
+    顺手把新数据同步到 game_rankings 表，让接下来的 /games/rankings (DB 读路径)
+    也能看到最新值。sync_daily_rankings 内部再调 get_all_rankings_today 时会命中
+    刚刚填的缓存，不会产生第二次 API 调用。
+    """
+    fresh = await sensor_tower_service.force_refresh_today_rankings(country, platform)
+    await sync_daily_rankings(country=country, platform=platform)
+    return fresh
 
 
 @router.post("/sync-rankings")

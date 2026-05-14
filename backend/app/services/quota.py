@@ -8,20 +8,19 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
 from typing import Any, Optional
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database import AsyncSessionLocal
+from app.database import AsyncSessionLocal, utcnow_naive
 
 logger = logging.getLogger(__name__)
 
 
 def current_year_month() -> str:
-    return datetime.utcnow().strftime("%Y-%m")
+    return utcnow_naive().strftime("%Y-%m")
 
 
 async def _consume_in(session: AsyncSession, ym: str, limit: int) -> bool:

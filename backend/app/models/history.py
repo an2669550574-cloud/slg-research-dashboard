@@ -1,7 +1,7 @@
 from sqlalchemy import String, Integer, DateTime, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime
-from app.database import Base
+from app.database import Base, utcnow_naive
 
 class GameHistory(Base):
     __tablename__ = "game_histories"
@@ -13,4 +13,4 @@ class GameHistory(Base):
     title: Mapped[str] = mapped_column(String(300))
     description: Mapped[str] = mapped_column(Text, nullable=True)
     source: Mapped[str] = mapped_column(String(50), default="manual")  # manual/ai/appstore/sensortower
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)

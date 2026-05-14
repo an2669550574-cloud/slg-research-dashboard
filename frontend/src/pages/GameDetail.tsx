@@ -360,13 +360,20 @@ export default function GameDetail() {
     enabled: !!appId,
   })
 
-  // queryKey 跟 Rankings.tsx / Dashboard.tsx 保持一致，共享缓存
+  // 游戏元信息从 games 表读：今日榜单 rankings 只覆盖 Top N，
+  // 游戏掉出榜单时详情页头部不应该空白
+  const { data: game } = useQuery({
+    queryKey: ['games', 'detail', appId],
+    queryFn: () => gamesApi.get(appId!),
+    enabled: !!appId,
+  })
+
+  // 今日榜单数据只用于显示当日 rank/revenue/downloads 三个数字
   const { data: rankings } = useQuery({
     queryKey: ['rankings', 'US', 'ios'],
     queryFn: () => gamesApi.rankings('US', 'ios'),
   })
-
-  const game = rankings?.find((g: any) => g.app_id === appId)
+  const todayStats = rankings?.find((g: any) => g.app_id === appId)
 
   const chartTooltipStyle = {
     contentStyle: { background: 'rgb(var(--bg-elevated))', border: '1px solid rgb(var(--border-default))', borderRadius: 8 },
@@ -394,11 +401,13 @@ export default function GameDetail() {
           <div>
             <h1 className="text-xl font-bold text-primary">{game.name}</h1>
             <p className="text-muted text-sm mt-0.5">{game.publisher}</p>
-            <div className="flex items-center gap-3 mt-2">
-              <span className="text-xs text-yellow-400 font-medium">{t.gameDetail.rankPrefix} #{game.rank}</span>
-              <span className="text-xs text-emerald-400">{formatRevenue(game.revenue)} / {t.gameDetail.today}</span>
-              <span className="text-xs text-secondary">{formatNumber(game.downloads)} {t.dashboard.downloadsSuffix}</span>
-            </div>
+            {todayStats && (
+              <div className="flex items-center gap-3 mt-2">
+                <span className="text-xs text-yellow-400 font-medium">{t.gameDetail.rankPrefix} #{todayStats.rank}</span>
+                <span className="text-xs text-emerald-400">{formatRevenue(todayStats.revenue)} / {t.gameDetail.today}</span>
+                <span className="text-xs text-secondary">{formatNumber(todayStats.downloads)} {t.dashboard.downloadsSuffix}</span>
+              </div>
+            )}
           </div>
         </div>
       )}

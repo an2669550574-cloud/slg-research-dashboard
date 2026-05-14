@@ -1,9 +1,9 @@
 import logging
-from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from sqlalchemy import select
-from app.database import AsyncSessionLocal
+from sqlalchemy import select, delete
+from sqlalchemy.exc import IntegrityError
+from app.database import AsyncSessionLocal, utcnow_naive
 from app.models.game import Game, GameRanking
 from app.services.sensor_tower import sensor_tower_service
 
@@ -13,22 +13,24 @@ scheduler = AsyncIOScheduler()
 
 
 async def sync_daily_rankings(country: str = "US", platform: str = "ios") -> int:
-    """每日抓取榜单数据并入库 game_rankings。返回写入条数。"""
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    """每日抓取榜单数据并入库 game_rankings。返回写入条数。
+
+    幂等：先 DELETE 同 (date, country, platform) 的行，再 INSERT。
+    联合 unique (app_id, date, country, platform) 兜底：两个 scheduler 并发跑时
+    后到的会 IntegrityError，回滚后日志告警——好过偷偷写重复。
+    """
+    today = utcnow_naive().strftime("%Y-%m-%d")
     rankings = await sensor_tower_service.get_all_rankings_today(country=country, platform=platform)
 
     written = 0
     async with AsyncSessionLocal() as db:
-        # 当日重复执行时，先清掉同 country/platform 的当日数据再写入，避免重复
-        existing = await db.execute(
-            select(GameRanking).where(
+        await db.execute(
+            delete(GameRanking).where(
                 GameRanking.date == today,
                 GameRanking.country == country,
                 GameRanking.platform == platform,
             )
         )
-        for row in existing.scalars().all():
-            await db.delete(row)
 
         for item in rankings:
             app_id = item.get("app_id")
@@ -42,9 +44,20 @@ async def sync_daily_rankings(country: str = "US", platform: str = "ios") -> int
                 revenue=item.get("revenue"),
                 country=country,
                 platform=platform,
+                name=item.get("name"),
+                publisher=item.get("publisher"),
+                icon_url=item.get("icon_url"),
             ))
             written += 1
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError as e:
+            await db.rollback()
+            logger.warning(
+                "Daily rankings sync conflict for %s/%s on %s (concurrent run?): %s",
+                country, platform, today, e,
+            )
+            return 0
     logger.info("Daily rankings sync: wrote %d rows for %s/%s on %s", written, country, platform, today)
     return written
 

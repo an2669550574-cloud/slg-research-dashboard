@@ -165,6 +165,8 @@ export const en: Translations = {
     days30: '30d',
     days90: '90d',
     addAnother: '+ Add another',
+    quotaCostHint: (calls: number) => `Switching can cost up to ~${calls} Sensor Tower calls`,
+    quotaExhaustedHint: 'Quota exhausted — chart uses cached snapshots; new ranges may be empty',
   },
   csv: {
     rank: 'Rank',

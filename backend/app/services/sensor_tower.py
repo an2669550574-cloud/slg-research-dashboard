@@ -209,12 +209,21 @@ class SensorTowerService:
 
         典型用例：dashboard 上的"刷新数据"按钮——用户明确想看最新数据。
         清完两层缓存后再调 _cached_get，必然 miss → 走真实 API → 写新 snapshot。
+
+        副作用：同 country/platform 的 metrics L1 缓存也被清空（rank/dl/rev），
+        让下次进游戏详情时能从 L2 snapshot 重读到与新今日数据同源的曲线。
+        L2 snapshot 不动——避免误清后下次读取又得消耗 N×3 配额重建。
         """
         if self.use_mock:
             return _mock_today_rankings()
         key = f"today:{platform}:{country}"
         await sensor_tower_cache.invalidate(key)
         await quota.delete_snapshot(key)
+        # 清同 country/platform 的 metrics L1，让下次读穿透到 L2 snapshot
+        metric_suffix = f":{platform}:{country}:"
+        await sensor_tower_cache.invalidate_matching(
+            lambda k: k.startswith(("rank", "dl:", "rev:")) and metric_suffix in k
+        )
         return await self.get_all_rankings_today(country, platform)
 
 

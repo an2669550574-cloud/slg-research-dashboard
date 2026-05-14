@@ -15,6 +15,7 @@ class AsyncCache(Protocol):
     async def get(self, key: str) -> Optional[Any]: ...
     async def set(self, key: str, value: Any, ttl_seconds: float) -> None: ...
     async def invalidate(self, key: str) -> None: ...
+    async def invalidate_matching(self, predicate: Callable[[str], bool]) -> int: ...
     async def get_or_set(self, key: str, ttl_seconds: float, loader: Callable[[], Awaitable[Any]]) -> Any: ...
     def stats(self) -> dict[str, int]: ...
 
@@ -48,6 +49,14 @@ class InMemoryTTLCache:
     async def invalidate(self, key: str) -> None:
         async with self._lock:
             self._store.pop(key, None)
+
+    async def invalidate_matching(self, predicate: Callable[[str], bool]) -> int:
+        """清除所有满足 predicate 的 key，返回清除条数。L2 snapshot 不受影响。"""
+        async with self._lock:
+            victims = [k for k in self._store if predicate(k)]
+            for k in victims:
+                self._store.pop(k, None)
+            return len(victims)
 
     async def get_or_set(self, key: str, ttl_seconds: float, loader: Callable[[], Awaitable[Any]]) -> Any:
         cached = await self.get(key)
