@@ -404,8 +404,8 @@ export default function GameDetail() {
             {todayStats && (
               <div className="flex items-center gap-3 mt-2">
                 <span className="text-xs text-yellow-400 font-medium">{t.gameDetail.rankPrefix} #{todayStats.rank}</span>
-                <span className="text-xs text-emerald-400">{formatRevenue(todayStats.revenue)} / {t.gameDetail.today}</span>
-                <span className="text-xs text-secondary">{formatNumber(todayStats.downloads)} {t.dashboard.downloadsSuffix}</span>
+                <span className="text-xs text-emerald-400">{formatRevenue(todayStats.revenue ?? 0)} / {t.gameDetail.today}</span>
+                <span className="text-xs text-secondary">{formatNumber(todayStats.downloads ?? 0)} {t.dashboard.downloadsSuffix}</span>
               </div>
             )}
           </div>

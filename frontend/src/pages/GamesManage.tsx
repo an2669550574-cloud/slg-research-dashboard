@@ -6,17 +6,9 @@ import { useT } from '../i18n'
 import { Plus, Trash2, Search, Loader2, Check, Pencil } from 'lucide-react'
 import { Pagination } from '../components/Pagination'
 import { useDebouncedValue } from '../lib/hooks'
-import type { GameOut } from '../lib/types'
+import type { GameOut, AppLookupResult } from '../lib/types'
 
 const PAGE_SIZE = 20
-
-type LookupResult = {
-  name?: string
-  publisher?: string
-  icon_url?: string
-  release_date?: string
-  description?: string
-}
 
 type FormState = {
   app_id: string
@@ -47,7 +39,7 @@ export default function GamesManage() {
   const qc = useQueryClient()
   const [mode, setMode] = useState<Mode>({ kind: 'closed' })
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
-  const [lookup, setLookup] = useState<LookupResult | null>(null)
+  const [lookup, setLookup] = useState<AppLookupResult | null>(null)
   const [search, setSearch] = useState('')
   const [offset, setOffset] = useState(0)
   const debouncedSearch = useDebouncedValue(search)
@@ -72,7 +64,7 @@ export default function GamesManage() {
 
   const lookupMut = useMutation({
     mutationFn: (appId: string) => gamesApi.lookup(appId),
-    onSuccess: (data: LookupResult) => {
+    onSuccess: (data: AppLookupResult) => {
       setLookup(data)
       setForm(f => ({
         ...f,
