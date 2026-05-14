@@ -7,9 +7,7 @@ import { formatNumber, formatRevenue } from '../lib/utils'
 import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
 import { Search, Download as DownloadIcon } from 'lucide-react'
-
-const COUNTRIES = ['US', 'GB', 'DE', 'JP', 'KR', 'AU', 'CA', 'FR']
-const PLATFORMS = ['ios', 'android']
+import { COUNTRIES, PLATFORMS, platformLabel } from '../lib/markets'
 
 export default function Rankings() {
   const navigate = useNavigate()
@@ -75,7 +73,7 @@ export default function Rankings() {
               onClick={() => setPlatform(p)}
               className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${platform === p ? 'bg-brand-600 text-white' : 'text-secondary hover:text-primary'}`}
             >
-              {p === 'ios' ? 'iOS' : 'Android'}
+              {platformLabel(p)}
             </button>
           ))}
         </div>

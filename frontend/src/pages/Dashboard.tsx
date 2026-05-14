@@ -9,6 +9,7 @@ import { TrendingUp, Download, DollarSign, Trophy, RefreshCw, Download as Downlo
 import { CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis } from 'recharts'
 import { useNavigate } from 'react-router-dom'
 import { QuotaBanner } from '../components/QuotaBanner'
+import { COUNTRIES, PLATFORMS, platformLabel, type Country, type Platform } from '../lib/markets'
 
 function StatCard({ icon: Icon, label, value, sub, color }: any) {
   return (
@@ -31,6 +32,8 @@ export default function Dashboard() {
   const qc = useQueryClient()
   const [cooldown, setCooldown] = useState(false)
   const [cooldownLeft, setCooldownLeft] = useState(0)
+  const [country, setCountry] = useState<Country>('US')
+  const [platform, setPlatform] = useState<Platform>('ios')
 
   // 已追踪的游戏（来自 DB），用于"监控游戏数"卡片
   const { data: trackedGames = [] } = useQuery({
@@ -41,8 +44,8 @@ export default function Dashboard() {
   // 今日榜单（来自 Sensor Tower 真实/mock）
   // queryKey 必须跟 Rankings.tsx 的形态一致 ['rankings', country, platform]，否则同一份数据会被前端当成两个 query 各自 fetch
   const { data: rankings = [], isLoading } = useQuery({
-    queryKey: ['rankings', 'US', 'ios'],
-    queryFn: () => gamesApi.rankings('US', 'ios'),
+    queryKey: ['rankings', country, platform],
+    queryFn: () => gamesApi.rankings(country, platform),
   })
 
   // 当月 Sensor Tower API 配额
@@ -57,9 +60,9 @@ export default function Dashboard() {
   // 可点但服务端会 429。
   const REFRESH_COOLDOWN_SEC = 30
   const refreshMut = useMutation({
-    mutationFn: () => gamesApi.refreshRankings('US', 'ios'),
+    mutationFn: () => gamesApi.refreshRankings(country, platform),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['rankings', 'US', 'ios'] })
+      qc.invalidateQueries({ queryKey: ['rankings', country, platform] })
       qc.invalidateQueries({ queryKey: ['quota'] })
       toast.success(t.common.refreshed)
       setCooldown(true)
@@ -86,7 +89,7 @@ export default function Dashboard() {
   const handleExport = () => {
     if (rankings.length === 0) { toast.error(t.common.noExportData); return }
     const date = new Date().toISOString().slice(0, 10)
-    downloadCsv(`dashboard-${date}.csv`, rankings, [
+    downloadCsv(`dashboard-${country}-${platform}-${date}.csv`, rankings, [
       { header: t.csv.rank, get: (r: any) => r.rank },
       { header: t.csv.appId, get: (r: any) => r.app_id },
       { header: t.csv.gameName, get: (r: any) => r.name },
@@ -125,6 +128,31 @@ export default function Dashboard() {
       </div>
 
       <QuotaBanner quota={quota} />
+
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex gap-1 bg-elevated rounded-lg p-1">
+          {PLATFORMS.map(p => (
+            <button
+              key={p}
+              onClick={() => setPlatform(p)}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${platform === p ? 'bg-brand-600 text-white' : 'text-secondary hover:text-primary'}`}
+            >
+              {platformLabel(p)}
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-1 bg-elevated rounded-lg p-1">
+          {COUNTRIES.map(c => (
+            <button
+              key={c}
+              onClick={() => setCountry(c)}
+              className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${country === c ? 'bg-brand-600 text-white' : 'text-secondary hover:text-primary'}`}
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="grid grid-cols-4 gap-4">
         <StatCard icon={Trophy} label={t.dashboard.statGames} value={trackedGames.length} sub={t.dashboard.statCategory} color="bg-brand-600" />

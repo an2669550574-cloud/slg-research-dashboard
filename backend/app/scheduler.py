@@ -3,6 +3,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select, delete
 from sqlalchemy.exc import IntegrityError
+from app.config import settings
 from app.database import AsyncSessionLocal, utcnow_naive
 from app.models.game import Game, GameRanking
 from app.services.sensor_tower import sensor_tower_service
@@ -10,6 +11,11 @@ from app.services.sensor_tower import sensor_tower_service
 logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler()
+
+# 每个 combo 间隔 N 分钟避免 Sensor Tower 端的突发限流；02:30 起步留够
+# UTC 早上的低峰窗口。16 个 combo × 2min = 32min → 03:02 结束，仍在窗口内。
+_SCHEDULE_START_MINUTE = 30
+_SCHEDULE_STEP_MINUTES = 2
 
 
 async def sync_daily_rankings(country: str = "US", platform: str = "ios") -> int:
@@ -78,25 +84,31 @@ async def sync_seed_games_if_empty() -> None:
 def start_scheduler() -> None:
     if scheduler.running:
         return
-    # 每日 02:30 UTC 抓 US/iOS 与 US/android 榜单
-    scheduler.add_job(
-        sync_daily_rankings,
-        CronTrigger(hour=2, minute=30, timezone="UTC"),
-        id="sync_daily_rankings_us_ios",
-        kwargs={"country": "US", "platform": "ios"},
-        replace_existing=True,
-        misfire_grace_time=3600,
-    )
-    scheduler.add_job(
-        sync_daily_rankings,
-        CronTrigger(hour=2, minute=35, timezone="UTC"),
-        id="sync_daily_rankings_us_android",
-        kwargs={"country": "US", "platform": "android"},
-        replace_existing=True,
-        misfire_grace_time=3600,
-    )
+    combos = settings.sync_combos_list
+    if not combos:
+        logger.warning("SYNC_RANKING_COMBOS produced 0 valid combos; scheduler has no jobs")
+        scheduler.start()
+        return
+
+    for idx, (country, platform) in enumerate(combos):
+        # 错峰：02:30, 02:32, 02:34, ... 每个 combo 间隔 2 分钟
+        minute_total = _SCHEDULE_START_MINUTE + idx * _SCHEDULE_STEP_MINUTES
+        hour = 2 + minute_total // 60
+        minute = minute_total % 60
+        scheduler.add_job(
+            sync_daily_rankings,
+            CronTrigger(hour=hour, minute=minute, timezone="UTC"),
+            id=f"sync_daily_rankings_{country.lower()}_{platform}",
+            kwargs={"country": country, "platform": platform},
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
     scheduler.start()
-    logger.info("Scheduler started with %d jobs", len(scheduler.get_jobs()))
+    logger.info(
+        "Scheduler started with %d jobs (combos: %s)",
+        len(scheduler.get_jobs()),
+        ", ".join(f"{c}/{p}" for c, p in combos),
+    )
 
 
 def shutdown_scheduler() -> None:

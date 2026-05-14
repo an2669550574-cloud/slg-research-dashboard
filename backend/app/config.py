@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     # 不超过这个时长的快照，直接返回不消耗配额。设成跟 CACHE_TTL 一致即可。
     SENSOR_TOWER_SNAPSHOT_FRESH_HOURS: int = 24
 
+    # 每日 scheduler 同步的 (country, platform) 组合。逗号分隔 "country:platform"。
+    # 每组每天消耗 1 次月度配额，注意 500/月 ÷ 30 天 ≈ 16 组上限。
+    # 默认 4 组覆盖 SLG 主要市场。
+    SYNC_RANKING_COMBOS: str = "US:ios,US:android,JP:ios,KR:ios"
+
     # Sentry：留空时不上报。生产环境填入 DSN 即开启
     SENTRY_DSN: Optional[str] = None
     SENTRY_ENVIRONMENT: str = "production"
@@ -40,6 +45,37 @@ class Settings(BaseSettings):
         if not self.CORS_ORIGINS or self.CORS_ORIGINS.strip() == "*":
             return ["*"]
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+
+    @property
+    def sync_combos_list(self) -> list[tuple[str, str]]:
+        """解析 SYNC_RANKING_COMBOS 成 [(country, platform), ...]。
+
+        坏数据（漏冒号、空 country）跳过并记日志，不要因为一个组合的拼写
+        错误把整个 scheduler 拉垮。
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        out: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for raw in (self.SYNC_RANKING_COMBOS or "").split(","):
+            raw = raw.strip()
+            if not raw:
+                continue
+            if ":" not in raw:
+                logger.warning("Skipping malformed sync combo %r (need country:platform)", raw)
+                continue
+            country, platform = raw.split(":", 1)
+            country = country.strip().upper()
+            platform = platform.strip().lower()
+            if not country or platform not in ("ios", "android"):
+                logger.warning("Skipping invalid sync combo %r", raw)
+                continue
+            key = (country, platform)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(key)
+        return out
 
     class Config:
         env_file = ".env"
