@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { materialsApi, gamesApi } from '../lib/api'
 import { PLATFORM_CONFIG } from '../lib/utils'
@@ -7,6 +7,11 @@ import { ExternalLink, Trash2, Plus, Search, Download as DownloadIcon } from 'lu
 import { useNavigate } from 'react-router-dom'
 import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
+import { Pagination } from '../components/Pagination'
+import { useDebouncedValue } from '../lib/hooks'
+import type { MaterialOut } from '../lib/types'
+
+const PAGE_SIZE = 12
 
 export default function Materials() {
   const navigate = useNavigate()
@@ -14,13 +19,28 @@ export default function Materials() {
   const qc = useQueryClient()
   const [search, setSearch] = useState('')
   const [filterPlatform, setFilterPlatform] = useState('')
+  const [offset, setOffset] = useState(0)
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ title: '', url: '', app_id: '', platform: 'youtube', material_type: 'video', tags: '', notes: '' })
+  const debouncedSearch = useDebouncedValue(search)
 
-  const { data: materials = [], isLoading } = useQuery({
-    queryKey: ['materials'],
-    queryFn: () => materialsApi.list(),
+  // 任一筛选条件变化都回到第一页
+  useEffect(() => { setOffset(0) }, [debouncedSearch, filterPlatform])
+
+  const { data: paged, isLoading } = useQuery({
+    queryKey: ['materials', debouncedSearch, filterPlatform, offset],
+    queryFn: () => materialsApi.listPaged({
+      limit: PAGE_SIZE,
+      offset,
+      q: debouncedSearch || undefined,
+      platform: filterPlatform || undefined,
+    }),
+    placeholderData: keepPreviousData,
   })
+  const materials: MaterialOut[] = paged?.items ?? []
+  const total = paged?.total ?? 0
+
+  // 关联游戏名映射，依然走 /games/ 全表（管理面板规模小，limit=200 已够）
   const { data: allGames = [] } = useQuery({
     queryKey: ['games', 'tracked'],
     queryFn: () => gamesApi.list({ limit: 200 }),
@@ -43,13 +63,7 @@ export default function Materials() {
     },
   })
 
-  const filtered = materials.filter((m: any) => {
-    const matchSearch = !search || m.title.toLowerCase().includes(search.toLowerCase())
-    const matchPlatform = !filterPlatform || m.platform === filterPlatform
-    return matchSearch && matchPlatform
-  })
-
-  const gameMap = Object.fromEntries(allGames.map((g: any) => [g.app_id, g]))
+  const gameMap = Object.fromEntries(allGames.map(g => [g.app_id, g]))
 
   const typeLabel = (kind: string) => t.materials.types[kind as keyof typeof t.materials.types] || kind
 
@@ -69,20 +83,28 @@ export default function Materials() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => {
-              if (filtered.length === 0) { toast.error(t.common.noExportData); return }
+            onClick={async () => {
+              // 导出整套匹配结果（不只当前页）。limit=200 是后端硬上限；
+              // 实际素材库一般 <100 条，超出时会截断并提示用户。
+              const all = await materialsApi.listPaged({
+                limit: 200,
+                offset: 0,
+                q: debouncedSearch || undefined,
+                platform: filterPlatform || undefined,
+              }).catch(() => null)
+              if (!all || all.items.length === 0) { toast.error(t.common.noExportData); return }
               const date = new Date().toISOString().slice(0, 10)
-              downloadCsv(`materials-${date}.csv`, filtered, [
-                { header: t.csv.game, get: (m: any) => gameMap[m.app_id]?.name || m.app_id },
-                { header: t.csv.title, get: (m: any) => m.title },
-                { header: t.csv.platform, get: (m: any) => m.platform },
-                { header: t.csv.type, get: (m: any) => m.material_type },
-                { header: t.csv.url, get: (m: any) => m.url },
-                { header: t.csv.tags, get: (m: any) => m.tags },
-                { header: t.csv.notes, get: (m: any) => m.notes },
-                { header: t.csv.createdAt, get: (m: any) => m.created_at },
+              downloadCsv(`materials-${date}.csv`, all.items, [
+                { header: t.csv.game, get: (m: MaterialOut) => gameMap[m.app_id]?.name || m.app_id },
+                { header: t.csv.title, get: (m: MaterialOut) => m.title },
+                { header: t.csv.platform, get: (m: MaterialOut) => m.platform ?? '' },
+                { header: t.csv.type, get: (m: MaterialOut) => m.material_type },
+                { header: t.csv.url, get: (m: MaterialOut) => m.url },
+                { header: t.csv.tags, get: (m: MaterialOut) => m.tags.join(';') },
+                { header: t.csv.notes, get: (m: MaterialOut) => m.notes ?? '' },
+                { header: t.csv.createdAt, get: (m: MaterialOut) => m.created_at },
               ])
-              toast.success(t.common.exported(filtered.length))
+              toast.success(t.common.exported(all.items.length))
             }}
             className="flex items-center gap-2 px-3 py-2 bg-elevated hover:bg-elevated/70 rounded-lg text-sm text-primary transition-colors"
           >
@@ -161,7 +183,7 @@ export default function Materials() {
         </div>
       </div>
 
-      <div className="text-xs text-muted">{filtered.length} {t.materials.countSuffix}</div>
+      <div className="text-xs text-muted">{total} {t.materials.countSuffix}</div>
 
       {isLoading ? (
         <div className="grid grid-cols-2 gap-3">
@@ -169,12 +191,14 @@ export default function Materials() {
             <div key={i} className="h-24 bg-surface rounded-xl animate-pulse" />
           ))}
         </div>
-      ) : filtered.length === 0 ? (
-        <div className="py-20 text-center text-muted text-sm">{t.materials.empty}</div>
+      ) : materials.length === 0 ? (
+        <div className="py-20 text-center text-muted text-sm">
+          {debouncedSearch || filterPlatform ? t.common.noResult : t.materials.empty}
+        </div>
       ) : (
         <div className="grid grid-cols-2 gap-3">
-          {filtered.map((m: any) => {
-            const platCfg = PLATFORM_CONFIG[m.platform] || PLATFORM_CONFIG.other
+          {materials.map(m => {
+            const platCfg = (m.platform && PLATFORM_CONFIG[m.platform]) || PLATFORM_CONFIG.other
             const game = gameMap[m.app_id]
             return (
               <div key={m.id} className="group bg-surface border border-default hover:border-default rounded-xl p-4 transition-colors">
@@ -222,6 +246,8 @@ export default function Materials() {
           })}
         </div>
       )}
+
+      <Pagination total={total} offset={offset} pageSize={PAGE_SIZE} onOffsetChange={setOffset} />
     </div>
   )
 }

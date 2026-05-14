@@ -145,6 +145,12 @@ export interface AppLookupResult {
 
 // ─── 通用 ────────────────────────────────────────────────────────────────
 
+/** 分页响应：后端把总数放在 X-Total-Count 响应头里。 */
+export interface PagedResponse<T> {
+  items: T[]
+  total: number
+}
+
 export interface DeleteResponse {
   message: string
   app_id?: string

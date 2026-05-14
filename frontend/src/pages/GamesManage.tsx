@@ -1,9 +1,14 @@
-import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { gamesApi } from '../lib/api'
 import { useT } from '../i18n'
 import { Plus, Trash2, Search, Loader2, Check, Pencil } from 'lucide-react'
+import { Pagination } from '../components/Pagination'
+import { useDebouncedValue } from '../lib/hooks'
+import type { GameOut } from '../lib/types'
+
+const PAGE_SIZE = 20
 
 type LookupResult = {
   name?: string
@@ -44,14 +49,26 @@ export default function GamesManage() {
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [lookup, setLookup] = useState<LookupResult | null>(null)
   const [search, setSearch] = useState('')
+  const [offset, setOffset] = useState(0)
+  const debouncedSearch = useDebouncedValue(search)
 
   const isEditing = mode.kind === 'edit'
   const isOpen = mode.kind !== 'closed'
 
-  const { data: games = [], isLoading } = useQuery({
-    queryKey: ['games', 'manage'],
-    queryFn: () => gamesApi.list({ limit: 200 }),
+  // 搜索词变化时回到第一页，避免在第 3 页搜个新词后仍停在 offset=40 拿空页
+  useEffect(() => { setOffset(0) }, [debouncedSearch])
+
+  const { data: paged, isLoading } = useQuery({
+    queryKey: ['games', 'manage', debouncedSearch, offset],
+    queryFn: () => gamesApi.listPaged({
+      limit: PAGE_SIZE,
+      offset,
+      q: debouncedSearch || undefined,
+    }),
+    placeholderData: keepPreviousData,
   })
+  const games: GameOut[] = paged?.items ?? []
+  const total = paged?.total ?? 0
 
   const lookupMut = useMutation({
     mutationFn: (appId: string) => gamesApi.lookup(appId),
@@ -99,14 +116,6 @@ export default function GamesManage() {
     },
   })
 
-  const filtered = games.filter((g: any) => {
-    if (!search) return true
-    const s = search.toLowerCase()
-    return g.name?.toLowerCase().includes(s)
-      || g.publisher?.toLowerCase().includes(s)
-      || g.app_id?.toLowerCase().includes(s)
-  })
-
   function closeForm() {
     setMode({ kind: 'closed' })
     setForm(EMPTY_FORM)
@@ -119,7 +128,7 @@ export default function GamesManage() {
     setLookup(null)
   }
 
-  function openEdit(g: any) {
+  function openEdit(g: GameOut) {
     setMode({ kind: 'edit', appId: g.app_id })
     setForm({
       app_id: g.app_id,
@@ -145,7 +154,7 @@ export default function GamesManage() {
     }
   }
 
-  const handleDelete = (game: any) => {
+  const handleDelete = (game: GameOut) => {
     if (!confirm(t.gamesManage.confirmDelete(game.name || game.app_id))) return
     deleteMut.mutate(game.app_id)
   }
@@ -270,9 +279,11 @@ export default function GamesManage() {
           <tbody className="divide-y divide-default">
             {isLoading ? (
               <tr><td colSpan={5} className="px-5 py-12 text-center text-muted text-sm">{t.common.loading}</td></tr>
-            ) : filtered.length === 0 ? (
-              <tr><td colSpan={5} className="px-5 py-12 text-center text-muted text-sm">{t.gamesManage.empty}</td></tr>
-            ) : filtered.map((g: any) => (
+            ) : games.length === 0 ? (
+              <tr><td colSpan={5} className="px-5 py-12 text-center text-muted text-sm">
+                {debouncedSearch ? t.common.noResult : t.gamesManage.empty}
+              </td></tr>
+            ) : games.map(g => (
               <tr key={g.app_id} className="hover:bg-elevated/50 transition-colors">
                 <td className="px-5 py-3">
                   <div className="flex items-center gap-3">
@@ -313,6 +324,8 @@ export default function GamesManage() {
           </tbody>
         </table>
       </div>
+
+      <Pagination total={total} offset={offset} pageSize={PAGE_SIZE} onOffsetChange={setOffset} />
     </div>
   )
 }

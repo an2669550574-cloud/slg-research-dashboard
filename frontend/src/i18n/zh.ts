@@ -37,6 +37,10 @@ export const zh = {
     custom: '自定义',
     pickRange: '请选择起止日期',
     publishedBy: '发行商',
+    paginationRange: (from: number, to: number, total: number) => `${from}-${to} / 共 ${total} 条`,
+    paginationPage: (page: number, total: number) => `第 ${page} / ${total} 页`,
+    paginationPrev: '上一页',
+    paginationNext: '下一页',
   },
   dashboard: {
     title: '仪表盘',

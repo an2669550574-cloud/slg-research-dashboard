@@ -39,6 +39,10 @@ export const en: Translations = {
     custom: 'Custom',
     pickRange: 'Please pick start and end dates',
     publishedBy: 'Publisher',
+    paginationRange: (from: number, to: number, total: number) => `${from}-${to} of ${total}`,
+    paginationPage: (page: number, total: number) => `Page ${page} / ${total}`,
+    paginationPrev: 'Previous',
+    paginationNext: 'Next',
   },
   dashboard: {
     title: 'Dashboard',

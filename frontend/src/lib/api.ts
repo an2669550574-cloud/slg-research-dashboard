@@ -12,12 +12,22 @@ import type {
   MaterialOut,
   MaterialUpdate,
   MetricsOut,
+  PagedResponse,
   QuotaInfo,
   RankingTodayOut,
   SeedResponse,
   SyncHistoryResponse,
   SyncRankingsResponse,
 } from './types'
+
+/** 把 axios 响应包成 {items, total}，total 从 X-Total-Count 头里读。
+ * 缺这个头时 fallback 用 items.length（兼容老路由 / 测试夹具）。
+ */
+function withTotal<T>(headers: { 'x-total-count'?: string } | Record<string, unknown>, items: T[]): PagedResponse<T> {
+  const raw = (headers as Record<string, unknown>)['x-total-count']
+  const total = typeof raw === 'string' ? parseInt(raw, 10) : NaN
+  return { items, total: Number.isFinite(total) ? total : items.length }
+}
 
 const apiKey = import.meta.env.VITE_API_KEY as string | undefined
 
@@ -60,6 +70,9 @@ export interface MetricsParams {
 export const gamesApi = {
   list: (params?: GameListParams): Promise<GameOut[]> =>
     api.get('/games/', { params }).then(r => r.data),
+  /** 带总数的分页查询。GamesManage 用，能正确展示 "X / total" 和翻页。 */
+  listPaged: (params?: GameListParams): Promise<PagedResponse<GameOut>> =>
+    api.get('/games/', { params }).then(r => withTotal(r.headers, r.data)),
   rankings: (country = 'US', platform = 'ios'): Promise<RankingTodayOut[]> =>
     api.get('/games/rankings', { params: { country, platform } }).then(r => r.data),
   get: (appId: string): Promise<GameOut> =>
@@ -110,6 +123,8 @@ export interface MaterialListParams {
 export const materialsApi = {
   list: (appId?: string, params?: MaterialListParams): Promise<MaterialOut[]> =>
     api.get('/materials/', { params: { ...(appId ? { app_id: appId } : {}), ...params } }).then(r => r.data),
+  listPaged: (params?: MaterialListParams & { app_id?: string }): Promise<PagedResponse<MaterialOut>> =>
+    api.get('/materials/', { params }).then(r => withTotal(r.headers, r.data)),
   create: (data: MaterialCreate): Promise<MaterialOut> =>
     api.post('/materials/', data).then(r => r.data),
   update: (id: number, data: MaterialUpdate): Promise<MaterialOut> =>
