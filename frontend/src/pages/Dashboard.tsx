@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { gamesApi, quotaApi } from '../lib/api'
@@ -31,8 +31,8 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const t = useT()
   const qc = useQueryClient()
-  const [cooldown, setCooldown] = useState(false)
   const [cooldownLeft, setCooldownLeft] = useState(0)
+  const cooling = cooldownLeft > 0
   const [country, setCountry] = useState<Country>('US')
   const [platform, setPlatform] = useState<Platform>('ios')
 
@@ -67,16 +67,16 @@ export default function Dashboard() {
       qc.invalidateQueries({ queryKey: ['rankings', country, platform] })
       qc.invalidateQueries({ queryKey: ['quota'] })
       toast.success(t.common.refreshed)
-      setCooldown(true)
       setCooldownLeft(REFRESH_COOLDOWN_SEC)
-      const timer = setInterval(() => {
-        setCooldownLeft(prev => {
-          if (prev <= 1) { clearInterval(timer); setCooldown(false); return 0 }
-          return prev - 1
-        })
-      }, 1000)
     },
   })
+
+  // 倒计时；卸载时自动清理，避免在已卸载组件上 setState
+  useEffect(() => {
+    if (cooldownLeft <= 0) return
+    const id = setTimeout(() => setCooldownLeft(n => n - 1), 1000)
+    return () => clearTimeout(id)
+  }, [cooldownLeft])
 
   const top5 = rankings.slice(0, 5)
   const totalDownloads = rankings.reduce((s, g) => s + (g.downloads || 0), 0)
@@ -123,11 +123,11 @@ export default function Dashboard() {
           </button>
           <button
             onClick={() => refreshMut.mutate()}
-            disabled={refreshMut.isPending || cooldown}
+            disabled={refreshMut.isPending || cooling}
             className="flex items-center gap-2 px-3 py-2 bg-elevated hover:bg-elevated/70 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm text-primary transition-colors"
           >
             {refreshMut.isPending ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-            {cooldown ? t.common.refreshCooldown(cooldownLeft) : t.common.refresh}
+            {cooling ? t.common.refreshCooldown(cooldownLeft) : t.common.refresh}
           </button>
         </div>
       </div>
