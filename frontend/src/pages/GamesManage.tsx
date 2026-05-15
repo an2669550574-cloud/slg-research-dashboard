@@ -5,6 +5,7 @@ import { gamesApi } from '../lib/api'
 import { useT } from '../i18n'
 import { Plus, Trash2, Search, Loader2, Check, Pencil } from 'lucide-react'
 import { Pagination } from '../components/Pagination'
+import { GameIcon } from '../components/GameIcon'
 import { useDebouncedValue } from '../lib/hooks'
 import type { GameOut, AppLookupResult } from '../lib/types'
 
@@ -279,10 +280,7 @@ export default function GamesManage() {
               <tr key={g.app_id} className="hover:bg-elevated/50 transition-colors">
                 <td className="px-5 py-3">
                   <div className="flex items-center gap-3">
-                    {g.icon_url
-                      ? <img src={g.icon_url} alt={g.name} className="w-9 h-9 rounded-lg object-cover" />
-                      : <div className="w-9 h-9 rounded-lg bg-elevated flex items-center justify-center text-secondary text-xs">?</div>
-                    }
+                    <GameIcon src={g.icon_url} name={g.name} className="w-9 h-9 rounded-lg" />
                     <div>
                       <div className="text-sm font-medium text-primary">{g.name}</div>
                       <div className="text-xs text-muted">{g.publisher}</div>

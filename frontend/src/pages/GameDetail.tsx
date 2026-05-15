@@ -10,6 +10,7 @@ import {
   ArrowLeft, RefreshCw, Plus, Trash2, ExternalLink, Download as DownloadIcon, Loader2
 } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import { GameIcon } from '../components/GameIcon'
 
 const EMPTY_EVENT = { event_date: '', event_type: 'version', title: '', description: '' }
 
@@ -394,10 +395,7 @@ export default function GameDetail() {
 
       {game && (
         <div className="flex items-center gap-4">
-          {game.icon_url
-            ? <img src={game.icon_url} alt={game.name} className="w-16 h-16 rounded-2xl object-cover" />
-            : <div className="w-16 h-16 rounded-2xl bg-elevated" />
-          }
+          <GameIcon src={game.icon_url} name={game.name} className="w-16 h-16 rounded-2xl" />
           <div>
             <h1 className="text-xl font-bold text-primary">{game.name}</h1>
             <p className="text-muted text-sm mt-0.5">{game.publisher}</p>

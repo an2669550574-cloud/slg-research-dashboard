@@ -36,6 +36,14 @@ Thumbs.db
 
 # Claude Code local permissions (machine-specific)
 .claude/settings.local.json
+# MCP server config — contains absolute paths to local node install
+.mcp.json
+# Playwright MCP browsing artifacts (screenshots, a11y snapshots)
+.playwright-mcp/
+*-dashboard.png
+games-page.png
+materials-page.png
+snapshot-dashboard.md
 
 # IDE
 .vscode/settings.json

@@ -8,6 +8,7 @@ import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
 import { Search, Download as DownloadIcon } from 'lucide-react'
 import { COUNTRIES, PLATFORMS, platformLabel } from '../lib/markets'
+import { GameIcon } from '../components/GameIcon'
 
 export default function Rankings() {
   const navigate = useNavigate()
@@ -133,10 +134,7 @@ export default function Rankings() {
                     </td>
                     <td className="px-3 py-3.5">
                       <div className="flex items-center gap-3">
-                        {g.icon_url
-                          ? <img src={g.icon_url} alt={g.name} className="w-10 h-10 rounded-xl object-cover" />
-                          : <div className="w-10 h-10 rounded-xl bg-elevated flex items-center justify-center text-secondary text-xs">?</div>
-                        }
+                        <GameIcon src={g.icon_url} name={g.name} className="w-10 h-10 rounded-xl" />
                         <div>
                           <div className="text-sm font-medium text-primary">{g.name}</div>
                           <div className="text-xs text-muted">{g.publisher}</div>

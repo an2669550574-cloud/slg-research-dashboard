@@ -9,6 +9,7 @@ import { TrendingUp, Download, DollarSign, Trophy, RefreshCw, Download as Downlo
 import { CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis } from 'recharts'
 import { useNavigate } from 'react-router-dom'
 import { QuotaBanner } from '../components/QuotaBanner'
+import { GameIcon } from '../components/GameIcon'
 import { COUNTRIES, PLATFORMS, platformLabel, type Country, type Platform } from '../lib/markets'
 
 function StatCard({ icon: Icon, label, value, sub, color }: any) {
@@ -229,10 +230,7 @@ export default function Dashboard() {
                   <span className={`w-7 text-center text-sm font-bold ${g.rank <= 3 ? 'text-yellow-400' : 'text-muted'}`}>
                     #{g.rank}
                   </span>
-                  {g.icon_url
-                    ? <img src={g.icon_url} alt={g.name} className="w-9 h-9 rounded-xl object-cover" />
-                    : <div className="w-9 h-9 rounded-xl bg-elevated flex items-center justify-center text-secondary text-xs">?</div>
-                  }
+                  <GameIcon src={g.icon_url} name={g.name} className="w-9 h-9 rounded-xl" />
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium text-primary truncate">{g.name}</div>
                     <div className="text-xs text-muted truncate">{g.publisher}</div>

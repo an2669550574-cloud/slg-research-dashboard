@@ -6,6 +6,7 @@ import { formatNumber, formatRevenue } from '../lib/utils'
 import { X, Plus } from 'lucide-react'
 import { CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, XAxis, YAxis, Legend } from 'recharts'
 import { QuotaBanner } from '../components/QuotaBanner'
+import { GameIcon } from '../components/GameIcon'
 
 type Metric = 'revenue' | 'downloads' | 'rank'
 
@@ -95,7 +96,7 @@ export default function Compare() {
             return (
               <div key={appId} className="flex items-center gap-2 bg-elevated border border-default rounded-lg pl-2 pr-1 py-1">
                 <span className="w-2.5 h-2.5 rounded-full" style={{ background: COLORS[idx] }} />
-                {game?.icon_url && <img src={game.icon_url} alt="" className="w-5 h-5 rounded" />}
+                {game && <GameIcon src={game.icon_url} name={game.name} className="w-5 h-5 rounded" />}
                 <span className="text-sm text-primary">{game?.name || appId}</span>
                 <button
                   onClick={() => setSelected(s => s.filter(a => a !== appId))}
