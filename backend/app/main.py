@@ -15,6 +15,17 @@ from app.routers import games, history, materials, quota
 configure_logging(settings.LOG_LEVEL)
 init_sentry()
 
+import logging
+_log = logging.getLogger(__name__)
+if not settings.API_KEY:
+    if not settings.USE_MOCK_DATA:
+        # 拉真实数据 = 真实部署。无 API_KEY 等于把整个 API 裸奔到公网。
+        raise RuntimeError(
+            "API_KEY must be set when USE_MOCK_DATA=False — refusing to start "
+            "an unauthenticated API serving real data."
+        )
+    _log.warning("API_KEY not set — auth is DISABLED (dev mode; never deploy like this)")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

@@ -83,14 +83,20 @@ export default function Dashboard() {
   const totalDownloads = rankings.reduce((s, g) => s + (g.downloads || 0), 0)
   const totalRevenue = rankings.reduce((s, g) => s + (g.revenue || 0), 0)
 
-  const revenueChartData = rankings.slice(0, 8).map(g => {
-    const label = g.name ?? g.app_id
-    return {
-      name: label.length > 10 ? label.slice(0, 10) + '…' : label,
-      revenue: Math.round((g.revenue ?? 0) / 1000),
-      downloads: Math.round((g.downloads ?? 0) / 1000),
-    }
-  })
+  // 两个图各按自己的指标排 Top 8（rankings 本身按 rank 排序，不能直接 slice）。
+  // [...rankings] 复制后再 sort —— 别原地排序 React Query 缓存数组。
+  const chartLabel = (g: { name: string | null; app_id: string }) => {
+    const s = g.name ?? g.app_id
+    return s.length > 10 ? s.slice(0, 10) + '…' : s
+  }
+  const revenueChartData = [...rankings]
+    .sort((a, b) => (b.revenue ?? 0) - (a.revenue ?? 0))
+    .slice(0, 8)
+    .map(g => ({ name: chartLabel(g), revenue: Math.round((g.revenue ?? 0) / 1000) }))
+  const downloadsChartData = [...rankings]
+    .sort((a, b) => (b.downloads ?? 0) - (a.downloads ?? 0))
+    .slice(0, 8)
+    .map(g => ({ name: chartLabel(g), downloads: Math.round((g.downloads ?? 0) / 1000) }))
 
   const handleExport = () => {
     if (rankings.length === 0) { toast.error(t.common.noExportData); return }
@@ -195,7 +201,7 @@ export default function Dashboard() {
             <div className="h-48 flex items-center justify-center text-muted text-sm">{t.common.loading}</div>
           ) : (
             <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={revenueChartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+              <BarChart data={downloadsChartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--border-default))" />
                 <XAxis dataKey="name" tick={{ fill: 'rgb(var(--text-muted))', fontSize: 11 }} />
                 <YAxis tick={{ fill: 'rgb(var(--text-muted))', fontSize: 11 }} />
