@@ -2,23 +2,15 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useT } from '../i18n'
 
 interface Props {
-  /** 总条数（来自 X-Total-Count） */
   total: number
-  /** 当前 offset（从 0 起） */
   offset: number
-  /** 每页条数 */
   pageSize: number
-  /** offset 变更回调 */
   onOffsetChange: (offset: number) => void
 }
 
-/**
- * 翻页条。无内部状态——父组件持有 offset，本组件只负责展示和触发回调。
- * 总数 <= 一页时整体隐藏，避免 UI 噪音。
- */
 export function Pagination({ total, offset, pageSize, onOffsetChange }: Props) {
   const t = useT()
-  if (total <= pageSize) return null
+  if (total <= pageSize) return null // 单页时整体隐藏
 
   const page = Math.floor(offset / pageSize) + 1
   const totalPages = Math.max(1, Math.ceil(total / pageSize))

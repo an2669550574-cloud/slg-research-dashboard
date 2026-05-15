@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { materialsApi, gamesApi } from '../lib/api'
@@ -63,7 +63,7 @@ export default function Materials() {
     },
   })
 
-  const gameMap = Object.fromEntries(allGames.map(g => [g.app_id, g]))
+  const gameMap = useMemo(() => Object.fromEntries(allGames.map(g => [g.app_id, g])), [allGames])
 
   const typeLabel = (kind: string) => t.materials.types[kind as keyof typeof t.materials.types] || kind
 
@@ -131,7 +131,7 @@ export default function Materials() {
               className={`col-span-2 ${inputClass}`} />
             <select value={form.app_id} onChange={e => setForm(f => ({ ...f, app_id: e.target.value }))} className={inputClass}>
               <option value="">{t.materials.selectGame}</option>
-              {allGames.map((g: any) => <option key={g.app_id} value={g.app_id}>{g.name}</option>)}
+              {allGames.map(g => <option key={g.app_id} value={g.app_id}>{g.name}</option>)}
             </select>
             <select value={form.platform} onChange={e => setForm(f => ({ ...f, platform: e.target.value }))} className={inputClass}>
               <option value="youtube">YouTube</option>

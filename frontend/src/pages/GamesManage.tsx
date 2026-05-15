@@ -203,9 +203,7 @@ export default function GamesManage() {
           {lookup && (
             <div className="flex items-center gap-3 bg-elevated border border-emerald-700/40 rounded-lg p-3">
               <Check size={16} className="text-emerald-400 shrink-0" />
-              {lookup.icon_url && (
-                <img src={lookup.icon_url} alt="" className="w-10 h-10 rounded-lg object-cover" />
-              )}
+              <GameIcon src={lookup.icon_url} name={lookup.name ?? ''} className="w-10 h-10 rounded-lg" />
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-primary truncate">{lookup.name}</div>
                 <div className="text-xs text-secondary truncate">

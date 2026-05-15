@@ -22,9 +22,9 @@ export default function Rankings() {
     queryFn: () => gamesApi.rankings(country, platform),
   })
 
-  const filtered = rankings.filter((g: any) =>
-    g.name.toLowerCase().includes(search.toLowerCase()) ||
-    (g.publisher || '').toLowerCase().includes(search.toLowerCase())
+  const filtered = rankings.filter(g =>
+    (g.name ?? '').toLowerCase().includes(search.toLowerCase()) ||
+    (g.publisher ?? '').toLowerCase().includes(search.toLowerCase())
   )
 
   return (
@@ -39,13 +39,13 @@ export default function Rankings() {
             if (filtered.length === 0) { toast.error(t.common.noExportData); return }
             const date = new Date().toISOString().slice(0, 10)
             downloadCsv(`rankings-${country}-${platform}-${date}.csv`, filtered, [
-              { header: t.csv.rank, get: (r: any) => r.rank },
-              { header: t.csv.appId, get: (r: any) => r.app_id },
-              { header: t.csv.gameName, get: (r: any) => r.name },
-              { header: t.csv.publisher, get: (r: any) => r.publisher },
-              { header: t.csv.revenueUsd, get: (r: any) => r.revenue },
-              { header: t.csv.downloadsToday, get: (r: any) => r.downloads },
-              { header: t.csv.date, get: (r: any) => r.date },
+              { header: t.csv.rank, get: r => r.rank },
+              { header: t.csv.appId, get: r => r.app_id },
+              { header: t.csv.gameName, get: r => r.name },
+              { header: t.csv.publisher, get: r => r.publisher },
+              { header: t.csv.revenueUsd, get: r => r.revenue },
+              { header: t.csv.downloadsToday, get: r => r.downloads },
+              { header: t.csv.date, get: r => r.date },
             ])
             toast.success(t.common.exported(filtered.length))
           }}
@@ -121,20 +121,20 @@ export default function Rankings() {
                     <td className="px-3 py-4"></td>
                   </tr>
                 ))
-              : filtered.map((g: any) => (
+              : filtered.map(g => (
                   <tr
                     key={g.app_id}
                     className="hover:bg-elevated/50 cursor-pointer transition-colors"
                     onClick={() => navigate(`/game/${g.app_id}`)}
                   >
                     <td className="px-5 py-3.5">
-                      <span className={`text-sm font-bold ${g.rank <= 3 ? 'text-yellow-400' : g.rank <= 10 ? 'text-primary' : 'text-muted'}`}>
-                        #{g.rank}
+                      <span className={`text-sm font-bold ${g.rank == null ? 'text-muted' : g.rank <= 3 ? 'text-yellow-400' : g.rank <= 10 ? 'text-primary' : 'text-muted'}`}>
+                        #{g.rank ?? '—'}
                       </span>
                     </td>
                     <td className="px-3 py-3.5">
                       <div className="flex items-center gap-3">
-                        <GameIcon src={g.icon_url} name={g.name} className="w-10 h-10 rounded-xl" />
+                        <GameIcon src={g.icon_url} name={g.name ?? g.app_id} className="w-10 h-10 rounded-xl" />
                         <div>
                           <div className="text-sm font-medium text-primary">{g.name}</div>
                           <div className="text-xs text-muted">{g.publisher}</div>
@@ -142,10 +142,10 @@ export default function Rankings() {
                       </div>
                     </td>
                     <td className="px-3 py-3.5 text-right">
-                      <span className="text-sm font-medium text-emerald-400">{formatRevenue(g.revenue)}</span>
+                      <span className="text-sm font-medium text-emerald-400">{formatRevenue(g.revenue ?? 0)}</span>
                     </td>
                     <td className="px-3 py-3.5 text-right">
-                      <span className="text-sm text-secondary">{formatNumber(g.downloads)}</span>
+                      <span className="text-sm text-secondary">{formatNumber(g.downloads ?? 0)}</span>
                     </td>
                     <td className="px-3 py-3.5 text-right">
                       <span className="text-xs text-brand-500">{t.common.detail}</span>

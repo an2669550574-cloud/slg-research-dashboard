@@ -79,26 +79,29 @@ export default function Dashboard() {
   })
 
   const top5 = rankings.slice(0, 5)
-  const totalDownloads = rankings.reduce((s: number, g: any) => s + (g.downloads || 0), 0)
-  const totalRevenue = rankings.reduce((s: number, g: any) => s + (g.revenue || 0), 0)
+  const totalDownloads = rankings.reduce((s, g) => s + (g.downloads || 0), 0)
+  const totalRevenue = rankings.reduce((s, g) => s + (g.revenue || 0), 0)
 
-  const revenueChartData = rankings.slice(0, 8).map((g: any) => ({
-    name: g.name.length > 10 ? g.name.slice(0, 10) + '…' : g.name,
-    revenue: Math.round(g.revenue / 1000),
-    downloads: Math.round(g.downloads / 1000),
-  }))
+  const revenueChartData = rankings.slice(0, 8).map(g => {
+    const label = g.name ?? g.app_id
+    return {
+      name: label.length > 10 ? label.slice(0, 10) + '…' : label,
+      revenue: Math.round((g.revenue ?? 0) / 1000),
+      downloads: Math.round((g.downloads ?? 0) / 1000),
+    }
+  })
 
   const handleExport = () => {
     if (rankings.length === 0) { toast.error(t.common.noExportData); return }
     const date = new Date().toISOString().slice(0, 10)
     downloadCsv(`dashboard-${country}-${platform}-${date}.csv`, rankings, [
-      { header: t.csv.rank, get: (r: any) => r.rank },
-      { header: t.csv.appId, get: (r: any) => r.app_id },
-      { header: t.csv.gameName, get: (r: any) => r.name },
-      { header: t.csv.publisher, get: (r: any) => r.publisher },
-      { header: t.csv.revenueUsd, get: (r: any) => r.revenue },
-      { header: t.csv.downloadsToday, get: (r: any) => r.downloads },
-      { header: t.csv.date, get: (r: any) => r.date },
+      { header: t.csv.rank, get: r => r.rank },
+      { header: t.csv.appId, get: r => r.app_id },
+      { header: t.csv.gameName, get: r => r.name },
+      { header: t.csv.publisher, get: r => r.publisher },
+      { header: t.csv.revenueUsd, get: r => r.revenue },
+      { header: t.csv.downloadsToday, get: r => r.downloads },
+      { header: t.csv.date, get: r => r.date },
     ])
     toast.success(t.common.exported(rankings.length))
   }
@@ -222,23 +225,23 @@ export default function Dashboard() {
                   <div className="w-20 h-4 bg-elevated rounded" />
                 </div>
               ))
-            : rankings.slice(0, 8).map((g: any) => (
+            : rankings.slice(0, 8).map(g => (
                 <div
                   key={g.app_id}
                   className="px-5 py-3 flex items-center gap-4 hover:bg-elevated/50 cursor-pointer transition-colors"
                   onClick={() => navigate(`/game/${g.app_id}`)}
                 >
-                  <span className={`w-7 text-center text-sm font-bold ${g.rank <= 3 ? 'text-yellow-400' : 'text-muted'}`}>
-                    #{g.rank}
+                  <span className={`w-7 text-center text-sm font-bold ${g.rank != null && g.rank <= 3 ? 'text-yellow-400' : 'text-muted'}`}>
+                    #{g.rank ?? '—'}
                   </span>
-                  <GameIcon src={g.icon_url} name={g.name} className="w-9 h-9 rounded-xl" />
+                  <GameIcon src={g.icon_url} name={g.name ?? g.app_id} className="w-9 h-9 rounded-xl" />
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium text-primary truncate">{g.name}</div>
                     <div className="text-xs text-muted truncate">{g.publisher}</div>
                   </div>
                   <div className="text-right">
-                    <div className="text-sm font-medium text-emerald-400">{formatRevenue(g.revenue)}</div>
-                    <div className="text-xs text-muted">{formatNumber(g.downloads)} {t.dashboard.downloadsSuffix}</div>
+                    <div className="text-sm font-medium text-emerald-400">{formatRevenue(g.revenue ?? 0)}</div>
+                    <div className="text-xs text-muted">{formatNumber(g.downloads ?? 0)} {t.dashboard.downloadsSuffix}</div>
                   </div>
                 </div>
               ))

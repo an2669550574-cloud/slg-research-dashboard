@@ -20,9 +20,7 @@ import type {
   SyncRankingsResponse,
 } from './types'
 
-/** 把 axios 响应包成 {items, total}，total 从 X-Total-Count 头里读。
- * 缺这个头时 fallback 用 items.length（兼容老路由 / 测试夹具）。
- */
+// 缺 X-Total-Count 头时 fallback 用 items.length（兼容老路由 / 测试夹具）
 function withTotal<T>(headers: { 'x-total-count'?: string } | Record<string, unknown>, items: T[]): PagedResponse<T> {
   const raw = (headers as Record<string, unknown>)['x-total-count']
   const total = typeof raw === 'string' ? parseInt(raw, 10) : NaN
@@ -70,7 +68,6 @@ export interface MetricsParams {
 export const gamesApi = {
   list: (params?: GameListParams): Promise<GameOut[]> =>
     api.get('/games/', { params }).then(r => r.data),
-  /** 带总数的分页查询。GamesManage 用，能正确展示 "X / total" 和翻页。 */
   listPaged: (params?: GameListParams): Promise<PagedResponse<GameOut>> =>
     api.get('/games/', { params }).then(r => withTotal(r.headers, r.data)),
   rankings: (country = 'US', platform = 'ios'): Promise<RankingTodayOut[]> =>
