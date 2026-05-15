@@ -12,15 +12,17 @@ interface GameIconProps {
  * 回退到游戏名首字符的色块占位，永不出现浏览器破图符号。
  */
 export function GameIcon({ src, name, className = 'w-9 h-9 rounded-xl' }: GameIconProps) {
-  const [failed, setFailed] = useState(false)
+  // 记录"哪个 src 失败过"而非布尔值：src 变化（数据刷新/图标更新）时自动重试，
+  // 不会因一次失败就永久退化成占位。
+  const [failedSrc, setFailedSrc] = useState<string | null>(null)
 
-  if (src && !failed) {
+  if (src && failedSrc !== src) {
     return (
       <img
         src={src}
         alt={name}
         className={`${className} object-cover shrink-0`}
-        onError={() => setFailed(true)}
+        onError={() => setFailedSrc(src)}
       />
     )
   }
