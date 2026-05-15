@@ -50,4 +50,29 @@ ls -1t "$BACKUP_DIR"/slg_research-*.db.gz 2>/dev/null | tail -n +$((KEEP + 1)) |
   rm -f "$f"
 done
 
+# ─── Offsite copy (optional, env-gated) ─────────────────────────────────────
+# 设了 COS_BACKUP_DIR（cosfs 挂载点下的目录）就把本次 .gz 再放一份到对象存储。
+# 关键：cosfs 运行中可能掉挂，掉挂后挂载点退化成本地空目录——绝不能把"异地副本"
+# 静默写进本地磁盘（那等于没有异地备份却以为有）。所以先验证它确是 fuse.cosfs
+# 活挂载，否则只告警、跳过；本地备份始终保留，不受影响。
+if [[ -n "${COS_BACKUP_DIR:-}" ]]; then
+  mnt="$(df -P "$COS_BACKUP_DIR" 2>/dev/null | awk 'NR==2{print $6}')" || true
+  if [[ -n "$mnt" ]] && mountpoint -q "$mnt" && mount | grep -q "on ${mnt} type fuse.cosfs"; then
+    mkdir -p "$COS_BACKUP_DIR"
+    if cp "${out}.gz" "${COS_BACKUP_DIR}/"; then
+      local_sz=$(stat -c%s "${out}.gz")
+      remote_sz=$(stat -c%s "${COS_BACKUP_DIR}/$(basename "${out}.gz")" 2>/dev/null || echo 0)
+      if [[ "$local_sz" == "$remote_sz" ]]; then
+        echo "[backup] offsite OK → ${COS_BACKUP_DIR}/$(basename "${out}.gz") (${remote_sz} bytes)"
+      else
+        echo "[backup] offsite SIZE MISMATCH (local=$local_sz remote=$remote_sz) — check COS!" >&2
+      fi
+    else
+      echo "[backup] offsite copy FAILED (cp error) — local backup kept" >&2
+    fi
+  else
+    echo "[backup] offsite SKIPPED: $COS_BACKUP_DIR not a live cosfs mount — local backup kept" >&2
+  fi
+fi
+
 echo "[backup] done"
