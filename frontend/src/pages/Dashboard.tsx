@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { gamesApi, quotaApi } from '../lib/api'
 import { formatNumber, formatRevenue } from '../lib/utils'
@@ -47,6 +47,7 @@ export default function Dashboard() {
   const { data: rankings = [], isLoading } = useQuery({
     queryKey: ['rankings', country, platform],
     queryFn: () => gamesApi.rankings(country, platform),
+    placeholderData: keepPreviousData,
   })
 
   // 当月 Sensor Tower API 配额
