@@ -1,0 +1,203 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - complementary [ref=e4]:
+        - generic [ref=e5]:
+          - generic [ref=e6]:
+            - img [ref=e7]
+            - generic [ref=e9]: SLG 海外调研
+          - paragraph [ref=e10]: Strategy Games Intelligence
+        - navigation [ref=e11]:
+          - link "仪表盘" [ref=e12] [cursor=pointer]:
+            - /url: /
+            - img [ref=e13]
+            - text: 仪表盘
+          - link "排行榜" [ref=e18] [cursor=pointer]:
+            - /url: /rankings
+            - img [ref=e19]
+            - text: 排行榜
+          - link "游戏对比" [ref=e25] [cursor=pointer]:
+            - /url: /compare
+            - img [ref=e26]
+            - text: 游戏对比
+          - link "素材库" [ref=e33] [cursor=pointer]:
+            - /url: /materials
+            - img [ref=e34]
+            - text: 素材库
+          - link "游戏管理" [ref=e38] [cursor=pointer]:
+            - /url: /games
+            - img [ref=e39]
+            - text: 游戏管理
+        - generic [ref=e42]:
+          - button "English" [ref=e43] [cursor=pointer]:
+            - img [ref=e44]
+            - text: English
+          - button "暗色主题" [ref=e48] [cursor=pointer]:
+            - img [ref=e49]
+            - text: 暗色主题
+          - paragraph [ref=e51]: Powered by Sensor Tower
+      - main [ref=e52]:
+        - generic [ref=e53]:
+          - generic [ref=e54]:
+            - generic [ref=e55]:
+              - heading "仪表盘" [level=1] [ref=e56]
+              - paragraph [ref=e57]: 海外 SLG 市场实时概览
+            - generic [ref=e58]:
+              - button "导出 CSV" [ref=e59] [cursor=pointer]:
+                - img [ref=e60]
+                - text: 导出 CSV
+              - button "刷新数据" [ref=e381] [cursor=pointer]:
+                - img [ref=e335]
+                - text: 刷新数据
+          - generic [ref=e159]:
+            - generic [ref=e160]:
+              - generic [ref=e161]: 本月 Sensor Tower API
+              - generic [ref=e162]: 221 / 500 次
+              - generic [ref=e163]: 2026-05 · 月初 1 号自动重置
+            - generic [ref=e164]: 44.2%
+          - generic [ref=e69]:
+            - generic [ref=e70]:
+              - button "iOS" [ref=e71] [cursor=pointer]
+              - button "Android" [ref=e72] [cursor=pointer]
+            - generic [ref=e73]:
+              - button "US" [ref=e74] [cursor=pointer]
+              - button "GB" [ref=e75] [cursor=pointer]
+              - button "DE" [ref=e76] [cursor=pointer]
+              - button "JP" [ref=e77] [cursor=pointer]
+              - button "KR" [ref=e78] [cursor=pointer]
+              - button "AU" [ref=e79] [cursor=pointer]
+              - button "CA" [ref=e80] [cursor=pointer]
+              - button "FR" [ref=e81] [cursor=pointer]
+          - generic [ref=e82]:
+            - generic [ref=e83]:
+              - generic [ref=e84]:
+                - generic [ref=e85]: 监控游戏数
+                - img [ref=e87]
+              - generic [ref=e93]: "8"
+              - generic [ref=e94]: SLG 品类
+            - generic [ref=e95]:
+              - generic [ref=e96]:
+                - generic [ref=e97]: 今日总下载量
+                - img [ref=e99]
+              - generic [ref=e102]: 337K
+              - generic [ref=e103]: 全球 WW
+            - generic [ref=e104]:
+              - generic [ref=e105]:
+                - generic [ref=e106]: 今日总收入估算
+                - img [ref=e108]
+              - generic [ref=e110]: $9.34M
+              - generic [ref=e111]: 全球 WW
+            - generic [ref=e112]:
+              - generic [ref=e113]:
+                - generic [ref=e114]: TOP 1 游戏
+                - img [ref=e116]
+              - generic [ref=e119]: Rise of Kingdoms
+              - generic [ref=e120]: "排名 #1"
+          - generic [ref=e121]:
+            - generic [ref=e122]:
+              - heading "收入 Top 8（千美元）" [level=2] [ref=e123]
+              - img [ref=e169]:
+                - generic [ref=e174]:
+                  - generic [ref=e176]: Clash of C…
+                  - generic [ref=e178]: "Vikings: W…"
+                  - generic [ref=e180]: "Top War: B…"
+                  - generic [ref=e182]: Whiteout S…
+                - generic [ref=e184]:
+                  - generic [ref=e186]: "0"
+                  - generic [ref=e188]: "500"
+                  - generic [ref=e190]: "1000"
+                  - generic [ref=e192]: "1500"
+                  - generic [ref=e194]: "2000"
+            - generic [ref=e125]:
+              - heading "下载量 Top 8（千次）" [level=2] [ref=e126]
+              - img [ref=e216]:
+                - generic [ref=e221]:
+                  - generic [ref=e223]: Clash of C…
+                  - generic [ref=e225]: "Vikings: W…"
+                  - generic [ref=e227]: "Top War: B…"
+                  - generic [ref=e229]: Whiteout S…
+                - generic [ref=e231]:
+                  - generic [ref=e233]: "0"
+                  - generic [ref=e235]: "20"
+                  - generic [ref=e237]: "40"
+                  - generic [ref=e239]: "60"
+                  - generic [ref=e241]: "80"
+          - generic [ref=e128]:
+            - generic [ref=e129]:
+              - heading "今日排行榜" [level=2] [ref=e130]
+              - button "查看全部 →" [ref=e131] [cursor=pointer]
+            - generic [ref=e132]:
+              - generic [ref=e261] [cursor=pointer]:
+                - generic [ref=e262]: "#1"
+                - generic "Rise of Kingdoms" [ref=e263]: R
+                - generic [ref=e264]:
+                  - generic [ref=e265]: Rise of Kingdoms
+                  - generic [ref=e266]: Lilith Games
+                - generic [ref=e267]:
+                  - generic [ref=e268]: $933K
+                  - generic [ref=e269]: 40K 下载
+              - generic [ref=e270] [cursor=pointer]:
+                - generic [ref=e271]: "#2"
+                - generic "Clash of Clans" [ref=e272]: C
+                - generic [ref=e273]:
+                  - generic [ref=e274]: Clash of Clans
+                  - generic [ref=e275]: Supercell
+                - generic [ref=e276]:
+                  - generic [ref=e277]: $1.63M
+                  - generic [ref=e278]: 51K 下载
+              - generic [ref=e279] [cursor=pointer]:
+                - generic [ref=e280]: "#3"
+                - generic "Lords Mobile" [ref=e281]: L
+                - generic [ref=e282]:
+                  - generic [ref=e283]: Lords Mobile
+                  - generic [ref=e284]: IGG.COM
+                - generic [ref=e285]:
+                  - generic [ref=e286]: $1.20M
+                  - generic [ref=e287]: 39K 下载
+              - generic [ref=e288] [cursor=pointer]:
+                - generic [ref=e289]: "#4"
+                - 'generic "Vikings: War of Clans" [ref=e290]': V
+                - generic [ref=e291]:
+                  - generic [ref=e292]: "Vikings: War of Clans"
+                  - generic [ref=e293]: Plarium Global Ltd
+                - generic [ref=e294]:
+                  - generic [ref=e295]: $1.02M
+                  - generic [ref=e296]: 26K 下载
+              - generic [ref=e297] [cursor=pointer]:
+                - generic [ref=e298]: "#5"
+                - generic "Warpath" [ref=e299]: W
+                - generic [ref=e300]:
+                  - generic [ref=e301]: Warpath
+                  - generic [ref=e302]: Lilith Games
+                - generic [ref=e303]:
+                  - generic [ref=e304]: $734K
+                  - generic [ref=e305]: 42K 下载
+              - generic [ref=e306] [cursor=pointer]:
+                - generic [ref=e307]: "#6"
+                - 'generic "Top War: Battle Game" [ref=e308]': T
+                - generic [ref=e309]:
+                  - generic [ref=e310]: "Top War: Battle Game"
+                  - generic [ref=e311]: Topgames.Inc
+                - generic [ref=e312]:
+                  - generic [ref=e313]: $487K
+                  - generic [ref=e314]: 43K 下载
+              - generic [ref=e315] [cursor=pointer]:
+                - generic [ref=e316]: "#7"
+                - 'generic "Last War: Survival" [ref=e317]': L
+                - generic [ref=e318]:
+                  - generic [ref=e319]: "Last War: Survival"
+                  - generic [ref=e320]: First Fun
+                - generic [ref=e321]:
+                  - generic [ref=e322]: $1.91M
+                  - generic [ref=e323]: 27K 下载
+              - generic [ref=e324] [cursor=pointer]:
+                - generic [ref=e325]: "#8"
+                - generic "Whiteout Survival" [ref=e326]: W
+                - generic [ref=e327]:
+                  - generic [ref=e328]: Whiteout Survival
+                  - generic [ref=e329]: Century Games
+                - generic [ref=e330]:
+                  - generic [ref=e331]: $1.42M
+                  - generic [ref=e332]: 68K 下载
+    - status [ref=e377]: 已刷新榜单
+  - generic [ref=e333]: "20"
