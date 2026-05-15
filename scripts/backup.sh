@@ -64,6 +64,10 @@ if [[ -n "${COS_BACKUP_DIR:-}" ]]; then
       remote_sz=$(stat -c%s "${COS_BACKUP_DIR}/$(basename "${out}.gz")" 2>/dev/null || echo 0)
       if [[ "$local_sz" == "$remote_sz" ]]; then
         echo "[backup] offsite OK → ${COS_BACKUP_DIR}/$(basename "${out}.gz") (${remote_sz} bytes)"
+        # 远端轮转：Lighthouse 挂载桶不暴露 COS 生命周期规则，靠脚本删 N 天前旧档。
+        # best-effort：cosfs 偶发抖动不该让整次备份失败（本地已完成）。
+        find "$COS_BACKUP_DIR" -maxdepth 1 -name 'slg_research-*.db.gz' -type f \
+          -mtime +"${COS_KEEP_DAYS:-60}" -delete 2>/dev/null || true
       else
         echo "[backup] offsite SIZE MISMATCH (local=$local_sz remote=$remote_sz) — check COS!" >&2
       fi
