@@ -7,6 +7,7 @@ import { X, Plus } from 'lucide-react'
 import { CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, XAxis, YAxis, Legend } from 'recharts'
 import { QuotaBanner } from '../components/QuotaBanner'
 import { GameIcon } from '../components/GameIcon'
+import type { TrendPoint } from '../lib/types'
 
 type Metric = 'revenue' | 'downloads' | 'rank'
 
@@ -47,15 +48,15 @@ export default function Compare() {
       const m = metricsQueries[idx]?.data
       if (!m) return null
       const arr = metric === 'rank' ? m.rankings : (metric === 'revenue' ? m.revenue : m.downloads)
-      const name = games.find((g: any) => g.app_id === appId)?.name || appId
+      const name = games.find(g => g.app_id === appId)?.name || appId
       return { name, points: arr || [] }
-    }).filter((s): s is { name: string; points: any[] } => s !== null)
+    }).filter((s): s is { name: string; points: TrendPoint[] } => s !== null)
 
     if (series.length === 0) return []
 
     const allDates = Array.from(new Set(series.flatMap(s => s.points.map(p => p.date)))).sort()
     return allDates.map(date => {
-      const row: Record<string, any> = { date }
+      const row: Record<string, string | number | null | undefined> = { date }
       for (const s of series) {
         const point = s.points.find(p => p.date === date)
         row[s.name] = metric === 'rank' ? point?.rank : point?.value
@@ -64,7 +65,7 @@ export default function Compare() {
     })
   })()
 
-  const seriesNames = selected.map(appId => games.find((g: any) => g.app_id === appId)?.name || appId)
+  const seriesNames = selected.map(appId => games.find(g => g.app_id === appId)?.name || appId)
   const formatter = (v: any) => {
     if (v === null || v === undefined) return '—'
     if (metric === 'revenue') return formatRevenue(v)
@@ -78,7 +79,7 @@ export default function Compare() {
   }
 
   const canAddMore = selected.length < 3
-  const availableGames = games.filter((g: any) => !selected.includes(g.app_id))
+  const availableGames = games.filter(g => !selected.includes(g.app_id))
 
   return (
     <div className="p-6 space-y-5">
@@ -92,7 +93,7 @@ export default function Compare() {
       <div className="bg-surface border border-default rounded-xl p-5 space-y-4">
         <div className="flex flex-wrap items-center gap-2">
           {selected.map((appId, idx) => {
-            const game = games.find((g: any) => g.app_id === appId)
+            const game = games.find(g => g.app_id === appId)
             return (
               <div key={appId} className="flex items-center gap-2 bg-elevated border border-default rounded-lg pl-2 pr-1 py-1">
                 <span className="w-2.5 h-2.5 rounded-full" style={{ background: COLORS[idx] }} />
@@ -115,7 +116,7 @@ export default function Compare() {
               className="bg-elevated border border-default rounded-lg px-3 py-1.5 text-sm text-primary focus:outline-none focus:border-brand-500"
             >
               <option value="">{selected.length === 0 ? t.compare.selectGame : t.compare.addAnother}</option>
-              {availableGames.map((g: any) => (
+              {availableGames.map(g => (
                 <option key={g.app_id} value={g.app_id}>{g.name}</option>
               ))}
             </select>
