@@ -10,6 +10,7 @@ import { CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxi
 import { useNavigate } from 'react-router-dom'
 import { QuotaBanner } from '../components/QuotaBanner'
 import { GameIcon } from '../components/GameIcon'
+import { useLocalStorageState } from '../lib/hooks'
 import { COUNTRIES, PLATFORMS, platformLabel, type Country, type Platform } from '../lib/markets'
 
 function StatCard({ icon: Icon, label, value, sub, color }: any) {
@@ -33,8 +34,8 @@ export default function Dashboard() {
   const qc = useQueryClient()
   const [cooldownLeft, setCooldownLeft] = useState(0)
   const cooling = cooldownLeft > 0
-  const [country, setCountry] = useState<Country>('US')
-  const [platform, setPlatform] = useState<Platform>('ios')
+  const [country, setCountry] = useLocalStorageState<Country>('slg.country', 'US')
+  const [platform, setPlatform] = useLocalStorageState<Platform>('slg.platform', 'ios')
 
   // 已追踪的游戏（来自 DB），用于"监控游戏数"卡片
   const { data: trackedGames = [] } = useQuery({

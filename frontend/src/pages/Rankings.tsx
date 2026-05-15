@@ -7,14 +7,15 @@ import { formatNumber, formatRevenue } from '../lib/utils'
 import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
 import { Search, Download as DownloadIcon } from 'lucide-react'
-import { COUNTRIES, PLATFORMS, platformLabel } from '../lib/markets'
+import { COUNTRIES, PLATFORMS, platformLabel, type Country, type Platform } from '../lib/markets'
 import { GameIcon } from '../components/GameIcon'
+import { useLocalStorageState } from '../lib/hooks'
 
 export default function Rankings() {
   const navigate = useNavigate()
   const t = useT()
-  const [country, setCountry] = useState('US')
-  const [platform, setPlatform] = useState('ios')
+  const [country, setCountry] = useLocalStorageState<Country>('slg.country', 'US')
+  const [platform, setPlatform] = useLocalStorageState<Platform>('slg.platform', 'ios')
   const [search, setSearch] = useState('')
 
   const { data: rankings = [], isLoading } = useQuery({
