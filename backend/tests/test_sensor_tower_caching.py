@@ -103,6 +103,61 @@ async def test_force_refresh_endpoint_returns_fresh_data(client):
 
 
 @pytest.mark.asyncio
+async def test_get_injects_auth_token_as_query_param(client, monkeypatch):
+    """根因修复：鉴权走 auth_token 查询参数，不是 Authorization: Bearer 头。"""
+    import httpx
+    from app.services.sensor_tower import SensorTowerService
+
+    captured = {}
+
+    class FakeResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"ok": True}
+
+    async def fake_get(self, url, params=None, **kw):
+        captured["url"] = url
+        captured["params"] = params
+        captured["headers"] = kw.get("headers")
+        return FakeResp()
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+
+    svc = SensorTowerService()
+    svc.api_token = "TKN123"
+    out = await svc._get("/v1/ios/ranking", {"country": "US"})
+
+    assert out == {"ok": True}
+    assert captured["params"]["auth_token"] == "TKN123", "密钥必须作为 auth_token 查询参数"
+    assert captured["params"]["country"] == "US", "调用方参数保留"
+    assert not captured["headers"], "不再发 Authorization 头"
+    assert captured["url"].endswith("/v1/ios/ranking")
+
+
+@pytest.mark.asyncio
+async def test_get_all_rankings_today_parses_ranking_id_list(client):
+    """/v1/{os}/ranking 返回有序 app_id 列表 → 转成 名次+app_id 行（其余留空）。"""
+    from app.services.sensor_tower import SensorTowerService
+
+    svc = SensorTowerService()
+    svc.use_mock = False
+    svc._get = AsyncMock(return_value={"ranking": ["553834731", "1053012308"]})
+
+    rows = await svc.get_all_rankings_today("US", "ios")
+
+    assert [r["app_id"] for r in rows] == ["553834731", "1053012308"]
+    assert [r["rank"] for r in rows] == [1, 2]
+    assert rows[0]["name"] is None and rows[0]["downloads"] is None
+    path, params = svc._get.call_args.args[0], svc._get.call_args.args[1]
+    assert path == "/v1/ios/ranking"
+    assert params["chart_type"] == "topfreeapplications"
+    assert params["category"] == "6014"
+    assert params["country"] == "US" and "date" in params
+
+
+@pytest.mark.asyncio
 async def test_failed_fetch_refunds_quota_and_logs_error(client, caplog):
     """_get 失败：配额必须退还（净消耗 0）、降级到 fallback、并打 ERROR（进 Sentry）。"""
     import logging

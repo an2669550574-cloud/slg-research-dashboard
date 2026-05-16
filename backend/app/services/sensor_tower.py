@@ -76,18 +76,18 @@ def _mock_today_rankings() -> list[dict]:
 class SensorTowerService:
     def __init__(self):
         self.use_mock = settings.USE_MOCK_DATA or not settings.SENSOR_TOWER_API_KEY
-        self.headers = {"Authorization": f"Bearer {settings.SENSOR_TOWER_API_KEY}"} if settings.SENSOR_TOWER_API_KEY else {}
+        # Sensor Tower 鉴权是 auth_token 查询参数，不是 Authorization 头（之前用
+        # Bearer 头导致所有真实调用 404、白烧配额一个月）。
+        self.api_token = settings.SENSOR_TOWER_API_KEY or ""
         # mock 数据每次都是 random，不缓存（否则永远不变）。真实请求才缓存。
         self.cache_ttl = settings.SENSOR_TOWER_CACHE_TTL
         self.snapshot_fresh_seconds = settings.SENSOR_TOWER_SNAPSHOT_FRESH_HOURS * 3600
 
     async def _get(self, path: str, params: dict) -> dict:
+        # 复制 params 再注入 auth_token，避免污染调用方 dict 与缓存 key。
+        q = {**params, "auth_token": self.api_token}
         async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
-            resp = await client.get(
-                f"{settings.SENSOR_TOWER_BASE_URL}{path}",
-                params=params,
-                headers=self.headers,
-            )
+            resp = await client.get(f"{settings.SENSOR_TOWER_BASE_URL}{path}", params=q)
             resp.raise_for_status()
             return resp.json()
 
@@ -202,13 +202,35 @@ class SensorTowerService:
     async def get_all_rankings_today(self, country: str = "US", platform: str = "ios") -> list[dict]:
         if self.use_mock:
             return _mock_today_rankings()
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        if platform == "android":
+            category = settings.SENSOR_TOWER_RANKING_CATEGORY_ANDROID
+            chart_type = settings.SENSOR_TOWER_RANKING_CHART_TYPE_ANDROID
+        else:
+            category = settings.SENSOR_TOWER_RANKING_CATEGORY_IOS
+            chart_type = settings.SENSOR_TOWER_RANKING_CHART_TYPE_IOS
         key = f"today:{platform}:{country}"
         data = await self._cached_get(
             key,
-            f"/v1/{platform}/category/top_apps",
-            {"category": "6014", "country": country},
+            f"/v1/{platform}/ranking",
+            {
+                "category": category,
+                "country": country,
+                "chart_type": chart_type,
+                "date": today,
+                "limit": settings.SENSOR_TOWER_RANKING_LIMIT,
+            },
             fallback=lambda: {"apps": _mock_today_rankings()},
         )
+        # /v1/{os}/ranking 只返回有序 app_id 列表（无名字/下载/收入）。省配额方案：
+        # 先只落 名次 + app_id，其余留空（前端 GameIcon 字母兜底、列表显示
+        # name ?? app_id）；iTunes 补名字/图标留作紧接的后续。mock 兜底走旧 apps 形状。
+        if "ranking" in data:
+            return [
+                {"app_id": str(aid), "rank": i + 1, "name": None, "publisher": None,
+                 "icon_url": None, "downloads": None, "revenue": None, "date": today}
+                for i, aid in enumerate(data.get("ranking") or [])
+            ]
         return data.get("apps", [])
 
     async def force_refresh_today_rankings(self, country: str = "US", platform: str = "ios") -> list[dict]:

@@ -29,6 +29,15 @@ class Settings(BaseSettings):
     # 用量越过该百分比时打一条 ERROR（经 Sentry 推送），让维护者在配额耗尽
     # 前就收到主动告警，而不是等线上静默降级到过期快照才发现。
     SENSOR_TOWER_QUOTA_WARN_PCT: int = 80
+
+    # 排行榜接口 /v1/{os}/ranking 参数。chart_type 取自官方封装库源码确认值；
+    # category：iOS App Store「游戏」是数字 6014，Android 用 Google Play 分类串。
+    # 想看畅销榜可把 chart_type 改成 topgrossingapplications / topgrossing。
+    SENSOR_TOWER_RANKING_CHART_TYPE_IOS: str = "topfreeapplications"
+    SENSOR_TOWER_RANKING_CHART_TYPE_ANDROID: str = "topselling_free"
+    SENSOR_TOWER_RANKING_CATEGORY_IOS: str = "6014"
+    SENSOR_TOWER_RANKING_CATEGORY_ANDROID: str = "game"
+    SENSOR_TOWER_RANKING_LIMIT: int = 100
     # SQLite 持久化快照"新鲜窗口"（小时）。内存缓存 miss 时若 SQLite 里已有
     # 不超过这个时长的快照，直接返回不消耗配额。设成跟 CACHE_TTL 一致即可。
     SENSOR_TOWER_SNAPSHOT_FRESH_HOURS: int = 24
