@@ -6,8 +6,26 @@
 注意：所有 app.* 必须在函数内 import —— conftest 的 app 夹具会先清空
 sys.modules 再用临时 DB 重新装载，模块顶层 import 会绑到旧 DB 上。
 """
+import logging
 import pytest
 from unittest.mock import patch, AsyncMock
+
+
+class _FakeSched:
+    """替掉模块级 APScheduler 实例，隔离真实线程/事件循环副作用。"""
+    running = False
+
+    def __init__(self):
+        self.started = False
+
+    def start(self):
+        self.started = True
+
+    def add_job(self, *a, **k):
+        pass
+
+    def get_jobs(self):
+        return []
 
 
 async def _seed_today_row(country="US", platform="ios"):
@@ -106,3 +124,35 @@ async def test_valid_response_replaces_rows(client):
 
     assert written == 2
     assert await _count_today() == 2, "应替换为 2 条新数据（旧的那条被覆盖）"
+
+
+@pytest.mark.asyncio
+async def test_start_scheduler_raises_on_empty_combos_real_data(client, monkeypatch):
+    """真实数据部署 + 0 同步组合 → 启动即拒绝，不静默裸奔。"""
+    from app import scheduler
+    from app.config import settings
+
+    monkeypatch.setattr(scheduler, "scheduler", _FakeSched())
+    monkeypatch.setattr(settings, "SYNC_RANKING_COMBOS", "")   # → sync_combos_list == []
+    monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
+
+    with pytest.raises(RuntimeError, match="0 valid combos"):
+        scheduler.start_scheduler()
+
+
+@pytest.mark.asyncio
+async def test_start_scheduler_warns_on_empty_combos_mock(client, monkeypatch, caplog):
+    """mock 模式下 0 组合只告警、照常启动，不拦开发。"""
+    from app import scheduler
+    from app.config import settings
+
+    fake = _FakeSched()
+    monkeypatch.setattr(scheduler, "scheduler", fake)
+    monkeypatch.setattr(settings, "SYNC_RANKING_COMBOS", "")
+    monkeypatch.setattr(settings, "USE_MOCK_DATA", True)
+
+    with caplog.at_level(logging.WARNING, logger="app.scheduler"):
+        scheduler.start_scheduler()  # 不得抛
+
+    assert fake.started is True
+    assert any("0 valid combos" in r.getMessage() for r in caplog.records)

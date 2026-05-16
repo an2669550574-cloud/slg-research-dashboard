@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     # 每月最多调用 Sensor Tower 真实 API 的次数。公司账号 3000/月共享，留 500 给本项目；
     # 超额后自动降级到 sensor_tower_snapshots 表里的最后一次成功响应。
     SENSOR_TOWER_MONTHLY_LIMIT: int = 500
+    # 用量越过该百分比时打一条 ERROR（经 Sentry 推送），让维护者在配额耗尽
+    # 前就收到主动告警，而不是等线上静默降级到过期快照才发现。
+    SENSOR_TOWER_QUOTA_WARN_PCT: int = 80
     # SQLite 持久化快照"新鲜窗口"（小时）。内存缓存 miss 时若 SQLite 里已有
     # 不超过这个时长的快照，直接返回不消耗配额。设成跟 CACHE_TTL 一致即可。
     SENSOR_TOWER_SNAPSHOT_FRESH_HOURS: int = 24

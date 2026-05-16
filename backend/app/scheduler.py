@@ -116,7 +116,14 @@ def start_scheduler() -> None:
         return
     combos = settings.sync_combos_list
     if not combos:
-        logger.warning("SYNC_RANKING_COMBOS produced 0 valid combos; scheduler has no jobs")
+        if not settings.USE_MOCK_DATA:
+            # 真实数据部署却 0 个同步组合 = 线上永远不更新榜单却假装健康。
+            # 与 main.py 的 API_KEY 守卫同理，启动即拒绝，别静默裸奔。
+            raise RuntimeError(
+                "SYNC_RANKING_COMBOS produced 0 valid combos while USE_MOCK_DATA=False "
+                "— refusing to start a real-data deployment that would never sync rankings."
+            )
+        logger.warning("SYNC_RANKING_COMBOS produced 0 valid combos; scheduler has no jobs (mock mode)")
         scheduler.start()
         return
 

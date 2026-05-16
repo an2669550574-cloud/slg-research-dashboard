@@ -1,4 +1,5 @@
 """Sensor Tower 月度配额 + 快照存储 + /api/quota 接口的集成测试。"""
+import logging
 import pytest
 from unittest.mock import patch
 
@@ -82,6 +83,59 @@ async def test_load_snapshot_if_fresh(client):
 
     # 不存在的 key 也返回 None
     assert await quota.load_snapshot_if_fresh("missing", max_age_seconds=86400) is None
+
+
+def _quota_errors(caplog):
+    return [r for r in caplog.records
+            if r.name == "app.services.quota" and r.levelno >= logging.ERROR]
+
+
+@pytest.mark.asyncio
+async def test_quota_alert_edges_fire_once_each(client, caplog):
+    """越过告警线、用满耗尽各恰好告警一次；之间与之后都不刷屏。"""
+    from app.services import quota
+    from app.config import settings
+
+    with patch.object(settings, "SENSOR_TOWER_MONTHLY_LIMIT", 10), \
+         patch.object(settings, "SENSOR_TOWER_QUOTA_WARN_PCT", 80):
+        with caplog.at_level(logging.ERROR, logger="app.services.quota"):
+            # warn_at = ceil(10 * 80 / 100) = 8
+            for _ in range(7):
+                assert await quota.try_consume() is True
+            assert _quota_errors(caplog) == [], "阈值以下应静默"
+
+            assert await quota.try_consume() is True  # 第 8 次 = 告警线
+            errs = _quota_errors(caplog)
+            assert len(errs) == 1 and "crossed 80%" in errs[0].getMessage()
+
+            assert await quota.try_consume() is True  # 第 9 次：不再重复告警
+            assert len(_quota_errors(caplog)) == 1
+
+            assert await quota.try_consume() is True  # 第 10 次 = limit，耗尽边沿
+            errs = _quota_errors(caplog)
+            assert len(errs) == 2 and "EXHAUSTED" in errs[-1].getMessage()
+
+            assert await quota.try_consume() is False  # 第 11 次被拒，不再告警
+            assert len(_quota_errors(caplog)) == 2
+
+
+@pytest.mark.asyncio
+async def test_quota_alert_rearms_next_month(client, caplog):
+    """跨月后阈值自动重新武装：每个 year_month 各自再告警一次。"""
+    from app.services import quota
+    from app.database import AsyncSessionLocal
+    from app.config import settings
+
+    with patch.object(settings, "SENSOR_TOWER_QUOTA_WARN_PCT", 80):
+        with caplog.at_level(logging.ERROR, logger="app.services.quota"):
+            async with AsyncSessionLocal() as session:
+                # limit=5 → warn_at = ceil(5*0.8) = 4
+                for _ in range(4):
+                    await quota._consume_in(session, "2026-07", limit=5)
+                for _ in range(4):
+                    await quota._consume_in(session, "2026-08", limit=5)
+            crossed = [r for r in _quota_errors(caplog) if "crossed 80%" in r.getMessage()]
+            assert len(crossed) == 2, "每月各告警一次 = 跨月已重新武装"
 
 
 @pytest.mark.asyncio

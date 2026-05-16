@@ -74,10 +74,30 @@ async def check_anthropic() -> dict:
         return {"status": "unreachable", "error": str(e)[:200]}
 
 
+async def check_quota() -> dict:
+    """配额耗尽是静默降级（返回过期快照，不报错），所以必须显式纳入深度健康，
+    否则监控只看 DB 正常就以为一切 ok。"""
+    from app.services import quota
+    try:
+        u = await quota.current_usage()
+    except Exception as e:
+        return {"status": "error", "error": str(e)[:200]}
+    if u["exhausted"]:
+        status = "exhausted"
+    elif u["percentage"] >= settings.SENSOR_TOWER_QUOTA_WARN_PCT:
+        status = "warning"
+    else:
+        status = "ok"
+    return {"status": status, "remaining": u["remaining"], "percentage": u["percentage"]}
+
+
 async def deep_health() -> dict:
-    db, st, an = await asyncio.gather(check_db(), check_sensor_tower(), check_anthropic())
-    overall = "ok" if db["status"] == "ok" else "degraded"
+    db, st, an, qu = await asyncio.gather(
+        check_db(), check_sensor_tower(), check_anthropic(), check_quota()
+    )
+    # warning 不降级（避免探针抖动）；只有 DB 挂或配额耗尽才算 degraded
+    overall = "ok" if db["status"] == "ok" and qu["status"] != "exhausted" else "degraded"
     return {
         "status": overall,
-        "checks": {"database": db, "sensor_tower": st, "anthropic": an},
+        "checks": {"database": db, "sensor_tower": st, "anthropic": an, "quota": qu},
     }

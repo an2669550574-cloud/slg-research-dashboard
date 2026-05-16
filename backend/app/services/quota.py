@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from typing import Any, Optional
 
 from sqlalchemy import text
@@ -45,6 +46,24 @@ async def _consume_in(session: AsyncSession, ym: str, limit: int) -> bool:
         await session.commit()
         return False
     await session.commit()
+
+    # 边沿触发告警：count 单调 +1，每个阈值每月恰好被等值命中一次 → 不会刷屏。
+    # 用 logger.error 而非 warning 是有意的：只有 ERROR 经 LoggingIntegration
+    # 进 Sentry，配额在硬上限下逼近耗尽对单人维护是需要主动推送的事件。
+    # 跨月时 year_month 换行、count 从 1 重新数，阈值自动重新武装，无需额外状态。
+    warn_at = math.ceil(limit * settings.SENSOR_TOWER_QUOTA_WARN_PCT / 100)
+    if new_count == limit:
+        logger.error(
+            "Sensor Tower quota EXHAUSTED for %s (%d/%d) — production will serve "
+            "stale snapshots until month rollover.",
+            ym, new_count, limit,
+        )
+    elif new_count == warn_at and warn_at < limit:
+        logger.error(
+            "Sensor Tower quota crossed %d%% for %s (%d/%d) — alerting before "
+            "exhaustion; review SYNC_RANKING_COMBOS / manual-refresh usage.",
+            settings.SENSOR_TOWER_QUOTA_WARN_PCT, ym, new_count, limit,
+        )
     return True
 
 

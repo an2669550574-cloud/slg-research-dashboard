@@ -1,4 +1,5 @@
 import { useT } from '../i18n'
+import { formatRelativeAge, backendTsToMs } from '../lib/utils'
 import type { QuotaInfo } from '../lib/types'
 
 export type { QuotaInfo, DataSource } from '../lib/types'
@@ -13,6 +14,11 @@ export function QuotaBanner({ quota }: Props) {
 
   const isWarning = !quota.exhausted && quota.percentage >= 80
   const tone = quota.exhausted ? 'danger' : isWarning ? 'warning' : 'normal'
+
+  // 日同步应在 24h + 缓冲内刷新；超过 28h 说明 scheduler 可能已静默停摆。
+  // 始终展示数据新鲜度，让"没报错但数据不更新"这种静默故障肉眼可见。
+  const updatedMs = quota.data_updated_at ? backendTsToMs(quota.data_updated_at) : null
+  const stale = updatedMs !== null && Date.now() - updatedMs > 28 * 3600 * 1000
 
   const containerCls = {
     danger: 'bg-red-950/40 border-red-900/60',
@@ -62,14 +68,16 @@ export function QuotaBanner({ quota }: Props) {
       {isWarning && (
         <div className="mt-2 text-xs text-yellow-300">{t.dashboard.quotaWarning}</div>
       )}
-      {(quota.data_source && quota.data_source !== 'real_api') && (
+      {(quota.data_updated_at || (quota.data_source && quota.data_source !== 'real_api')) && (
         <div className="mt-2 flex items-center gap-3 text-xs text-muted">
-          <span>
-            {t.dashboard.dataSourceLabel}: <span className="text-primary font-medium">{t.dashboard.dataSource(quota.data_source)}</span>
-          </span>
-          {quota.data_updated_at && (
+          {quota.data_source && quota.data_source !== 'real_api' && (
             <span>
-              {t.dashboard.dataUpdatedAt}: {quota.data_updated_at.slice(0, 19).replace('T', ' ')}
+              {t.dashboard.dataSourceLabel}: <span className="text-primary font-medium">{t.dashboard.dataSource(quota.data_source)}</span>
+            </span>
+          )}
+          {quota.data_updated_at && (
+            <span className={stale ? 'text-yellow-400' : undefined}>
+              {t.dashboard.dataUpdatedAt}: {formatRelativeAge(quota.data_updated_at)}
             </span>
           )}
         </div>

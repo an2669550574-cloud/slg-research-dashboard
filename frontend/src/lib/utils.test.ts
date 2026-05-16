@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { formatNumber, formatRevenue, EVENT_TYPE_CONFIG, PLATFORM_CONFIG, cn } from './utils'
+import {
+  formatNumber, formatRevenue, EVENT_TYPE_CONFIG, PLATFORM_CONFIG, cn,
+  formatRelativeAge, backendTsToMs,
+} from './utils'
 
 describe('formatNumber', () => {
   it('returns raw string under 1000', () => {
@@ -61,6 +64,42 @@ describe('EVENT_TYPE_CONFIG / PLATFORM_CONFIG', () => {
       expect(cfg.label).toBeTruthy()
       expect(cfg.color).toMatch(/^text-/)
     }
+  })
+})
+
+describe('backendTsToMs', () => {
+  it('parses SQLite-style "YYYY-MM-DD HH:MM:SS" as UTC', () => {
+    expect(backendTsToMs('2026-05-15 14:44:21')).toBe(Date.parse('2026-05-15T14:44:21Z'))
+  })
+
+  it('parses ISO with T/Z unchanged', () => {
+    expect(backendTsToMs('2026-05-15T14:44:21Z')).toBe(Date.parse('2026-05-15T14:44:21Z'))
+  })
+
+  it('returns null on garbage', () => {
+    expect(backendTsToMs('not-a-date')).toBeNull()
+  })
+})
+
+describe('formatRelativeAge', () => {
+  const ago = (ms: number) => new Date(Date.now() - ms).toISOString()
+
+  it('under a minute → <1m', () => {
+    expect(formatRelativeAge(ago(30_000))).toBe('<1m')
+  })
+
+  it('minutes / hours / days, floored', () => {
+    expect(formatRelativeAge(ago(5 * 60_000))).toBe('5m')
+    expect(formatRelativeAge(ago(3 * 3_600_000))).toBe('3h')
+    expect(formatRelativeAge(ago(50 * 3_600_000))).toBe('2d')
+  })
+
+  it('accepts the space-separated UTC backend format', () => {
+    expect(formatRelativeAge('2020-01-01 00:00:00')).toMatch(/\d+d$/)
+  })
+
+  it('invalid input → em dash', () => {
+    expect(formatRelativeAge('nonsense')).toBe('—')
   })
 })
 
