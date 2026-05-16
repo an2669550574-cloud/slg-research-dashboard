@@ -24,9 +24,29 @@ async def sync_daily_rankings(country: str = "US", platform: str = "ios") -> int
     幂等：先 DELETE 同 (date, country, platform) 的行，再 INSERT。
     联合 unique (app_id, date, country, platform) 兜底：两个 scheduler 并发跑时
     后到的会 IntegrityError，回滚后日志告警——好过偷偷写重复。
+
+    关键防线：抓取异常或返回空时，**绝不执行 DELETE**。否则一次 Sensor Tower
+    抖动 / 配额耗尽 / 网络故障就会把当天数据删掉又写 0 行——图表静默断档且
+    无人知晓。这两种情况都打 logger.error（经 LoggingIntegration 自动进
+    Sentry 告警），并保留已有数据原样不动。
     """
     today = utcnow_naive().strftime("%Y-%m-%d")
-    rankings = await sensor_tower_service.get_all_rankings_today(country=country, platform=platform)
+    try:
+        rankings = await sensor_tower_service.get_all_rankings_today(country=country, platform=platform)
+    except Exception as e:
+        logger.error(
+            "Daily rankings sync FAILED to fetch %s/%s on %s — existing rows kept untouched: %s",
+            country, platform, today, e, exc_info=True,
+        )
+        return 0
+
+    if not rankings:
+        logger.error(
+            "Daily rankings sync got EMPTY result for %s/%s on %s — skipping destructive "
+            "rewrite, existing rows kept. Check Sensor Tower availability / quota.",
+            country, platform, today,
+        )
+        return 0
 
     written = 0
     async with AsyncSessionLocal() as db:
@@ -55,6 +75,16 @@ async def sync_daily_rankings(country: str = "US", platform: str = "ios") -> int
                 icon_url=item.get("icon_url"),
             ))
             written += 1
+        if written == 0:
+            # 非空响应但全是无 app_id 的脏数据：DELETE 已发出但还没 commit，
+            # 回滚即可让当天旧行毫发无损，不留"删了又没写"的空窗。
+            await db.rollback()
+            logger.error(
+                "Daily rankings sync for %s/%s on %s: %d items but none usable "
+                "(missing app_id) — rolled back, existing rows kept.",
+                country, platform, today, len(rankings),
+            )
+            return 0
         try:
             await db.commit()
         except IntegrityError as e:
