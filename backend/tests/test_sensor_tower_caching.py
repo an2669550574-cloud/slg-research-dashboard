@@ -103,6 +103,34 @@ async def test_force_refresh_endpoint_returns_fresh_data(client):
 
 
 @pytest.mark.asyncio
+async def test_failed_fetch_refunds_quota_and_logs_error(client, caplog):
+    """_get 失败：配额必须退还（净消耗 0）、降级到 fallback、并打 ERROR（进 Sentry）。"""
+    import logging
+    import httpx
+    from app.services import quota
+    from app.services.sensor_tower import SensorTowerService
+
+    cache_key = "rank:ios:US:com.broken.q:d30"
+    svc = SensorTowerService()
+    svc.use_mock = False
+    svc._get = AsyncMock(side_effect=httpx.HTTPError("boom"))
+
+    used_before = (await quota.current_usage())["used"]
+    with caplog.at_level(logging.ERROR, logger="app.services.sensor_tower"):
+        result = await svc._cached_get(cache_key, "/v1/x/y", {}, fallback=lambda: {"fb": True})
+
+    assert result == {"fb": True}, "失败应降级到 fallback"
+    assert svc._get.await_count == 1
+    assert (await quota.current_usage())["used"] == used_before, \
+        "失败调用必须退还配额（净消耗 0）"
+    assert any(
+        "fetch failed" in r.getMessage()
+        for r in caplog.records
+        if r.name == "app.services.sensor_tower" and r.levelno >= logging.ERROR
+    ), "失败应打 ERROR 级日志（→ Sentry）"
+
+
+@pytest.mark.asyncio
 async def test_cached_get_serves_stale_snapshot_when_quota_exhausted(client):
     """配额耗尽时，过期 snapshot 也能用作降级数据，不再调 API。"""
     from app.services import quota

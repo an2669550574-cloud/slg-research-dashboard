@@ -75,6 +75,22 @@ async def try_consume() -> bool:
         return await _consume_in(session, ym, limit)
 
 
+async def refund() -> None:
+    """退还一次配额：try_consume 已扣但实际请求失败时调用。
+    配额是为"成功取到真实数据"付费，失败不该扣——否则一个坏端点能把
+    整月预算空烧光。`count > 0` 兜底，并发/误调也不会变负。"""
+    ym = current_year_month()
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            text(
+                "UPDATE api_quota_monthly SET count = count - 1, "
+                "updated_at = CURRENT_TIMESTAMP "
+                "WHERE year_month = :ym AND count > 0"
+            ).bindparams(ym=ym)
+        )
+        await session.commit()
+
+
 async def current_usage() -> dict:
     """返回 {year_month, used, limit, remaining, percentage, data_source, data_updated_at} 供前端展示。"""
     limit = settings.SENSOR_TOWER_MONTHLY_LIMIT

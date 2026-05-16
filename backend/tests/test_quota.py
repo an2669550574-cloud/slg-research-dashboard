@@ -139,6 +139,21 @@ async def test_quota_alert_rearms_next_month(client, caplog):
 
 
 @pytest.mark.asyncio
+async def test_refund_decrements_and_floors_at_zero(client):
+    """退还一次配额；多退不会把 count 弄成负数。"""
+    from app.services import quota
+
+    assert await quota.try_consume() is True
+    assert (await quota.current_usage())["used"] == 1
+
+    await quota.refund()
+    assert (await quota.current_usage())["used"] == 0
+
+    await quota.refund()  # 已是 0，再退仍为 0
+    assert (await quota.current_usage())["used"] == 0
+
+
+@pytest.mark.asyncio
 async def test_month_boundary_separate_counters(client):
     """模拟跨月：不同的 year_month 字符串各自计数互不干扰。"""
     from app.services import quota

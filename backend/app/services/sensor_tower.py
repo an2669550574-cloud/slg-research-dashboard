@@ -117,17 +117,24 @@ class SensorTowerService:
                 logger.warning("Sensor Tower quota exhausted and no snapshot for %s, using mock", cache_key)
                 return fallback()
 
-            data = await self._get(path, params)
+            try:
+                data = await self._get(path, params)
+            except Exception:
+                # 失败不该扣配额：try_consume 已扣，退还再抛给外层降级处理。
+                await quota.refund()
+                raise
             # 真实调用成功 → 持久化一份"最后已知好数据"
             try:
                 await quota.save_snapshot(cache_key, data)
             except Exception as e:
-                logger.warning("Failed to save snapshot for %s: %s", cache_key, e)
+                logger.error("Failed to save snapshot for %s: %s", cache_key, e)
             return data
         try:
             return await sensor_tower_cache.get_or_set(cache_key, self.cache_ttl, loader)
         except (httpx.HTTPError, ValueError) as e:
-            logger.warning("Sensor Tower fetch failed (%s), falling back: %s", cache_key, e)
+            # error 级（非 warning）→ 经 LoggingIntegration 进 Sentry。这正是
+            # 之前端点 404 静默烧配额一个月没人发现的那条信号。
+            logger.error("Sensor Tower fetch failed (%s), falling back: %s", cache_key, e)
             # 网络失败时也尝试任何快照
             snapshot = await quota.load_snapshot(cache_key)
             if snapshot is not None:
