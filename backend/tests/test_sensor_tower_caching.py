@@ -138,14 +138,16 @@ async def test_get_injects_auth_token_as_query_param(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_get_all_rankings_today_parses_ranking_id_list(client):
-    """/v1/{os}/ranking 返回有序 app_id 列表 → 转成 名次+app_id 行（其余留空）。"""
+    """/v1/{os}/ranking 返回有序 app_id 列表 → 转成 名次+app_id 行。"""
+    from unittest.mock import patch
     from app.services.sensor_tower import SensorTowerService
 
     svc = SensorTowerService()
     svc.use_mock = False
     svc._get = AsyncMock(return_value={"ranking": ["553834731", "1053012308"]})
 
-    rows = await svc.get_all_rankings_today("US", "ios")
+    with patch("app.services.sensor_tower.fetch_apps_bulk", AsyncMock(return_value={})):
+        rows = await svc.get_all_rankings_today("US", "ios")
 
     assert [r["app_id"] for r in rows] == ["553834731", "1053012308"]
     assert [r["rank"] for r in rows] == [1, 2]
@@ -155,6 +157,27 @@ async def test_get_all_rankings_today_parses_ranking_id_list(client):
     assert params["chart_type"] == "topfreeapplications"
     assert params["category"] == "6014"
     assert params["country"] == "US" and "date" in params
+
+
+@pytest.mark.asyncio
+async def test_get_all_rankings_today_enriches_names_via_itunes(client):
+    """app_id 列表用 iTunes 批量补全名字/出版商/图标；查不到的保持 None。"""
+    from unittest.mock import patch
+    from app.services.sensor_tower import SensorTowerService
+
+    svc = SensorTowerService()
+    svc.use_mock = False
+    svc._get = AsyncMock(return_value={"ranking": ["553834731", "999"]})
+    meta = {"553834731": {"name": "Clash", "publisher": "Supercell",
+                          "icon_url": "http://x/512.jpg"}}
+
+    with patch("app.services.sensor_tower.fetch_apps_bulk", AsyncMock(return_value=meta)) as m:
+        rows = await svc.get_all_rankings_today("JP", "ios")
+
+    assert m.await_args.kwargs["country"] == "jp", "ST 国家码应转小写传给 iTunes"
+    assert rows[0]["name"] == "Clash" and rows[0]["publisher"] == "Supercell"
+    assert rows[0]["icon_url"] == "http://x/512.jpg"
+    assert rows[1]["name"] is None, "iTunes 查不到的保持 None（前端字母兜底）"
 
 
 @pytest.mark.asyncio

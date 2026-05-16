@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from app.config import settings
 from app.cache import sensor_tower_cache
 from app.services import quota
+from app.services.appstore import fetch_apps_bulk
 
 logger = logging.getLogger(__name__)
 
@@ -222,15 +223,22 @@ class SensorTowerService:
             },
             fallback=lambda: {"apps": _mock_today_rankings()},
         )
-        # /v1/{os}/ranking 只返回有序 app_id 列表（无名字/下载/收入）。省配额方案：
-        # 先只落 名次 + app_id，其余留空（前端 GameIcon 字母兜底、列表显示
-        # name ?? app_id）；iTunes 补名字/图标留作紧接的后续。mock 兜底走旧 apps 形状。
+        # /v1/{os}/ranking 只返回有序 app_id 列表（无名字/下载/收入）。
+        # 名次+app_id 来自 ST；名字/出版商/图标用免费 iTunes 批量补全（仅 iOS
+        # 数字 id，Android 包名查不到→保持 None，前端 GameIcon 字母兜底）。
+        # 下载/收入仍留空（省配额方案，详情/对比页另取）。mock 兜底走旧 apps 形状。
         if "ranking" in data:
-            return [
+            rows = [
                 {"app_id": str(aid), "rank": i + 1, "name": None, "publisher": None,
                  "icon_url": None, "downloads": None, "revenue": None, "date": today}
                 for i, aid in enumerate(data.get("ranking") or [])
             ]
+            meta = await fetch_apps_bulk([r["app_id"] for r in rows], country=country.lower())
+            for r in rows:
+                m = meta.get(r["app_id"])
+                if m:
+                    r["name"], r["publisher"], r["icon_url"] = m["name"], m["publisher"], m["icon_url"]
+            return rows
         return data.get("apps", [])
 
     async def force_refresh_today_rankings(self, country: str = "US", platform: str = "ios") -> list[dict]:
