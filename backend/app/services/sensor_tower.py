@@ -73,6 +73,9 @@ def _parse_sales(data, platform: str) -> dict:
         d = r.get("d") or r.get("date")
         if not d:
             continue
+        # ST 返回的是 "2026-05-14T00:00:00Z"；本地排名序列用 "2026-05-14"。
+        # 截到日，两条序列在前端图表 X 轴才对得齐。
+        d = d[:10]
         if platform == "android":
             u = r.get("u") or 0
             c = r.get("r") or 0

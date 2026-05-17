@@ -199,7 +199,8 @@ def test_parse_sales_ios_sums_iphone_ipad_and_cents_to_dollars():
 def test_parse_sales_android_uses_u_r_keys():
     from app.services.sensor_tower import _parse_sales
 
-    raw = [{"aid": "com.x", "d": "2026-05-01", "u": 999, "r": 12345}]
+    # ST 的 d 是 ISO 时间戳；必须截到日，否则和本地排名序列 X 轴对不齐
+    raw = [{"aid": "com.x", "d": "2026-05-01T00:00:00Z", "u": 999, "r": 12345}]
     out = _parse_sales(raw, "android")
     assert out["downloads"] == [{"date": "2026-05-01", "value": 999}]
     assert out["revenue"] == [{"date": "2026-05-01", "value": 123.45}]
