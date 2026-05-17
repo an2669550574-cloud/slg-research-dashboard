@@ -69,6 +69,9 @@ class RankingTodayOut(BaseModel):
     downloads: Optional[float] = None
     revenue: Optional[float] = None
     date: Optional[str] = None
+    # 发行商命中 SLG 白名单。默认 True = fail-open：某条没显式打标也不会被
+    # 「仅 SLG」默认视图静默隐藏（符合本项目「绝不静默丢数据」原则）。
+    is_slg: bool = True
 
 
 class TrendPoint(BaseModel):

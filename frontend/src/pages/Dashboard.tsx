@@ -80,29 +80,32 @@ export default function Dashboard() {
     return () => clearTimeout(id)
   }, [cooldownLeft])
 
-  const top5 = rankings.slice(0, 5)
-  const totalDownloads = rankings.reduce((s, g) => s + (g.downloads || 0), 0)
-  const totalRevenue = rankings.reduce((s, g) => s + (g.revenue || 0), 0)
+  // 仪表盘是竞品速览：非 SLG 是纯噪声，会污染汇总/图表/Top 榜，故始终只看 SLG
+  // （不给开关——「全部策略」属于排行榜页的探查动作）。
+  const board = rankings.filter(g => g.is_slg)
+  const top5 = board.slice(0, 5)
+  const totalDownloads = board.reduce((s, g) => s + (g.downloads || 0), 0)
+  const totalRevenue = board.reduce((s, g) => s + (g.revenue || 0), 0)
 
-  // 两个图各按自己的指标排 Top 8（rankings 本身按 rank 排序，不能直接 slice）。
-  // [...rankings] 复制后再 sort —— 别原地排序 React Query 缓存数组。
+  // 两个图各按自己的指标排 Top 8（board 本身按 rank 排序，不能直接 slice）。
+  // [...board] 复制后再 sort —— 别原地排序 React Query 缓存数组。
   const chartLabel = (g: { name: string | null; app_id: string }) => {
     const s = g.name ?? g.app_id
     return s.length > 10 ? s.slice(0, 10) + '…' : s
   }
-  const revenueChartData = [...rankings]
+  const revenueChartData = [...board]
     .sort((a, b) => (b.revenue ?? 0) - (a.revenue ?? 0))
     .slice(0, 8)
     .map(g => ({ name: chartLabel(g), revenue: Math.round((g.revenue ?? 0) / 1000) }))
-  const downloadsChartData = [...rankings]
+  const downloadsChartData = [...board]
     .sort((a, b) => (b.downloads ?? 0) - (a.downloads ?? 0))
     .slice(0, 8)
     .map(g => ({ name: chartLabel(g), downloads: Math.round((g.downloads ?? 0) / 1000) }))
 
   const handleExport = () => {
-    if (rankings.length === 0) { toast.error(t.common.noExportData); return }
+    if (board.length === 0) { toast.error(t.common.noExportData); return }
     const date = new Date().toISOString().slice(0, 10)
-    downloadCsv(`dashboard-${country}-${platform}-${date}.csv`, rankings, [
+    downloadCsv(`dashboard-${country}-${platform}-${date}.csv`, board, [
       { header: t.csv.rank, get: r => r.rank },
       { header: t.csv.appId, get: r => r.app_id },
       { header: t.csv.gameName, get: r => r.name },
@@ -111,7 +114,7 @@ export default function Dashboard() {
       { header: t.csv.downloadsToday, get: r => r.downloads },
       { header: t.csv.date, get: r => r.date },
     ])
-    toast.success(t.common.exported(rankings.length))
+    toast.success(t.common.exported(board.length))
   }
 
   return (
@@ -239,7 +242,7 @@ export default function Dashboard() {
                   <div className="w-20 h-4 bg-elevated rounded" />
                 </div>
               ))
-            : rankings.slice(0, 8).map(g => (
+            : board.slice(0, 8).map(g => (
                 <div
                   key={g.app_id}
                   className="px-5 py-3 flex items-center gap-4 hover:bg-elevated/50 cursor-pointer transition-colors"

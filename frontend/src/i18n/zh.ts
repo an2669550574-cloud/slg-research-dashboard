@@ -74,6 +74,8 @@ export const zh = {
     title: '排行榜',
     subtitle: '海外 SLG 实时排名 · 下载量 · 收入',
     searchPlaceholder: '搜索游戏名称或发行商...',
+    slgOnly: '仅 SLG',
+    allStrategy: '全部策略',
     rank: '排名',
     game: '游戏',
     todayRevenue: '今日收入',

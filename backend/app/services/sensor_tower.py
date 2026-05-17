@@ -7,6 +7,7 @@ from app.config import settings
 from app.cache import sensor_tower_cache
 from app.services import quota
 from app.services.appstore import fetch_apps_bulk, fetch_play_apps
+from app.services.slg_publishers import is_slg_publisher
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +130,7 @@ def _mock_today_rankings() -> list[dict]:
             "downloads": round(random.uniform(5000, 80000), 0),
             "revenue": round(random.uniform(50000, 2000000), 0),
             "date": today,
+            "is_slg": True,  # MOCK_SLG_GAMES 全是 SLG
         }
         for i, g in enumerate(MOCK_SLG_GAMES)
     ]
@@ -291,7 +293,8 @@ class SensorTowerService:
         if "ranking" in data:
             rows = [
                 {"app_id": str(aid), "rank": i + 1, "name": None, "publisher": None,
-                 "icon_url": None, "downloads": None, "revenue": None, "date": today}
+                 "icon_url": None, "downloads": None, "revenue": None, "date": today,
+                 "is_slg": False}
                 for i, aid in enumerate(data.get("ranking") or [])
             ]
             ids = [r["app_id"] for r in rows]
@@ -305,6 +308,7 @@ class SensorTowerService:
                 m = meta.get(r["app_id"])
                 if m:
                     r["name"], r["publisher"], r["icon_url"] = m["name"], m["publisher"], m["icon_url"]
+                r["is_slg"] = is_slg_publisher(r["publisher"])
             # 前 N 名补真实下载/收入（一次批量调用，+1 配额）。榜尾保持 None
             # → 前端显示"—"，区分"无数据"与真实 0。
             topn = settings.SENSOR_TOWER_RANKING_SALES_TOPN

@@ -76,6 +76,8 @@ export const en: Translations = {
     title: 'Rankings',
     subtitle: 'Real-time rank · downloads · revenue',
     searchPlaceholder: 'Search by name or publisher...',
+    slgOnly: 'SLG only',
+    allStrategy: 'All strategy',
     rank: 'Rank',
     game: 'Game',
     todayRevenue: 'Revenue today',

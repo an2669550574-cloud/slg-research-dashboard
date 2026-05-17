@@ -53,6 +53,7 @@ export interface RankingTodayOut {
   downloads: number | null
   revenue: number | null
   date: string | null
+  is_slg: boolean
 }
 
 export interface TrendPoint {

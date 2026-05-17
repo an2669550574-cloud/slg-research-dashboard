@@ -17,6 +17,8 @@ export default function Rankings() {
   const t = useT()
   const [country, setCountry] = useLocalStorageState<Country>('slg.country', 'US')
   const [platform, setPlatform] = useLocalStorageState<Platform>('slg.platform', 'ios')
+  // 商店没有 SLG 子类，策略畅销榜混入非 SLG；默认只看 SLG 竞品，可切「全部策略」
+  const [slgOnly, setSlgOnly] = useLocalStorageState<boolean>('slg.slgOnly', true)
   const [search, setSearch] = useState('')
 
   const { data: rankings = [], isLoading, isError, refetch } = useQuery({
@@ -24,7 +26,8 @@ export default function Rankings() {
     queryFn: () => gamesApi.rankings(country, platform),
   })
 
-  const filtered = rankings.filter(g =>
+  const board = slgOnly ? rankings.filter(g => g.is_slg) : rankings
+  const filtered = board.filter(g =>
     (g.name ?? '').toLowerCase().includes(search.toLowerCase()) ||
     (g.publisher ?? '').toLowerCase().includes(search.toLowerCase())
   )
@@ -68,6 +71,17 @@ export default function Rankings() {
             onChange={e => setSearch(e.target.value)}
             className="w-full bg-elevated border border-default rounded-lg pl-9 pr-3 py-2 text-sm text-primary placeholder:text-muted focus:outline-none focus:border-brand-500"
           />
+        </div>
+        <div className="flex gap-1 bg-elevated rounded-lg p-1">
+          {([true, false] as const).map(v => (
+            <button
+              key={String(v)}
+              onClick={() => setSlgOnly(v)}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${slgOnly === v ? 'bg-brand-600 text-white' : 'text-secondary hover:text-primary'}`}
+            >
+              {v ? t.rankings.slgOnly : t.rankings.allStrategy}
+            </button>
+          ))}
         </div>
         <div className="flex gap-1 bg-elevated rounded-lg p-1">
           {PLATFORMS.map(p => (
