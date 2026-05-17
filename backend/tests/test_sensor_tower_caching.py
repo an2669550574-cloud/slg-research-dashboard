@@ -68,16 +68,16 @@ async def test_force_refresh_bypasses_both_caches_and_consumes_quota(client):
     from app.services.sensor_tower import SensorTowerService
     from app.cache import sensor_tower_cache
 
-    cache_key = "today:ios:US"
+    svc = SensorTowerService()
+    svc.use_mock = False
+    cache_key, _, _ = svc._today_key("US", "ios")  # key 含 chart_type+category
+
     stale_snapshot = {"apps": [{"app_id": "stale", "rank": 99}]}
     await quota.save_snapshot(cache_key, stale_snapshot)
     # 把它放进 L1 也填上（模拟 force refresh 之前刚被普通查询缓存过）
     await sensor_tower_cache.set(cache_key, stale_snapshot, ttl_seconds=86400)
 
     api_response = {"apps": [{"app_id": "fresh", "rank": 1, "name": "Fresh", "publisher": "Test"}]}
-
-    svc = SensorTowerService()
-    svc.use_mock = False
     svc._get = AsyncMock(return_value=api_response)
 
     used_before = (await quota.current_usage())["used"]
@@ -154,8 +154,8 @@ async def test_get_all_rankings_today_parses_ranking_id_list(client):
     assert rows[0]["name"] is None and rows[0]["downloads"] is None
     path, params = svc._get.call_args.args[0], svc._get.call_args.args[1]
     assert path == "/v1/ios/ranking"
-    assert params["chart_type"] == "topfreeapplications"
-    assert params["category"] == "6014"
+    assert params["chart_type"] == "topgrossingapplications"
+    assert params["category"] == "7017"
     assert params["country"] == "US" and "date" in params
 
 

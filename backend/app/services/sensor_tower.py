@@ -209,17 +209,23 @@ class SensorTowerService:
         )
         return _parse_sales(data, platform)
 
-    async def get_all_rankings_today(self, country: str = "US", platform: str = "ios") -> list[dict]:
-        if self.use_mock:
-            return _mock_today_rankings()
-        today = datetime.utcnow().strftime("%Y-%m-%d")
+    def _today_key(self, country: str, platform: str) -> tuple[str, str, str]:
+        """今日榜的 (cache_key, chart_type, category)。key 必须含 chart_type+
+        category：否则切免费/畅销榜或换类目后旧快照会被继续返回（最长 24h）。
+        get_all_rankings_today 与 force_refresh 共用，保证失效命中同一 key。"""
         if platform == "android":
             category = settings.SENSOR_TOWER_RANKING_CATEGORY_ANDROID
             chart_type = settings.SENSOR_TOWER_RANKING_CHART_TYPE_ANDROID
         else:
             category = settings.SENSOR_TOWER_RANKING_CATEGORY_IOS
             chart_type = settings.SENSOR_TOWER_RANKING_CHART_TYPE_IOS
-        key = f"today:{platform}:{country}"
+        return f"today:{platform}:{country}:{chart_type}:{category}", chart_type, category
+
+    async def get_all_rankings_today(self, country: str = "US", platform: str = "ios") -> list[dict]:
+        if self.use_mock:
+            return _mock_today_rankings()
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        key, chart_type, category = self._today_key(country, platform)
         data = await self._cached_get(
             key,
             f"/v1/{platform}/ranking",
@@ -262,7 +268,7 @@ class SensorTowerService:
         """
         if self.use_mock:
             return _mock_today_rankings()
-        key = f"today:{platform}:{country}"
+        key, _, _ = self._today_key(country, platform)
         await sensor_tower_cache.invalidate(key)
         await quota.delete_snapshot(key)
         # 清同 country/platform 的 metrics L1，让下次读穿透到 L2 snapshot
