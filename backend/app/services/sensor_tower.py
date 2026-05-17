@@ -7,7 +7,7 @@ from app.config import settings
 from app.cache import sensor_tower_cache
 from app.services import quota
 from app.services.appstore import fetch_apps_bulk, fetch_play_apps
-from app.services.slg_publishers import is_slg_publisher
+from app.services.slg_publishers import is_slg
 
 logger = logging.getLogger(__name__)
 
@@ -308,7 +308,7 @@ class SensorTowerService:
                 m = meta.get(r["app_id"])
                 if m:
                     r["name"], r["publisher"], r["icon_url"] = m["name"], m["publisher"], m["icon_url"]
-                r["is_slg"] = is_slg_publisher(r["publisher"])
+                r["is_slg"] = is_slg(r["app_id"], r["publisher"])
             # 前 N 名补真实下载/收入（一次批量调用，+1 配额）。榜尾保持 None
             # → 前端显示"—"，区分"无数据"与真实 0。
             topn = settings.SENSOR_TOWER_RANKING_SALES_TOPN

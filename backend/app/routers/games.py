@@ -7,7 +7,7 @@ from app.models.game import Game, GameRanking
 from app.rate_limit import refresh_cooldown
 from app.services.sensor_tower import sensor_tower_service, MOCK_SLG_GAMES, _resolve_window
 from app.services.appstore import fetch_app_info
-from app.services.slg_publishers import is_slg_publisher
+from app.services.slg_publishers import is_slg
 from app.scheduler import sync_daily_rankings
 from app.schemas import GameCreate, GameOut, GameUpdate, RankingTodayOut, MetricsOut
 
@@ -89,7 +89,7 @@ async def get_rankings(
                 "downloads": r.downloads,
                 "revenue": r.revenue,
                 "date": r.date,
-                "is_slg": is_slg_publisher(r.publisher),
+                "is_slg": is_slg(r.app_id, r.publisher),
             }
             for r in rows
         ]

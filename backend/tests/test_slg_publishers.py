@@ -21,6 +21,12 @@ import pytest
     "TAP4FUN (HONGKONG) LIMITED",             # Kingdom Guard
     "IGG SINGAPORE PTE. LTD.",                # Lords Mobile
     "Omnilojo Pte Ltd",                       # Dark War: Survival
+    "RiverGame",                              # Top Heroes（Android 无空格主体）
+    "CamelStudio",                            # Age of Origins（Android 主体）
+    "Long Tech Network Limited",              # Last Shelter / Rise of Castles
+    "Phantix Games",                          # Mafia City / The Grand Mafia
+    "StarUnion",                              # The Ants: Underground Kingdom
+    "LIFE GAME PTE. LTD.",                    # Last Fortress: Underground
 ])
 def test_known_slg_publishers_match(publisher):
     from app.services.slg_publishers import is_slg_publisher
@@ -47,3 +53,25 @@ def test_token_match_is_word_boundary_not_substring():
     from app.services.slg_publishers import is_slg_publisher
     assert is_slg_publisher("Trigger Games") is False
     assert is_slg_publisher("IGG Singapore") is True
+
+
+@pytest.mark.parametrize("app_id,publisher", [
+    ("6476261995", "Level Infinite"),          # Age of Empires Mobile（iOS）
+    ("com.proximabeta.aoemobile", "Level Infinite"),  # 同（Android）
+    ("1035712810", "Warner Bros."),            # GoT: Conquest
+    ("com.wb.goog.got.conquest", "Warner Bros. International Enterprises"),
+    ("1427744264", "Scopely, Inc."),           # Star Trek Fleet Command
+    ("com.plarium.vikings", "Plarium  LLC"),   # Vikings: War of Clans
+    ("com.farlightgames.samo.gp", "FARLIGHT"), # Call of Dragons
+])
+def test_watchlist_app_id_overrides_non_slg_publisher(app_id, publisher):
+    """多品类发行商旗下被钉的真·SLG：app_id 命中即 True，哪怕发行商不在白名单。"""
+    from app.services.slg_publishers import is_slg
+    assert is_slg(app_id, publisher) is True
+
+
+def test_is_slg_falls_back_to_publisher_when_appid_not_pinned():
+    from app.services.slg_publishers import is_slg
+    assert is_slg("999999999", "Century Games Pte. Ltd.") is True   # 发行商路命中
+    assert is_slg("999999999", "Supercell") is False                # 两路都不中
+    assert is_slg(None, "FunPlus International AG") is True          # app_id 缺失不影响发行商路
