@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from app.database import get_db
@@ -22,8 +22,19 @@ async def get_history(app_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.post("/sync/{app_id}")
 @limiter.limit(lambda: settings.RATE_LIMIT_AI_SYNC)
-async def sync_history(request: Request, app_id: str, db: AsyncSession = Depends(get_db)):
-    """触发 AI 自动生成发展历程"""
+async def sync_history(
+    request: Request,
+    response: Response,
+    app_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """触发 AI 自动生成发展历程。
+
+    slowapi(headers_enabled=True)在 handler 跑完后要把 X-RateLimit-* 注入
+    响应——它按名字找 `response: Response` 参数；缺这个参数就会抛
+    "parameter `response` must be an instance of ..."，AI 兜底逻辑根本没机会
+    执行。`request`/`response` 名字是 slowapi 硬约定，不能改。
+    """
     game_result = await db.execute(select(Game).where(Game.app_id == app_id))
     game = game_result.scalar_one_or_none()
     name = game.name if game else app_id
