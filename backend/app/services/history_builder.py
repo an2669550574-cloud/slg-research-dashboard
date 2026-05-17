@@ -1,10 +1,12 @@
-"""数据驱动的发展历程：只用**事实**，不靠 LLM 编造。
+"""数据驱动的发展历程：只用**事实**，全中文，不靠 LLM 编造。
 
 来源（零 ST 配额、无 Anthropic）：
-- iTunes 元信息（已接入的免费查询）：原始上线日、当前版本号 + 官方更新说明。
+- iTunes 元信息：优先 tw 区（繁中本地化）取上线日 + 当前版本号 + 官方
+  更新说明；tw 查不到回退 us（仅取日期，绝不往界面贴英文营销文案）。
   仅 iOS 数字 app_id 命中；Android 包名查不到（iTunes 没安卓）。
-- 本地 game_rankings（每日调度累积）：自监测起的最高排名、单日收入峰值。
-  随天数累积越来越厚，文案只说「自监测起」，不谎称「史上」。
+- 本地 game_rankings（每日调度累积）：首次纳入监测、上榜阈值突破、
+  自监测起最高排名、单日收入峰值、多市场覆盖。文案只说「自监测起」，
+  不谎称「史上」；阈值/峰值类随天数累积自动变厚。
 
 真营销事件（超级碗广告 / KOL 投放）无任何数据源 → 只能「手动添加」。
 """
@@ -16,27 +18,41 @@ from app.services.appstore import fetch_app_info
 
 logger = logging.getLogger(__name__)
 
+# 阈值由严到松；debut 即达标的不算「突破」（debut 事件已表述）
+_RANK_TIERS = ((1, "登顶畅销榜 #1"), (3, "进入畅销榜 Top 3"), (10, "进入畅销榜 Top 10"))
+
+
+def _market(r: GameRanking) -> str:
+    return f"{r.country}/{r.platform}"
+
 
 async def build_history(app_id: str, db: AsyncSession) -> list[dict]:
-    """拼出该 app 的事实性时间线，按日期排序返回。无事实可取时返回空列表。"""
+    """拼出该 app 的事实性中文时间线，按日期排序。无事实可取时返回空列表。"""
     events: list[dict] = []
 
-    info = await fetch_app_info(app_id)
+    # iTunes：优先繁中（tw），查不到回退 us。zh_text=False 时不取其英文文案。
+    info = await fetch_app_info(app_id, country="tw")
+    zh_text = info is not None
+    if info is None:
+        info = await fetch_app_info(app_id, country="us")
+
     if info:
+        name = info.get("name") or app_id
+        pub = info.get("publisher") or "未知发行商"
         if info.get("release_date"):
             events.append({
                 "event_date": info["release_date"],
                 "event_type": "launch",
                 "title": "App Store 全球上线",
-                "description": (info.get("description") or "")[:300],
+                "description": f"{name}（{pub}）在 App Store 上线。",
             })
         if info.get("version") and info.get("current_version_date"):
-            notes = (info.get("release_notes") or "").strip()
+            notes = (info.get("release_notes") or "").strip() if zh_text else ""
             events.append({
                 "event_date": info["current_version_date"],
                 "event_type": "version",
                 "title": f"更新至 v{info['version']}",
-                "description": notes[:500] or "App Store 当前版本（无更新说明）",
+                "description": notes[:500] or "App Store 当前版本（暂无中文更新说明）。",
             })
 
     rows = (await db.execute(
@@ -46,22 +62,50 @@ async def build_history(app_id: str, db: AsyncSession) -> list[dict]:
         ).order_by(GameRanking.date)
     )).scalars().all()
     if rows:
-        best = min(rows, key=lambda r: r.rank)
+        first = rows[0]
+        span = f"监测区间 {rows[0].date} 至 {rows[-1].date}"
         events.append({
-            "event_date": best.date,
+            "event_date": first.date,
             "event_type": "ranking",
-            "title": f"自监测起最高排名 #{best.rank}",
-            "description": f"{best.country}/{best.platform} 策略畅销榜，"
-                           f"监测区间 {rows[0].date} 至 {rows[-1].date}。",
+            "title": f"首次纳入监测，{_market(first)} #{first.rank}",
+            "description": f"开始持续追踪该产品在策略畅销榜的表现（{span}）。",
         })
+        for tier, label in _RANK_TIERS:
+            if first.rank <= tier:
+                continue  # 首测即达标，不是「突破」
+            crossed = next((r for r in rows if r.date > first.date and r.rank <= tier), None)
+            if crossed:
+                events.append({
+                    "event_date": crossed.date,
+                    "event_type": "ranking",
+                    "title": f"首次{label}",
+                    "description": f"{_market(crossed)} 策略畅销榜，当日 #{crossed.rank}。",
+                })
+        best = min(rows, key=lambda r: r.rank)
+        if best.rank < first.rank:  # 仅当 debut 之后确有爬升，避免与首测重复
+            events.append({
+                "event_date": best.date,
+                "event_type": "ranking",
+                "title": f"自监测起最高排名 #{best.rank}",
+                "description": f"{_market(best)} 策略畅销榜（{span}）。",
+            })
         rev = [r for r in rows if r.revenue]
         if rev:
             top = max(rev, key=lambda r: r.revenue)
+            dl = f"，下载 {top.downloads:,.0f}" if top.downloads else ""
             events.append({
                 "event_date": top.date,
                 "event_type": "revenue",
                 "title": f"自监测起单日收入峰值 ${top.revenue:,.0f}",
-                "description": f"{top.country}/{top.platform}，当日排名 #{top.rank}。",
+                "description": f"{_market(top)}，当日排名 #{top.rank}{dl}。",
+            })
+        markets = sorted({_market(r) for r in rows})
+        if len(markets) >= 2:
+            events.append({
+                "event_date": rows[0].date,
+                "event_type": "ranking",
+                "title": f"覆盖 {len(markets)} 个市场策略榜",
+                "description": "、".join(markets) + "。",
             })
 
     events.sort(key=lambda e: e["event_date"])

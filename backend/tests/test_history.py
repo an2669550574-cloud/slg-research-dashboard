@@ -47,11 +47,12 @@ async def test_sync_builds_factual_events(client):
     """iTunes 给上线/版本，game_rankings 给最高排名/收入峰值，全部 source=data。"""
     await _seed_rankings("6739554056")
     itunes = {
+        "name": "Kingshot", "publisher": "Century Games",
         "release_date": "2024-04-02",
         "current_version_date": "2026-05-10",
         "version": "1.5.0",
-        "release_notes": "新增赛季玩法",
-        "description": "一款 SLG",
+        "release_notes": "新增賽季玩法",  # tw 命中 → 文案应原样采用
+        "description": "marketing blurb (ignored)",
     }
     with patch("app.services.history_builder.fetch_app_info",
                new=AsyncMock(return_value=itunes)):
@@ -63,8 +64,17 @@ async def test_sync_builds_factual_events(client):
     assert all(e["source"] == "data" for e in events)
     types = {e["event_type"] for e in events}
     assert {"launch", "version", "ranking", "revenue"} <= types
-    rank_ev = next(e for e in events if e["event_type"] == "ranking")
-    assert "#2" in rank_ev["title"]            # 两天里最优名次
+    by_title = {e["title"]: e for e in events}
+    # 上线事件用中文事实句，不贴英文营销文案
+    launch = next(e for e in events if e["event_type"] == "launch")
+    assert "Kingshot（Century Games）" in launch["description"]
+    assert "blurb" not in launch["description"]
+    # 版本事件采用繁中更新说明
+    ver = next(e for e in events if e["event_type"] == "version")
+    assert ver["description"] == "新增賽季玩法"
+    # 8→2 的爬升应产出「最高排名 #2」与「首次进入 Top 3」
+    assert any("#2" in t for t in by_title)
+    assert any("Top 3" in t for t in by_title)
     assert [e["event_date"] for e in events] == sorted(e["event_date"] for e in events)
 
 
