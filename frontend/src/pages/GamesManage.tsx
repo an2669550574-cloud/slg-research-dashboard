@@ -157,8 +157,8 @@ export default function GamesManage() {
   const inputClass = "bg-elevated border border-default rounded-lg px-3 py-2 text-sm text-primary placeholder:text-muted focus:outline-none focus:border-brand-500"
 
   return (
-    <div className="p-6 space-y-5">
-      <div className="flex items-center justify-between">
+    <div className="p-4 sm:p-6 space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-primary">{t.gamesManage.title}</h1>
           <p className="text-muted text-sm mt-0.5">{t.gamesManage.subtitle}</p>
@@ -258,7 +258,8 @@ export default function GamesManage() {
       </div>
 
       <div className="bg-surface border border-default rounded-xl overflow-hidden">
-        <table className="w-full">
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-[640px]">
           <thead>
             <tr className="border-b border-default text-xs text-muted uppercase tracking-wider">
               <th className="px-5 py-3 text-left">{t.rankings.game}</th>
@@ -314,6 +315,7 @@ export default function GamesManage() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
 
       <Pagination total={total} offset={offset} pageSize={PAGE_SIZE} onOffsetChange={setOffset} />

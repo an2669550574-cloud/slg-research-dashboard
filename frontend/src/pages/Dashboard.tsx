@@ -115,8 +115,8 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="p-4 sm:p-6 space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-primary">{t.dashboard.title}</h1>
           <p className="text-muted text-sm mt-0.5">{t.dashboard.subtitle}</p>
@@ -167,14 +167,14 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard icon={Trophy} label={t.dashboard.statGames} value={trackedGames.length} sub={t.dashboard.statCategory} color="bg-brand-600" />
         <StatCard icon={Download} label={t.dashboard.statDownloads} value={formatNumber(totalDownloads)} sub={t.dashboard.worldwide} color="bg-emerald-600" />
         <StatCard icon={DollarSign} label={t.dashboard.statRevenue} value={formatRevenue(totalRevenue)} sub={t.dashboard.worldwide} color="bg-purple-600" />
         <StatCard icon={TrendingUp} label={t.dashboard.statTopGame} value={top5[0]?.name || '—'} sub={`${t.dashboard.rankBadge} #${top5[0]?.rank || '—'}`} color="bg-yellow-600" />
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="bg-surface border border-default rounded-xl p-5">
           <h2 className="text-sm font-semibold text-primary mb-4">{t.dashboard.chartRevenue}</h2>
           {isError ? (

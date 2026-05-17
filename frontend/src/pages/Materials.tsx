@@ -76,8 +76,8 @@ export default function Materials() {
   const inputClass = "bg-elevated border border-default rounded-lg px-3 py-2 text-sm text-primary placeholder:text-muted focus:outline-none focus:border-brand-500"
 
   return (
-    <div className="p-6 space-y-5">
-      <div className="flex items-center justify-between">
+    <div className="p-4 sm:p-6 space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-primary">{t.materials.title}</h1>
           <p className="text-muted text-sm mt-0.5">{t.materials.subtitle}</p>
@@ -125,7 +125,7 @@ export default function Materials() {
       {showForm && (
         <form onSubmit={handleSubmit} className="bg-surface border border-default rounded-xl p-5 space-y-3">
           <h3 className="text-sm font-semibold text-primary mb-3">{t.materials.addMaterialFormTitle}</h3>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <input required placeholder={t.materials.titlePlaceholder} value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
               className={`col-span-2 ${inputClass}`} />
             <input required placeholder={t.materials.urlPlaceholder} value={form.url} onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
@@ -158,8 +158,8 @@ export default function Materials() {
         </form>
       )}
 
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1 max-w-xs">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[180px] max-w-xs">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
           <input
             type="text"
@@ -189,7 +189,7 @@ export default function Materials() {
       {isError ? (
         <QueryError onRetry={() => refetch()} />
       ) : isLoading ? (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="h-24 bg-surface rounded-xl animate-pulse" />
           ))}
@@ -199,7 +199,7 @@ export default function Materials() {
           {debouncedSearch || filterPlatform ? t.common.noResult : t.materials.empty}
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {materials.map(m => {
             const platCfg = (m.platform && PLATFORM_CONFIG[m.platform]) || PLATFORM_CONFIG.other
             const game = gameMap[m.app_id]

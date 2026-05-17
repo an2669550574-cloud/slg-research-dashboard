@@ -30,8 +30,8 @@ export default function Rankings() {
   )
 
   return (
-    <div className="p-6 space-y-5">
-      <div className="flex items-center justify-between">
+    <div className="p-4 sm:p-6 space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-primary">{t.rankings.title}</h1>
           <p className="text-muted text-sm mt-0.5">{t.rankings.subtitle}</p>
@@ -58,8 +58,8 @@ export default function Rankings() {
         </button>
       </div>
 
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1 max-w-xs">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[180px] max-w-xs">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
           <input
             type="text"
@@ -98,7 +98,8 @@ export default function Rankings() {
           <QueryError onRetry={() => refetch()} />
         ) : (
         <>
-        <table className="w-full">
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-[600px]">
           <thead>
             <tr className="border-b border-default text-xs text-muted uppercase tracking-wider">
               <th className="px-5 py-3 text-left w-12">{t.rankings.rank}</th>
@@ -161,6 +162,7 @@ export default function Rankings() {
             }
           </tbody>
         </table>
+        </div>
         {!isLoading && filtered.length === 0 && (
           <div className="py-16 text-center text-muted text-sm">{t.common.noResult}</div>
         )}

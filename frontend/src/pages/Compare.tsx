@@ -83,7 +83,7 @@ export default function Compare() {
   const availableGames = games.filter(g => !selected.includes(g.app_id))
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="p-4 sm:p-6 space-y-5">
       <div>
         <h1 className="text-xl font-bold text-primary">{t.compare.title}</h1>
         <p className="text-muted text-sm mt-0.5">{t.compare.subtitle}</p>

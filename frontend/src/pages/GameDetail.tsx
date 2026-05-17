@@ -62,7 +62,7 @@ function Timeline({ appId }: { appId: string }) {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
         <h2 className="text-sm font-semibold text-primary">{t.gameDetail.timelineTitle}</h2>
         <div className="flex items-center gap-2">
           <button
@@ -102,7 +102,7 @@ function Timeline({ appId }: { appId: string }) {
 
       {showForm && (
         <form onSubmit={handleSubmit} className="bg-elevated rounded-xl p-4 mb-4 space-y-3 border border-default">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <input
               required
               type="date"
@@ -253,7 +253,7 @@ function MaterialsPanel({ appId }: { appId: string }) {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
         <h2 className="text-sm font-semibold text-primary">{t.gameDetail.materialsTitle}</h2>
         <button
           onClick={() => setShowForm(!showForm)}
@@ -266,7 +266,7 @@ function MaterialsPanel({ appId }: { appId: string }) {
 
       {showForm && (
         <form onSubmit={handleSubmit} className="bg-elevated rounded-xl p-4 mb-4 space-y-3 border border-default">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <input required placeholder={t.materials.titlePlaceholder} value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
               className={`col-span-2 ${inputClass}`} />
             <input required placeholder={t.materials.urlPlaceholder} value={form.url} onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
@@ -389,7 +389,7 @@ export default function GameDetail() {
   ]
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 sm:p-6 space-y-6">
       <button onClick={() => navigate(-1)} className="flex items-center gap-2 text-sm text-secondary hover:text-primary transition-colors">
         <ArrowLeft size={16} /> {t.common.back}
       </button>
@@ -460,7 +460,7 @@ export default function GameDetail() {
         )}
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {chartCards.map(({ key, dataKey, label, color, formatter }) => (
           <div key={key} className="bg-surface border border-default rounded-xl p-4">
             <h3 className="text-xs font-medium text-secondary mb-3">{label}</h3>
@@ -490,7 +490,7 @@ export default function GameDetail() {
         ))}
       </div>
 
-      <div className="grid grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-surface border border-default rounded-xl p-5">
           <Timeline appId={appId!} />
         </div>
