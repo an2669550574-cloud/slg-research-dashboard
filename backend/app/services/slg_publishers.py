@@ -17,23 +17,32 @@ import re
 # 也在策略畅销榜，但非 SLG 口径（COC/大富翁/消除），不收。
 SLG_PUBLISHER_KEYWORDS: tuple[str, ...] = (
     "century games",      # Whiteout Survival, Kingshot
+    "building blocks",    # Puzzles & Survival / Puzzles & Chaos（Century 系工作室）
     "diandian",           # 点点互动
     "first fun",          # 部分地区 Whiteout 发行标
     "firstfun",
     "funplus",            # State of Survival, Sea of Conquest, Stormshot
     "kingsgroup",         # King of Avalon, Guns of Glory（FunPlus 系）
+    "funfly",             # Last War: Survival
     "igg",                # Lords Mobile, Viking Rise
     "lilith",             # Rise of Kingdoms, Call of Dragons, Warpath
     "elex",               # Clash of Kings
-    "camel games",        # Age of Origins / Age of Z
-    "tap4fun",            # Kiss of War, Invasion
+    "camel games",        # Age of Origins / Age of Z（部分商店显示原名）
+    "ke mo",              # Age of Origins / War and Order（Camel Games 香港主体）
+    "tap4fun",            # Kingdom Guard, Kiss of War, Age of Apes
     "topwar",             # Top War
     "top war",
-    "37 mobile games",    # Puzzles & Survival
+    "river game",         # Top War / Top Heroes
+    "37 mobile games",    # Puzzles & Survival（部分地区发行主体）
     "37games",
     "37 interactive",
     "top games",          # Evony（Top Games Inc）
     "onemt",              # Kingdom Guard 等
+    "omnilojo",           # Last Z / Dark War: Survival
+    "scorewarrior",       # Total Battle
+    "yoozoo",             # Infinity Kingdom
+    "life game global",   # Last Fortress: Underground
+    "9z games",           # X-Clash: Survival
     "tilting point",      # 多款 SLG 联运
     "machine zone",       # Game of War, Mobile Strike
     "stillfront",         # Conflict of Nations, Supremacy

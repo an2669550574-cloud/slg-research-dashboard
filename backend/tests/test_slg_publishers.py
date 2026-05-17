@@ -13,6 +13,14 @@ import pytest
     "37 Mobile Games",
     "Machine Zone, Inc.",
     "Stillfront Group",
+    # 以下为线上 /api/games/rankings 实测发行商串（部署后抓取，防回归）
+    "FUNFLY PTE. LTD.",                       # Last War: Survival
+    "Hong Kong Ke Mo software Co., Limited",  # Age of Origins（Camel Games HK）
+    "BUILDING-BLOCKS NETWORK TECHNOLOGY CO.,LIMITED",  # Puzzles & Survival
+    "River Game HK Limited",                  # Top War: Battle Game
+    "TAP4FUN (HONGKONG) LIMITED",             # Kingdom Guard
+    "IGG SINGAPORE PTE. LTD.",                # Lords Mobile
+    "Omnilojo Pte Ltd",                       # Dark War: Survival
 ])
 def test_known_slg_publishers_match(publisher):
     from app.services.slg_publishers import is_slg_publisher
