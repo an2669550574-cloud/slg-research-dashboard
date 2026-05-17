@@ -239,20 +239,30 @@ async def get_game_metrics(
     db: AsyncSession = Depends(get_db),
 ):
     kw = {"country": country, "platform": platform, "days": days, "start_date": start_date, "end_date": end_date}
-    sales = await sensor_tower_service.get_sales(app_id, **kw)
     if sensor_tower_service.use_mock:
+        sales = await sensor_tower_service.get_sales(app_id, **kw)
         rankings = await sensor_tower_service.get_rankings(app_id, **kw)
-    else:
-        # 真实排名走势查本地 game_rankings（每日调度已采集，零 ST 配额）。
-        win = _resolve_window(days, start_date, end_date)
-        res = await db.execute(
-            select(GameRanking.date, GameRanking.rank).where(
-                GameRanking.app_id == app_id,
-                GameRanking.country == country,
-                GameRanking.platform == platform,
-                GameRanking.date >= win[0],
-                GameRanking.date <= win[-1],
-            ).order_by(GameRanking.date)
-        )
-        rankings = [{"date": d, "rank": rk} for d, rk in res.all()]
-    return {"rankings": rankings, "downloads": sales["downloads"], "revenue": sales["revenue"]}
+        return {"rankings": rankings, "downloads": sales["downloads"], "revenue": sales["revenue"]}
+
+    # 真实模式：rank + 下载 + 收入 一次性读本地 game_rankings（调度采集 + 一次性
+    # 历史回填）—— 零 ST 配额、瞬开、与发展历程同源。rank=NULL 的回填行不进
+    # 排名走势。库里完全没有销量覆盖（非 Top50 回填 / 未同步市场）时才回退 ST
+    # 取下载收入，避免图表空白；行为对未覆盖 app 与改动前一致。
+    win = _resolve_window(days, start_date, end_date)
+    res = await db.execute(
+        select(GameRanking.date, GameRanking.rank, GameRanking.downloads, GameRanking.revenue).where(
+            GameRanking.app_id == app_id,
+            GameRanking.country == country,
+            GameRanking.platform == platform,
+            GameRanking.date >= win[0],
+            GameRanking.date <= win[-1],
+        ).order_by(GameRanking.date)
+    )
+    rows = res.all()
+    rankings = [{"date": d, "rank": rk} for d, rk, _, _ in rows if rk is not None]
+    downloads = [{"date": d, "value": dl} for d, _, dl, _ in rows if dl is not None]
+    revenue = [{"date": d, "value": rv} for d, _, _, rv in rows if rv is not None]
+    if not downloads and not revenue:
+        sales = await sensor_tower_service.get_sales(app_id, **kw)
+        downloads, revenue = sales["downloads"], sales["revenue"]
+    return {"rankings": rankings, "downloads": downloads, "revenue": revenue}

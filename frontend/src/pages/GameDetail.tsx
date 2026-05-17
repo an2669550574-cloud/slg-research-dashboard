@@ -412,13 +412,13 @@ export default function GameDetail() {
       )}
 
       <div className="flex flex-wrap items-center gap-2">
-        {[7, 30, 90].map(d => {
+        {[7, 30, 90, 365].map(d => {
           const active = range.kind === 'preset' && range.days === d
           return (
             <button key={d}
               onClick={() => { setRange({ kind: 'preset', days: d }); setShowCustom(false) }}
               className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${active ? 'bg-brand-600 text-white' : 'bg-elevated text-secondary hover:text-primary'}`}>
-              {t.common.days(d)}
+              {d === 365 ? t.common.year1 : t.common.days(d)}
             </button>
           )
         })}

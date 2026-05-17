@@ -154,6 +154,7 @@ export default function Compare() {
                 [7, t.compare.days7],
                 [30, t.compare.days30],
                 [90, t.compare.days90],
+                [365, t.compare.days365],
               ].map(([d, label]) => (
                 <button
                   key={d as number}
