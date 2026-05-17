@@ -84,8 +84,9 @@ export default function GamesManage() {
   const createMut = useMutation({
     mutationFn: (data: FormState) => gamesApi.create(data),
     onSuccess: () => {
+      // 不动 ['rankings']：今日榜读 game_rankings（ST 日榜），与被追踪的
+      // games 表无耦合，增删改追踪游戏不会改变榜单数据。
       qc.invalidateQueries({ queryKey: ['games', 'manage'] })
-      qc.invalidateQueries({ queryKey: ['rankings'] })
       closeForm()
       toast.success(t.gamesManage.added)
     },
@@ -95,7 +96,6 @@ export default function GamesManage() {
     mutationFn: ({ appId, data }: { appId: string; data: Partial<FormState> }) => gamesApi.update(appId, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['games', 'manage'] })
-      qc.invalidateQueries({ queryKey: ['rankings'] })
       closeForm()
       toast.success(t.gamesManage.updated)
     },
@@ -105,7 +105,6 @@ export default function GamesManage() {
     mutationFn: (appId: string) => gamesApi.delete(appId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['games', 'manage'] })
-      qc.invalidateQueries({ queryKey: ['rankings'] })
       toast.success(t.gamesManage.deleted)
     },
   })
