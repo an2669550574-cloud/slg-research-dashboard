@@ -141,12 +141,15 @@ async def test_get_all_rankings_today_parses_ranking_id_list(client):
     """/v1/{os}/ranking 返回有序 app_id 列表 → 转成 名次+app_id 行。"""
     from unittest.mock import patch
     from app.services.sensor_tower import SensorTowerService
+    from app.config import settings
 
     svc = SensorTowerService()
     svc.use_mock = False
     svc._get = AsyncMock(return_value={"ranking": ["553834731", "1053012308"]})
 
-    with patch("app.services.sensor_tower.fetch_apps_bulk", AsyncMock(return_value={})):
+    # 隔离掉 sales 批量补全（topn=0），让 _get.call_args 仍是排行榜那次调用
+    with patch("app.services.sensor_tower.fetch_apps_bulk", AsyncMock(return_value={})), \
+         patch.object(settings, "SENSOR_TOWER_RANKING_SALES_TOPN", 0):
         rows = await svc.get_all_rankings_today("US", "ios")
 
     assert [r["app_id"] for r in rows] == ["553834731", "1053012308"]
@@ -301,6 +304,71 @@ async def test_android_ranking_enriched_via_play_not_itunes(client):
     fp.assert_awaited()
     fb.assert_not_awaited()
     assert rows[0]["app_id"] == "com.x.y" and rows[0]["name"] == "X"
+
+
+def test_parse_sales_by_app_ios_takes_latest_day():
+    from app.services.sensor_tower import _parse_sales_by_app
+    raw = [
+        {"aid": "1", "d": "2026-05-01", "iu": 10, "au": 2, "ir": 500, "ar": 0},
+        {"aid": "1", "d": "2026-05-03T00:00:00Z", "iu": 20, "au": 0, "ir": 700, "ar": 300},
+        {"aid": "2", "d": "2026-05-02", "iu": 5, "au": 0, "ir": 100, "ar": 0},
+    ]
+    out = _parse_sales_by_app(raw, "ios")
+    assert out["1"] == {"downloads": 20, "revenue": 10.0}, "只取最新一天 (05-03)"
+    assert out["2"] == {"downloads": 5, "revenue": 1.0}
+
+
+def test_parse_sales_by_app_android_and_empty():
+    from app.services.sensor_tower import _parse_sales_by_app
+    raw = [{"aid": "com.x", "d": "2026-05-01T00:00:00Z", "u": 999, "r": 12345}]
+    assert _parse_sales_by_app(raw, "android") == {"com.x": {"downloads": 999, "revenue": 123.45}}
+    assert _parse_sales_by_app({}, "ios") == {}
+    assert _parse_sales_by_app([], "ios") == {}
+
+
+@pytest.mark.asyncio
+async def test_get_sales_batch_single_call_comma_ids(client):
+    """前 N 名一次批量调用（app_ids 逗号），按 app 解析；mock/空短路。"""
+    from app.services.sensor_tower import SensorTowerService
+
+    svc = SensorTowerService()
+    svc.use_mock = False
+    svc._get = AsyncMock(return_value=[
+        {"aid": "111", "d": "2026-05-02", "iu": 7, "au": 1, "ir": 900, "ar": 100},
+        {"aid": "222", "d": "2026-05-02", "iu": 3, "au": 0, "ir": 50, "ar": 0},
+    ])
+
+    out = await svc.get_sales_batch(["111", "222"], "US", "ios")
+
+    assert out["111"] == {"downloads": 8, "revenue": 10.0}
+    assert out["222"] == {"downloads": 3, "revenue": 0.5}
+    path, params = svc._get.call_args.args[0], svc._get.call_args.args[1]
+    assert path == "/v1/ios/sales_report_estimates"
+    assert params["app_ids"] == "111,222"
+    assert svc._get.await_count == 1, "批量必须是单次调用"
+
+    assert await svc.get_sales_batch([], "US", "ios") == {}
+    svc.use_mock = True
+    assert await svc.get_sales_batch(["x"], "US", "ios") == {}
+
+
+@pytest.mark.asyncio
+async def test_ranking_topn_filled_rest_left_null(client):
+    """前 N 名补真实下载/收入；榜尾保持 None（前端显示 —）。"""
+    from unittest.mock import patch
+    from app.services.sensor_tower import SensorTowerService
+
+    svc = SensorTowerService()
+    svc.use_mock = False
+    svc._get = AsyncMock(return_value={"ranking": ["111", "222", "333"]})
+
+    with patch("app.services.sensor_tower.fetch_apps_bulk", AsyncMock(return_value={})), \
+         patch.object(svc, "get_sales_batch",
+                      AsyncMock(return_value={"111": {"downloads": 9, "revenue": 99.0}})):
+        rows = await svc.get_all_rankings_today("US", "ios")
+
+    assert rows[0]["downloads"] == 9 and rows[0]["revenue"] == 99.0
+    assert rows[1]["downloads"] is None and rows[2]["revenue"] is None
 
 
 @pytest.mark.asyncio

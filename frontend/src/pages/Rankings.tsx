@@ -149,10 +149,10 @@ export default function Rankings() {
                       </div>
                     </td>
                     <td className="px-3 py-3.5 text-right">
-                      <span className="text-sm font-medium text-emerald-400">{formatRevenue(g.revenue ?? 0)}</span>
+                      <span className="text-sm font-medium text-emerald-400">{g.revenue == null ? <span className="text-muted">—</span> : formatRevenue(g.revenue)}</span>
                     </td>
                     <td className="px-3 py-3.5 text-right">
-                      <span className="text-sm text-secondary">{formatNumber(g.downloads ?? 0)}</span>
+                      <span className="text-sm text-secondary">{g.downloads == null ? <span className="text-muted">—</span> : formatNumber(g.downloads)}</span>
                     </td>
                     <td className="px-3 py-3.5 text-right">
                       <span className="text-xs text-brand-500">{t.common.detail}</span>

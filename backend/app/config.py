@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     # Android 名字/图标靠抓 Google Play 商品页（无批量接口，一个包名一次请求）。
     # 只补前 N 个：榜尾对竞品监控无意义，限量压低耗时与封 IP 风险。
     SENSOR_TOWER_ANDROID_ENRICH_LIMIT: int = 60
+    # 日榜前 N 名补真实下载/收入。sales_report_estimates 的 app_ids 支持逗号
+    # 批量 → 一次调用拿全部 N 个，每市场每天仅 +1 次配额。0 = 关闭（日榜
+    # 不显示下载收入，去详情页看）。
+    SENSOR_TOWER_RANKING_SALES_TOPN: int = 20
     # SQLite 持久化快照"新鲜窗口"（小时）。内存缓存 miss 时若 SQLite 里已有
     # 不超过这个时长的快照，直接返回不消耗配额。设成跟 CACHE_TTL 一致即可。
     SENSOR_TOWER_SNAPSHOT_FRESH_HOURS: int = 24

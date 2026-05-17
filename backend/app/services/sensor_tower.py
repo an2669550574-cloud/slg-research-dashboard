@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import httpx
 import random
@@ -87,6 +88,33 @@ def _parse_sales(data, platform: str) -> dict:
     downloads = [{"date": d, "value": round(dl[d], 0)} for d in sorted(dl)]
     revenue = [{"date": d, "value": round(rev_cents[d] / 100.0, 2)} for d in sorted(rev_cents)]
     return {"downloads": downloads, "revenue": revenue}
+
+
+def _parse_sales_by_app(data, platform: str) -> dict:
+    """批量 sales_report_estimates → {app_id: {downloads, revenue}}，每个 app
+    取其**最新一天**的估算（ST 数据通常 T-1/T-2，日榜显示最近可得值）。
+    字段同 _parse_sales：iOS d/iu+au / ir+ar(分)，Android d/u / r(分)。
+    fallback / 空 → {}。"""
+    rows = data if isinstance(data, list) else (data.get("data") or data.get("results") or [])
+    latest: dict[str, str] = {}
+    out: dict[str, dict] = {}
+    for r in rows:
+        aid = r.get("aid") or r.get("app_id")
+        d = r.get("d") or r.get("date")
+        if not aid or not d:
+            continue
+        aid, d = str(aid), d[:10]
+        if aid in latest and d <= latest[aid]:
+            continue
+        latest[aid] = d
+        if platform == "android":
+            u = r.get("u") or 0
+            c = r.get("r") or 0
+        else:
+            u = (r.get("iu") or 0) + (r.get("au") or 0)
+            c = (r.get("ir") or 0) + (r.get("ar") or 0)
+        out[aid] = {"downloads": round(u, 0), "revenue": round(c / 100.0, 2)}
+    return out
 
 
 def _mock_today_rankings() -> list[dict]:
@@ -209,6 +237,24 @@ class SensorTowerService:
         )
         return _parse_sales(data, platform)
 
+    async def get_sales_batch(self, app_ids: list[str], country: str, platform: str, days_window: int = 7) -> dict:
+        """日榜前 N 名一次取下载/收入：app_ids 逗号批量 → **单次配额**拿全部，
+        每个 app 取最新一天。返回 {app_id: {downloads, revenue}}；失败/空 → {}。
+        cache key 用排序后 ids 的短 hash + 当日，按天自然轮换、不撑爆 255 长度。"""
+        if self.use_mock or not app_ids:
+            return {}
+        win = _resolve_window(days_window, None, None)
+        h = hashlib.md5(",".join(sorted(app_ids)).encode()).hexdigest()[:12]
+        key = f"salesbatch:{platform}:{country}:{win[-1]}:{h}"
+        data = await self._cached_get(
+            key,
+            f"/v1/{platform}/sales_report_estimates",
+            {"app_ids": ",".join(app_ids), "countries": country,
+             "date_granularity": "daily", "start_date": win[0], "end_date": win[-1]},
+            fallback=lambda: {},
+        )
+        return _parse_sales_by_app(data, platform)
+
     def _today_key(self, country: str, platform: str) -> tuple[str, str, str]:
         """今日榜的 (cache_key, chart_type, category)。key 必须含 chart_type+
         category：否则切免费/畅销榜或换类目后旧快照会被继续返回（最长 24h）。
@@ -259,6 +305,16 @@ class SensorTowerService:
                 m = meta.get(r["app_id"])
                 if m:
                     r["name"], r["publisher"], r["icon_url"] = m["name"], m["publisher"], m["icon_url"]
+            # 前 N 名补真实下载/收入（一次批量调用，+1 配额）。榜尾保持 None
+            # → 前端显示"—"，区分"无数据"与真实 0。
+            topn = settings.SENSOR_TOWER_RANKING_SALES_TOPN
+            if topn > 0:
+                top_ids = [r["app_id"] for r in rows[:topn]]
+                sales = await self.get_sales_batch(top_ids, country, platform)
+                for r in rows:
+                    s = sales.get(r["app_id"])
+                    if s:
+                        r["downloads"], r["revenue"] = s["downloads"], s["revenue"]
             return rows
         return data.get("apps", [])
 

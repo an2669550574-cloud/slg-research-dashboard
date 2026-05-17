@@ -254,8 +254,8 @@ export default function Dashboard() {
                     <div className="text-xs text-muted truncate">{g.publisher}</div>
                   </div>
                   <div className="text-right">
-                    <div className="text-sm font-medium text-emerald-400">{formatRevenue(g.revenue ?? 0)}</div>
-                    <div className="text-xs text-muted">{formatNumber(g.downloads ?? 0)} {t.dashboard.downloadsSuffix}</div>
+                    <div className="text-sm font-medium text-emerald-400">{g.revenue == null ? <span className="text-muted">—</span> : formatRevenue(g.revenue)}</div>
+                    <div className="text-xs text-muted">{g.downloads == null ? '—' : `${formatNumber(g.downloads)} ${t.dashboard.downloadsSuffix}`}</div>
                   </div>
                 </div>
               ))
