@@ -54,6 +54,18 @@ class Settings(BaseSettings):
     # 默认 4 组覆盖 SLG 主要市场。
     SYNC_RANKING_COMBOS: str = "US:ios,US:android,JP:ios,KR:ios"
 
+    # 竞品异动告警：每日同步后比对 game_rankings 今日 vs 上一可用日，SLG 行
+    # 里出现「新进 TopN / 大幅窜升 / 跌出 TopN / 收入异动」就汇总成一条
+    # logger.error（经现有 LoggingIntegration 推送 Sentry，零额外配额/基建）。
+    # 只在定时任务路径触发，手动刷新不告警，避免刷屏。
+    COMPETITOR_ALERT_ENABLED: bool = True
+    # 只关注 TopN 内的异动；榜尾对竞品监控无意义，且收入仅 Top20 有值。
+    COMPETITOR_ALERT_TOPN: int = 20
+    # 名次环比变化 ≥ 该值才算「窜升/暴跌」，过滤日常抖动。
+    COMPETITOR_RANK_JUMP: int = 10
+    # 收入环比 |变化%| ≥ 该值才报（两日都需有收入数据）。
+    COMPETITOR_REVENUE_PCT: int = 50
+
     # Sentry：留空时不上报。生产环境填入 DSN 即开启
     SENTRY_DSN: Optional[str] = None
     SENTRY_ENVIRONMENT: str = "production"

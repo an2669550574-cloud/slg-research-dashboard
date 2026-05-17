@@ -98,6 +98,28 @@ async def sync_daily_rankings(country: str = "US", platform: str = "ios") -> int
     return written
 
 
+async def _scheduled_sync(country: str = "US", platform: str = "ios") -> None:
+    """定时任务专用包装：同步落库后做竞品异动检测。
+
+    手动 refresh / trigger 走裸 sync_daily_rankings（不经这里），否则每次
+    手动刷新都触发告警刷屏。检测失败不能拖垮 sync —— 单独 try 兜住，
+    异常走 logger.exception（ERROR→Sentry，让坏掉的检测器自己可见）。
+    mock 模式数据是随机噪声，告警无意义 → 跳过。
+    """
+    written = await sync_daily_rankings(country=country, platform=platform)
+    if not written or settings.USE_MOCK_DATA:
+        return
+    from app.services.movement import detect_and_alert_movement
+    today = utcnow_naive().strftime("%Y-%m-%d")
+    try:
+        await detect_and_alert_movement(country, platform, today)
+    except Exception:
+        logger.exception(
+            "Competitor movement check failed for %s/%s on %s (sync itself succeeded)",
+            country, platform, today,
+        )
+
+
 async def sync_seed_games_if_empty() -> None:
     """若 games 表为空则从 mock 数据建立一个起始集，避免 dashboard 空数据。"""
     from app.services.sensor_tower import MOCK_SLG_GAMES
@@ -133,7 +155,7 @@ def start_scheduler() -> None:
         hour = 2 + minute_total // 60
         minute = minute_total % 60
         scheduler.add_job(
-            sync_daily_rankings,
+            _scheduled_sync,
             CronTrigger(hour=hour, minute=minute, timezone="UTC"),
             id=f"sync_daily_rankings_{country.lower()}_{platform}",
             kwargs={"country": country, "platform": platform},
