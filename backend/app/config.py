@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     SENSOR_TOWER_RANKING_CATEGORY_IOS: str = "7017"
     SENSOR_TOWER_RANKING_CATEGORY_ANDROID: str = "game_strategy"
     SENSOR_TOWER_RANKING_LIMIT: int = 100
+    # Android 名字/图标靠抓 Google Play 商品页（无批量接口，一个包名一次请求）。
+    # 只补前 N 个：榜尾对竞品监控无意义，限量压低耗时与封 IP 风险。
+    SENSOR_TOWER_ANDROID_ENRICH_LIMIT: int = 60
     # SQLite 持久化快照"新鲜窗口"（小时）。内存缓存 miss 时若 SQLite 里已有
     # 不超过这个时长的快照，直接返回不消耗配额。设成跟 CACHE_TTL 一致即可。
     SENSOR_TOWER_SNAPSHOT_FRESH_HOURS: int = 24

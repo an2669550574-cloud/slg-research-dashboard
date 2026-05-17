@@ -1,7 +1,13 @@
+import asyncio
+import json
 import logging
+import re
+
 import httpx
 
 logger = logging.getLogger(__name__)
+
+_PLAY_LD_RE = re.compile(r'<script type="application/ld\+json"[^>]*>(.*?)</script>', re.DOTALL)
 
 
 async def fetch_app_info(app_id: str, country: str = "us") -> dict | None:
@@ -79,4 +85,55 @@ async def fetch_apps_bulk(app_ids: list[str], country: str = "us") -> dict[str, 
                     "publisher": app.get("artistName"),
                     "icon_url": app.get("artworkUrl512") or app.get("artworkUrl100"),
                 }
+    return out
+
+
+async def fetch_play_apps(pkg_ids: list[str], country: str = "us",
+                          max_apps: int = 60, concurrency: int = 8) -> dict[str, dict]:
+    """Google Play 商品页抓 name/publisher/icon（无官方 API，解析页面里的
+    application/ld+json）。Android 包名 iTunes 查不到，只能走这条。
+
+    只取前 max_apps 个：榜尾对竞品监控无意义，且 Play 无批量接口、一个包名
+    一次请求，限量同时压低耗时与封 IP 风险。并发用信号量收口。任何失败按
+    app 静默降级 → 调用方保持 None（前端 GameIcon 字母兜底）。
+    """
+    pkgs = [p for p in dict.fromkeys(pkg_ids) if p and not p.isdigit()][:max_apps]
+    if not pkgs:
+        return {}
+    out: dict[str, dict] = {}
+    sem = asyncio.Semaphore(concurrency)
+
+    async def one(client: httpx.AsyncClient, pkg: str):
+        async with sem:
+            try:
+                r = await client.get(
+                    "https://play.google.com/store/apps/details",
+                    params={"id": pkg, "hl": "en", "gl": country},
+                )
+                if r.status_code != 200:
+                    return
+                blocks = _PLAY_LD_RE.findall(r.text)
+            except (httpx.HTTPError, ValueError) as e:
+                logger.warning("Play fetch failed for %s: %s", pkg, e)
+                return
+            for b in blocks:
+                try:
+                    ld = json.loads(b)
+                except ValueError:
+                    continue
+                if not isinstance(ld, dict) or ld.get("@type") != "SoftwareApplication":
+                    continue
+                author = ld.get("author")
+                pub = (author.get("name") if isinstance(author, dict)
+                       else author if isinstance(author, str) else None)
+                out[pkg] = {
+                    "name": ld.get("name"),
+                    "publisher": pub,
+                    "icon_url": ld.get("image"),
+                }
+                return
+
+    async with httpx.AsyncClient(timeout=15, follow_redirects=True,
+                                 headers={"User-Agent": "Mozilla/5.0"}) as client:
+        await asyncio.gather(*(one(client, p) for p in pkgs))
     return out

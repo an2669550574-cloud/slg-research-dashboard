@@ -234,6 +234,76 @@ async def test_get_sales_hits_sales_report_estimates_and_parses(client):
 
 
 @pytest.mark.asyncio
+async def test_fetch_play_apps_parses_jsonld_and_skips_numeric(client, monkeypatch):
+    import httpx
+    from app.services.appstore import fetch_play_apps
+
+    html = (
+        '<html><head><script type="application/ld+json" nonce="z">'
+        '{"@type":"SoftwareApplication","name":"Rise of Kingdoms",'
+        '"image":"https://lh/icon.png","author":{"@type":"Organization","name":"Lilith Games"}}'
+        '</script></head></html>'
+    )
+
+    class R:
+        status_code = 200
+        text = html
+
+    async def fake_get(self, url, params=None, **kw):
+        return R()
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    out = await fetch_play_apps(["com.lilithgames.rok", "123456"], country="us")
+
+    assert "123456" not in out, "纯数字 id（iOS）应被跳过"
+    assert out["com.lilithgames.rok"] == {
+        "name": "Rise of Kingdoms", "publisher": "Lilith Games",
+        "icon_url": "https://lh/icon.png",
+    }
+
+
+@pytest.mark.asyncio
+async def test_fetch_play_apps_caps_and_degrades(client, monkeypatch):
+    import httpx
+    from app.services.appstore import fetch_play_apps
+
+    calls = []
+
+    class R:
+        status_code = 404
+        text = ""
+
+    async def fake_get(self, url, params=None, **kw):
+        calls.append(params["id"])
+        return R()
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    out = await fetch_play_apps(["com.a", "com.b", "com.c", "com.d"], max_apps=2)
+
+    assert out == {}, "非 200 静默降级为空，不抛"
+    assert len(calls) == 2, "max_apps 必须限量请求数"
+
+
+@pytest.mark.asyncio
+async def test_android_ranking_enriched_via_play_not_itunes(client):
+    from unittest.mock import patch
+    from app.services.sensor_tower import SensorTowerService
+
+    svc = SensorTowerService()
+    svc.use_mock = False
+    svc._get = AsyncMock(return_value={"ranking": ["com.x.y"]})
+    pm = {"com.x.y": {"name": "X", "publisher": "P", "icon_url": "i"}}
+
+    with patch("app.services.sensor_tower.fetch_play_apps", AsyncMock(return_value=pm)) as fp, \
+         patch("app.services.sensor_tower.fetch_apps_bulk", AsyncMock(return_value={})) as fb:
+        rows = await svc.get_all_rankings_today("US", "android")
+
+    fp.assert_awaited()
+    fb.assert_not_awaited()
+    assert rows[0]["app_id"] == "com.x.y" and rows[0]["name"] == "X"
+
+
+@pytest.mark.asyncio
 async def test_failed_fetch_refunds_quota_and_logs_error(client, caplog):
     """_get 失败：配额必须退还（净消耗 0）、降级到 fallback、并打 ERROR（进 Sentry）。"""
     import logging

@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from app.config import settings
 from app.cache import sensor_tower_cache
 from app.services import quota
-from app.services.appstore import fetch_apps_bulk
+from app.services.appstore import fetch_apps_bulk, fetch_play_apps
 
 logger = logging.getLogger(__name__)
 
@@ -238,17 +238,23 @@ class SensorTowerService:
             },
             fallback=lambda: {"apps": _mock_today_rankings()},
         )
-        # /v1/{os}/ranking 只返回有序 app_id 列表（无名字/下载/收入）。
-        # 名次+app_id 来自 ST；名字/出版商/图标用免费 iTunes 批量补全（仅 iOS
-        # 数字 id，Android 包名查不到→保持 None，前端 GameIcon 字母兜底）。
-        # 下载/收入仍留空（省配额方案，详情/对比页另取）。mock 兜底走旧 apps 形状。
+        # /v1/{os}/ranking 只返回有序 app_id 列表（无名字/下载/收入）。名次+
+        # app_id 来自 ST；名字/出版商/图标免费补全：iOS 走 iTunes 批量，Android
+        # 走 Google Play 商品页（iTunes 没安卓）。下载/收入仍留空（省配额，详情
+        # 页另取）。mock 兜底走旧 apps 形状。
         if "ranking" in data:
             rows = [
                 {"app_id": str(aid), "rank": i + 1, "name": None, "publisher": None,
                  "icon_url": None, "downloads": None, "revenue": None, "date": today}
                 for i, aid in enumerate(data.get("ranking") or [])
             ]
-            meta = await fetch_apps_bulk([r["app_id"] for r in rows], country=country.lower())
+            ids = [r["app_id"] for r in rows]
+            if platform == "android":
+                meta = await fetch_play_apps(
+                    ids, country=country.lower(),
+                    max_apps=settings.SENSOR_TOWER_ANDROID_ENRICH_LIMIT)
+            else:
+                meta = await fetch_apps_bulk(ids, country=country.lower())
             for r in rows:
                 m = meta.get(r["app_id"])
                 if m:
