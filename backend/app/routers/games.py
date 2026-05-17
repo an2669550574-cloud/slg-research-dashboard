@@ -5,7 +5,7 @@ from typing import Optional, Literal
 from app.database import get_db, utcnow_naive
 from app.models.game import Game, GameRanking
 from app.rate_limit import refresh_cooldown
-from app.services.sensor_tower import sensor_tower_service, MOCK_SLG_GAMES
+from app.services.sensor_tower import sensor_tower_service, MOCK_SLG_GAMES, _resolve_window
 from app.services.appstore import fetch_app_info
 from app.scheduler import sync_daily_rankings
 from app.schemas import GameCreate, GameOut, GameUpdate, RankingTodayOut, MetricsOut
@@ -213,9 +213,23 @@ async def get_game_metrics(
     platform: str = "ios",
     start_date: Optional[str] = Query(None, description="YYYY-MM-DD；与 end_date 同时提供时优先于 days"),
     end_date: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
 ):
     kw = {"country": country, "platform": platform, "days": days, "start_date": start_date, "end_date": end_date}
-    rankings = await sensor_tower_service.get_rankings(app_id, **kw)
-    downloads = await sensor_tower_service.get_downloads(app_id, **kw)
-    revenue = await sensor_tower_service.get_revenue(app_id, **kw)
-    return {"rankings": rankings, "downloads": downloads, "revenue": revenue}
+    sales = await sensor_tower_service.get_sales(app_id, **kw)
+    if sensor_tower_service.use_mock:
+        rankings = await sensor_tower_service.get_rankings(app_id, **kw)
+    else:
+        # 真实排名走势查本地 game_rankings（每日调度已采集，零 ST 配额）。
+        win = _resolve_window(days, start_date, end_date)
+        res = await db.execute(
+            select(GameRanking.date, GameRanking.rank).where(
+                GameRanking.app_id == app_id,
+                GameRanking.country == country,
+                GameRanking.platform == platform,
+                GameRanking.date >= win[0],
+                GameRanking.date <= win[-1],
+            ).order_by(GameRanking.date)
+        )
+        rankings = [{"date": d, "rank": rk} for d, rk in res.all()]
+    return {"rankings": rankings, "downloads": sales["downloads"], "revenue": sales["revenue"]}

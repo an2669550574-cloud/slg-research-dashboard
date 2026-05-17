@@ -73,6 +73,35 @@ async def test_metrics_custom_range(client):
     assert body["downloads"][-1]["date"] == "2026-04-05"
 
 
+async def test_metrics_rank_series_from_local_db_in_real_mode(client, monkeypatch):
+    """非 mock 模式：排名走势来自本地 game_rankings，按 country/platform 过滤，不调 ST。"""
+    from unittest.mock import AsyncMock
+    from app.services.sensor_tower import sensor_tower_service
+    from app.database import AsyncSessionLocal
+    from app.models.game import GameRanking
+
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            GameRanking(app_id="com.x.y", date="2026-05-01", rank=7, country="US", platform="ios"),
+            GameRanking(app_id="com.x.y", date="2026-05-02", rank=4, country="US", platform="ios"),
+            GameRanking(app_id="com.x.y", date="2026-05-02", rank=99, country="JP", platform="ios"),
+        ])
+        await db.commit()
+
+    monkeypatch.setattr(sensor_tower_service, "use_mock", False)
+    monkeypatch.setattr(sensor_tower_service, "get_sales",
+                        AsyncMock(return_value={"downloads": [], "revenue": []}))
+
+    r = await client.get(
+        "/api/games/com.x.y/metrics",
+        params={"start_date": "2026-05-01", "end_date": "2026-05-02",
+                "country": "US", "platform": "ios"},
+    )
+    assert r.status_code == 200
+    rk = r.json()["rankings"]
+    assert [(p["date"], p["rank"]) for p in rk] == [("2026-05-01", 7), ("2026-05-02", 4)]
+
+
 async def test_rankings_today_returns_list(client):
     r = await client.get("/api/games/rankings")
     assert r.status_code == 200

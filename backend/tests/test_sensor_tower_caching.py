@@ -180,6 +180,58 @@ async def test_get_all_rankings_today_enriches_names_via_itunes(client):
     assert rows[1]["name"] is None, "iTunes 查不到的保持 None（前端字母兜底）"
 
 
+def test_parse_sales_ios_sums_iphone_ipad_and_cents_to_dollars():
+    from app.services.sensor_tower import _parse_sales
+
+    raw = [
+        {"aid": "1", "d": "2026-05-01", "iu": 100, "au": 20, "ir": 5000, "ar": 1000},
+        {"aid": "1", "d": "2026-05-02", "iu": 50, "au": 0, "ir": 300, "ar": None},
+    ]
+    out = _parse_sales(raw, "ios")
+    assert out["downloads"] == [
+        {"date": "2026-05-01", "value": 120}, {"date": "2026-05-02", "value": 50}
+    ]
+    assert out["revenue"] == [
+        {"date": "2026-05-01", "value": 60.0}, {"date": "2026-05-02", "value": 3.0}
+    ]
+
+
+def test_parse_sales_android_uses_u_r_keys():
+    from app.services.sensor_tower import _parse_sales
+
+    raw = [{"aid": "com.x", "d": "2026-05-01", "u": 999, "r": 12345}]
+    out = _parse_sales(raw, "android")
+    assert out["downloads"] == [{"date": "2026-05-01", "value": 999}]
+    assert out["revenue"] == [{"date": "2026-05-01", "value": 123.45}]
+
+
+def test_parse_sales_passthrough_fallback_shape():
+    """fallback / mock 已是目标形状 → 原样透传，不二次解析。"""
+    from app.services.sensor_tower import _parse_sales
+
+    shaped = {"downloads": [{"date": "d", "value": 1}], "revenue": [{"date": "d", "value": 2}]}
+    assert _parse_sales(shaped, "ios") == shaped
+
+
+@pytest.mark.asyncio
+async def test_get_sales_hits_sales_report_estimates_and_parses(client):
+    from app.services.sensor_tower import SensorTowerService
+
+    svc = SensorTowerService()
+    svc.use_mock = False
+    svc._get = AsyncMock(return_value=[{"aid": "1", "d": "2026-05-01", "iu": 10, "au": 5, "ir": 200, "ar": 0}])
+
+    out = await svc.get_sales("1", country="US", platform="ios", days=7)
+
+    assert out["downloads"] == [{"date": "2026-05-01", "value": 15}]
+    assert out["revenue"] == [{"date": "2026-05-01", "value": 2.0}]
+    path, params = svc._get.call_args.args[0], svc._get.call_args.args[1]
+    assert path == "/v1/ios/sales_report_estimates"
+    assert params["app_ids"] == "1" and params["countries"] == "US"
+    assert params["date_granularity"] == "daily"
+    assert "start_date" in params and "end_date" in params
+
+
 @pytest.mark.asyncio
 async def test_failed_fetch_refunds_quota_and_logs_error(client, caplog):
     """_get 失败：配额必须退还（净消耗 0）、降级到 fallback、并打 ERROR（进 Sentry）。"""

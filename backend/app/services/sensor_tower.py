@@ -57,6 +57,35 @@ def _mock_rank_series(days: int, start_date: str | None = None, end_date: str | 
     return [{"date": d, "rank": max(1, base_rank + random.randint(-3, 3))} for d in dates]
 
 
+def _parse_sales(data, platform: str) -> dict:
+    """把 /v1/{os}/sales_report_estimates 的扁平数组解析成
+    {"downloads":[{date,value}], "revenue":[{date,value}]}（value=下载量/美元）。
+
+    字段是缩写：iOS d/iu/au(下载) ir/ar(收入,分)，Android d/u(下载) r(收入,分)。
+    fallback / mock 已是目标形状，原样透传。同日多行（多区累计）按日求和。
+    """
+    if isinstance(data, dict) and "downloads" in data:
+        return {"downloads": data.get("downloads", []), "revenue": data.get("revenue", [])}
+    rows = data if isinstance(data, list) else (data.get("data") or data.get("results") or [])
+    dl: dict[str, float] = {}
+    rev_cents: dict[str, float] = {}
+    for r in rows:
+        d = r.get("d") or r.get("date")
+        if not d:
+            continue
+        if platform == "android":
+            u = r.get("u") or 0
+            c = r.get("r") or 0
+        else:
+            u = (r.get("iu") or 0) + (r.get("au") or 0)
+            c = (r.get("ir") or 0) + (r.get("ar") or 0)
+        dl[d] = dl.get(d, 0) + u
+        rev_cents[d] = rev_cents.get(d, 0) + c
+    downloads = [{"date": d, "value": round(dl[d], 0)} for d in sorted(dl)]
+    revenue = [{"date": d, "value": round(rev_cents[d] / 100.0, 2)} for d in sorted(rev_cents)]
+    return {"downloads": downloads, "revenue": revenue}
+
+
 def _mock_today_rankings() -> list[dict]:
     today = datetime.now().strftime("%Y-%m-%d")
     return [
@@ -142,63 +171,40 @@ class SensorTowerService:
                 return snapshot
             return fallback()
 
-    async def get_top_slg_games(self, country: str = "US", platform: str = "ios", limit: int = 20) -> list[dict]:
-        if self.use_mock:
-            return MOCK_SLG_GAMES[:limit]
-        key = f"top:{platform}:{country}:{limit}"
-        data = await self._cached_get(
-            key,
-            f"/v1/{platform}/category/top_apps",
-            {"category": "6014", "country": country, "limit": limit},
-            fallback=lambda: {"apps": MOCK_SLG_GAMES[:limit]},
-        )
-        return data.get("apps", [])
-
-    def _real_window(self, days: int, start_date: str | None, end_date: str | None) -> dict:
-        if start_date and end_date:
-            return {"start_date": start_date, "end_date": end_date}
-        return {"start_date": (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")}
-
     def _window_key(self, days: int, start_date: str | None, end_date: str | None) -> str:
         if start_date and end_date:
             return f"{start_date}_{end_date}"
         return f"d{days}"
 
     async def get_rankings(self, app_id: str, country: str = "US", platform: str = "ios", days: int = 30, start_date: str | None = None, end_date: str | None = None) -> list[dict]:
+        # 真实排名走势改由 /games/{app_id}/metrics 路由直接查本地 game_rankings
+        # 表（每日调度已采集，零 ST 配额）。这里只服务 mock 模式。
         if self.use_mock:
             return _mock_rank_series(days, start_date, end_date)
-        key = f"rank:{platform}:{country}:{app_id}:{self._window_key(days, start_date, end_date)}"
-        data = await self._cached_get(
-            key,
-            f"/v1/{platform}/apps/{app_id}/rankings",
-            {"country": country, **self._real_window(days, start_date, end_date)},
-            fallback=lambda: {"rankings": _mock_rank_series(days, start_date, end_date)},
-        )
-        return data.get("rankings", [])
+        return []
 
-    async def get_downloads(self, app_id: str, country: str = "WW", platform: str = "ios", days: int = 30, start_date: str | None = None, end_date: str | None = None) -> list[dict]:
+    async def get_sales(self, app_id: str, country: str = "WW", platform: str = "ios", days: int = 30, start_date: str | None = None, end_date: str | None = None) -> dict:
+        """下载+收入一次取（真实接口 /v1/{os}/sales_report_estimates 同时返回
+        两者）。返回 {"downloads":[{date,value}], "revenue":[{date,value}]}，
+        value 为下载量 / 美元。"""
         if self.use_mock:
-            return _mock_trend(random.uniform(20000, 100000), days, start_date, end_date)
-        key = f"dl:{platform}:{country}:{app_id}:{self._window_key(days, start_date, end_date)}"
+            return {
+                "downloads": _mock_trend(random.uniform(20000, 100000), days, start_date, end_date),
+                "revenue": _mock_trend(random.uniform(100000, 3000000), days, start_date, end_date),
+            }
+        win = _resolve_window(days, start_date, end_date)
+        key = f"sales:{platform}:{country}:{app_id}:{self._window_key(days, start_date, end_date)}"
         data = await self._cached_get(
             key,
-            f"/v1/{platform}/apps/{app_id}/downloads",
-            {"country": country, **self._real_window(days, start_date, end_date)},
-            fallback=lambda: {"downloads": _mock_trend(random.uniform(20000, 100000), days, start_date, end_date)},
+            f"/v1/{platform}/sales_report_estimates",
+            {"app_ids": app_id, "countries": country,
+             "date_granularity": "daily", "start_date": win[0], "end_date": win[-1]},
+            fallback=lambda: {
+                "downloads": _mock_trend(random.uniform(20000, 100000), days, start_date, end_date),
+                "revenue": _mock_trend(random.uniform(100000, 3000000), days, start_date, end_date),
+            },
         )
-        return data.get("downloads", [])
-
-    async def get_revenue(self, app_id: str, country: str = "WW", platform: str = "ios", days: int = 30, start_date: str | None = None, end_date: str | None = None) -> list[dict]:
-        if self.use_mock:
-            return _mock_trend(random.uniform(100000, 3000000), days, start_date, end_date)
-        key = f"rev:{platform}:{country}:{app_id}:{self._window_key(days, start_date, end_date)}"
-        data = await self._cached_get(
-            key,
-            f"/v1/{platform}/apps/{app_id}/revenue",
-            {"country": country, **self._real_window(days, start_date, end_date)},
-            fallback=lambda: {"revenue": _mock_trend(random.uniform(100000, 3000000), days, start_date, end_date)},
-        )
-        return data.get("revenue", [])
+        return _parse_sales(data, platform)
 
     async def get_all_rankings_today(self, country: str = "US", platform: str = "ios") -> list[dict]:
         if self.use_mock:
