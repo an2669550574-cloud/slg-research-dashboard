@@ -139,9 +139,30 @@ async def seed_games(db: AsyncSession = Depends(get_db)):
 async def get_game(app_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Game).where(Game.app_id == app_id))
     game = result.scalar_one_or_none()
-    if not game:
-        raise HTTPException(status_code=404, detail="Game not found")
-    return game
+    if game:
+        return game
+    # 不是被追踪的 Game（games 表只有 seed + 游戏管理里手动加的），但很可能
+    # 是排行榜里的真实竞品。用最近一条 game_rankings 合成最小元信息，让详情页
+    # 头部/图表可用——而不是 404 弹窗、头部空白。刻意不写回 games 表：否则
+    # 600+ 榜单条目会污染「游戏管理」的人工维护列表。
+    r = (await db.execute(
+        select(GameRanking).where(GameRanking.app_id == app_id)
+        .order_by(GameRanking.date.desc()).limit(1)
+    )).scalar_one_or_none()
+    if r:
+        now = utcnow_naive()
+        return GameOut(
+            id=0,  # 0 = 非追踪的合成记录（前端只用 name/publisher/icon_url）
+            app_id=r.app_id,
+            name=r.name or r.app_id,
+            publisher=r.publisher,
+            icon_url=r.icon_url,
+            platform=r.platform,
+            country=r.country,
+            created_at=now,
+            updated_at=now,
+        )
+    raise HTTPException(status_code=404, detail="Game not found")
 
 
 @router.post("/lookup")
