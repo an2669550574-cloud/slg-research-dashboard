@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     SENSOR_TOWER_RANKING_CHART_TYPE_IOS: str = "topgrossingapplications"
     SENSOR_TOWER_RANKING_CHART_TYPE_ANDROID: str = "topgrossing"
     SENSOR_TOWER_RANKING_CATEGORY_IOS: str = "7017"
-    SENSOR_TOWER_RANKING_CATEGORY_ANDROID: str = "strategy"
+    SENSOR_TOWER_RANKING_CATEGORY_ANDROID: str = "game_strategy"
     SENSOR_TOWER_RANKING_LIMIT: int = 100
     # SQLite 持久化快照"新鲜窗口"（小时）。内存缓存 miss 时若 SQLite 里已有
     # 不超过这个时长的快照，直接返回不消耗配额。设成跟 CACHE_TTL 一致即可。
