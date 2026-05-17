@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { GameIcon } from '../components/GameIcon'
+import { QueryError } from '../components/QueryError'
 
 const EMPTY_EVENT = { event_date: '', event_type: 'version', title: '', description: '' }
 
@@ -355,7 +356,7 @@ export default function GameDetail() {
     ? { days: range.days, country: 'US', platform: 'ios' }
     : { start_date: range.start, end_date: range.end, country: 'US', platform: 'ios' }
 
-  const { data: metrics, isLoading: metricsLoading } = useQuery({
+  const { data: metrics, isLoading: metricsLoading, isError: metricsError, refetch: refetchMetrics } = useQuery({
     queryKey: ['metrics', appId, range],
     queryFn: () => gamesApi.metrics(appId!, queryParams),
     enabled: !!appId,
@@ -463,7 +464,9 @@ export default function GameDetail() {
         {chartCards.map(({ key, dataKey, label, color, formatter }) => (
           <div key={key} className="bg-surface border border-default rounded-xl p-4">
             <h3 className="text-xs font-medium text-secondary mb-3">{label}</h3>
-            {metricsLoading ? (
+            {metricsError ? (
+              <QueryError compact onRetry={() => refetchMetrics()} />
+            ) : metricsLoading ? (
               <div className="h-28 flex items-center justify-center text-muted text-xs">{t.common.loading}</div>
             ) : (
               <ResponsiveContainer width="100%" height={110}>

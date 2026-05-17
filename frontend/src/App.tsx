@@ -1,14 +1,22 @@
+import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
 import { LayoutDashboard, Trophy, Gamepad2, BookImage, Sun, Moon, Languages, Settings, GitCompareArrows } from 'lucide-react'
-import Dashboard from './pages/Dashboard'
-import Rankings from './pages/Rankings'
-import GameDetail from './pages/GameDetail'
-import Materials from './pages/Materials'
-import GamesManage from './pages/GamesManage'
-import Compare from './pages/Compare'
 import { cn } from './lib/utils'
 import { useTheme } from './lib/theme'
 import { useLocale, setLocale, useT } from './i18n'
+
+// 路由级拆包：每页（含 recharts 等重依赖）单独 chunk，首屏只下当前页。
+const Dashboard = lazy(() => import('./pages/Dashboard'))
+const Rankings = lazy(() => import('./pages/Rankings'))
+const GameDetail = lazy(() => import('./pages/GameDetail'))
+const Materials = lazy(() => import('./pages/Materials'))
+const GamesManage = lazy(() => import('./pages/GamesManage'))
+const Compare = lazy(() => import('./pages/Compare'))
+
+function PageFallback() {
+  const t = useT()
+  return <div className="p-6 text-sm text-muted">{t.common.loading}</div>
+}
 
 function Sidebar() {
   const { theme, toggle } = useTheme()
@@ -77,14 +85,16 @@ export default function App() {
       <div className="flex h-screen overflow-hidden">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/rankings" element={<Rankings />} />
-            <Route path="/compare" element={<Compare />} />
-            <Route path="/materials" element={<Materials />} />
-            <Route path="/games" element={<GamesManage />} />
-            <Route path="/game/:appId" element={<GameDetail />} />
-          </Routes>
+          <Suspense fallback={<PageFallback />}>
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/rankings" element={<Rankings />} />
+              <Route path="/compare" element={<Compare />} />
+              <Route path="/materials" element={<Materials />} />
+              <Route path="/games" element={<GamesManage />} />
+              <Route path="/game/:appId" element={<GameDetail />} />
+            </Routes>
+          </Suspense>
         </main>
       </div>
     </BrowserRouter>

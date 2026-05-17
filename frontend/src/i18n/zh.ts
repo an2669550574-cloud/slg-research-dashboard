@@ -30,6 +30,8 @@ export const zh = {
     noExportData: '当前没有可导出的数据',
     noResult: '没有找到匹配的游戏',
     noData: '暂无数据',
+    loadFailed: '加载失败',
+    retry: '重试',
     back: '返回',
     detail: '详情 →',
     viewAll: '查看全部 →',

@@ -6,6 +6,7 @@ import { useT } from '../i18n'
 import { Plus, Trash2, Search, Loader2, Check, Pencil } from 'lucide-react'
 import { Pagination } from '../components/Pagination'
 import { GameIcon } from '../components/GameIcon'
+import { QueryError } from '../components/QueryError'
 import { useDebouncedValue } from '../lib/hooks'
 import type { GameOut, AppLookupResult } from '../lib/types'
 
@@ -51,7 +52,7 @@ export default function GamesManage() {
   // 搜索词变化时回到第一页，避免在第 3 页搜个新词后仍停在 offset=40 拿空页
   useEffect(() => { setOffset(0) }, [debouncedSearch])
 
-  const { data: paged, isLoading } = useQuery({
+  const { data: paged, isLoading, isError, refetch } = useQuery({
     queryKey: ['games', 'manage', debouncedSearch, offset],
     queryFn: () => gamesApi.listPaged({
       limit: PAGE_SIZE,
@@ -268,7 +269,9 @@ export default function GamesManage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-default">
-            {isLoading ? (
+            {isError ? (
+              <tr><td colSpan={5}><QueryError compact onRetry={() => refetch()} /></td></tr>
+            ) : isLoading ? (
               <tr><td colSpan={5} className="px-5 py-12 text-center text-muted text-sm">{t.common.loading}</td></tr>
             ) : games.length === 0 ? (
               <tr><td colSpan={5} className="px-5 py-12 text-center text-muted text-sm">

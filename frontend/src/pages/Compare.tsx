@@ -7,6 +7,7 @@ import { X, Plus } from 'lucide-react'
 import { CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, XAxis, YAxis, Legend } from 'recharts'
 import { QuotaBanner } from '../components/QuotaBanner'
 import { GameIcon } from '../components/GameIcon'
+import { QueryError } from '../components/QueryError'
 import type { TrendPoint } from '../lib/types'
 
 type Metric = 'revenue' | 'downloads' | 'rank'
@@ -181,6 +182,8 @@ export default function Compare() {
             <Plus className="mx-auto mb-2 text-muted" size={24} />
             {t.compare.pickGames}
           </div>
+        ) : metricsQueries.some(q => q.isError) ? (
+          <QueryError compact onRetry={() => metricsQueries.forEach(q => q.refetch())} />
         ) : metricsQueries.some(q => q.isLoading) ? (
           <div className="h-80 flex items-center justify-center text-muted text-sm">{t.common.loading}</div>
         ) : (

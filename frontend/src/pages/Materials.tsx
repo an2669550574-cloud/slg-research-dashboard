@@ -8,6 +8,7 @@ import { useNavigate } from 'react-router-dom'
 import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
 import { Pagination } from '../components/Pagination'
+import { QueryError } from '../components/QueryError'
 import { useDebouncedValue } from '../lib/hooks'
 import type { MaterialOut } from '../lib/types'
 
@@ -27,7 +28,7 @@ export default function Materials() {
   // 任一筛选条件变化都回到第一页
   useEffect(() => { setOffset(0) }, [debouncedSearch, filterPlatform])
 
-  const { data: paged, isLoading } = useQuery({
+  const { data: paged, isLoading, isError, refetch } = useQuery({
     queryKey: ['materials', debouncedSearch, filterPlatform, offset],
     queryFn: () => materialsApi.listPaged({
       limit: PAGE_SIZE,
@@ -185,7 +186,9 @@ export default function Materials() {
 
       <div className="text-xs text-muted">{total} {t.materials.countSuffix}</div>
 
-      {isLoading ? (
+      {isError ? (
+        <QueryError onRetry={() => refetch()} />
+      ) : isLoading ? (
         <div className="grid grid-cols-2 gap-3">
           {Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="h-24 bg-surface rounded-xl animate-pulse" />

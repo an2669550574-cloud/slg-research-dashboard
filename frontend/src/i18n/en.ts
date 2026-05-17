@@ -32,6 +32,8 @@ export const en: Translations = {
     noExportData: 'No data to export',
     noResult: 'No matching games',
     noData: 'No data',
+    loadFailed: 'Failed to load',
+    retry: 'Retry',
     back: 'Back',
     detail: 'Details →',
     viewAll: 'View all →',

@@ -10,6 +10,7 @@ import { CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxi
 import { useNavigate } from 'react-router-dom'
 import { QuotaBanner } from '../components/QuotaBanner'
 import { GameIcon } from '../components/GameIcon'
+import { QueryError } from '../components/QueryError'
 import { useLocalStorageState } from '../lib/hooks'
 import { COUNTRIES, PLATFORMS, platformLabel, type Country, type Platform } from '../lib/markets'
 
@@ -45,7 +46,7 @@ export default function Dashboard() {
 
   // 今日榜单（来自 Sensor Tower 真实/mock）
   // queryKey 必须跟 Rankings.tsx 的形态一致 ['rankings', country, platform]，否则同一份数据会被前端当成两个 query 各自 fetch
-  const { data: rankings = [], isLoading } = useQuery({
+  const { data: rankings = [], isLoading, isError, refetch } = useQuery({
     queryKey: ['rankings', country, platform],
     queryFn: () => gamesApi.rankings(country, platform),
     placeholderData: keepPreviousData,
@@ -176,7 +177,9 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 gap-4">
         <div className="bg-surface border border-default rounded-xl p-5">
           <h2 className="text-sm font-semibold text-primary mb-4">{t.dashboard.chartRevenue}</h2>
-          {isLoading ? (
+          {isError ? (
+            <QueryError compact onRetry={() => refetch()} />
+          ) : isLoading ? (
             <div className="h-48 flex items-center justify-center text-muted text-sm">{t.common.loading}</div>
           ) : (
             <ResponsiveContainer width="100%" height={200}>
@@ -197,7 +200,9 @@ export default function Dashboard() {
 
         <div className="bg-surface border border-default rounded-xl p-5">
           <h2 className="text-sm font-semibold text-primary mb-4">{t.dashboard.chartDownloads}</h2>
-          {isLoading ? (
+          {isError ? (
+            <QueryError compact onRetry={() => refetch()} />
+          ) : isLoading ? (
             <div className="h-48 flex items-center justify-center text-muted text-sm">{t.common.loading}</div>
           ) : (
             <ResponsiveContainer width="100%" height={200}>
@@ -223,7 +228,9 @@ export default function Dashboard() {
           <button onClick={() => navigate('/rankings')} className="text-xs text-brand-500 hover:text-brand-400">{t.common.viewAll}</button>
         </div>
         <div className="divide-y divide-default">
-          {isLoading
+          {isError
+            ? <QueryError compact onRetry={() => refetch()} />
+            : isLoading
             ? Array.from({ length: 5 }).map((_, i) => (
                 <div key={i} className="px-5 py-3 flex items-center gap-4 animate-pulse">
                   <div className="w-8 h-4 bg-elevated rounded" />

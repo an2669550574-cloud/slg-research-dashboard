@@ -9,6 +9,7 @@ import { useT } from '../i18n'
 import { Search, Download as DownloadIcon } from 'lucide-react'
 import { COUNTRIES, PLATFORMS, platformLabel, type Country, type Platform } from '../lib/markets'
 import { GameIcon } from '../components/GameIcon'
+import { QueryError } from '../components/QueryError'
 import { useLocalStorageState } from '../lib/hooks'
 
 export default function Rankings() {
@@ -18,7 +19,7 @@ export default function Rankings() {
   const [platform, setPlatform] = useLocalStorageState<Platform>('slg.platform', 'ios')
   const [search, setSearch] = useState('')
 
-  const { data: rankings = [], isLoading } = useQuery({
+  const { data: rankings = [], isLoading, isError, refetch } = useQuery({
     queryKey: ['rankings', country, platform],
     queryFn: () => gamesApi.rankings(country, platform),
   })
@@ -93,6 +94,10 @@ export default function Rankings() {
       </div>
 
       <div className="bg-surface border border-default rounded-xl overflow-hidden">
+        {isError ? (
+          <QueryError onRetry={() => refetch()} />
+        ) : (
+        <>
         <table className="w-full">
           <thead>
             <tr className="border-b border-default text-xs text-muted uppercase tracking-wider">
@@ -158,6 +163,8 @@ export default function Rankings() {
         </table>
         {!isLoading && filtered.length === 0 && (
           <div className="py-16 text-center text-muted text-sm">{t.common.noResult}</div>
+        )}
+        </>
         )}
       </div>
     </div>
