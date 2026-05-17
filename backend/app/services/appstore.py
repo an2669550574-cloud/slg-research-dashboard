@@ -42,6 +42,7 @@ async def fetch_app_info(app_id: str, country: str = "us") -> dict | None:
         "publisher": app.get("artistName"),
         "icon_url": app.get("artworkUrl512") or app.get("artworkUrl100"),
         "release_date": (app.get("releaseDate") or "")[:10],
+        "current_version_date": (app.get("currentVersionReleaseDate") or "")[:10],
         "description": (app.get("description") or "")[:500],
         "version": app.get("version"),
         "release_notes": app.get("releaseNotes", ""),

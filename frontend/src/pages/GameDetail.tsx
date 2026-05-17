@@ -35,7 +35,7 @@ function Timeline({ appId }: { appId: string }) {
     mutationFn: () => historyApi.sync(appId),
     onSuccess: (data: any) => {
       qc.invalidateQueries({ queryKey: ['history', appId] })
-      toast.success(data?.message || t.gameDetail.aiSyncedToast)
+      toast.success(data?.message || t.gameDetail.syncedToast)
     },
   })
   const deleteMut = useMutation({
@@ -95,7 +95,7 @@ function Timeline({ appId }: { appId: string }) {
             className="flex items-center gap-1.5 px-3 py-1.5 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 rounded-lg text-xs text-white transition-colors"
           >
             {syncMut.isPending ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-            {t.gameDetail.aiSyncButton}
+            {t.gameDetail.syncButton}
           </button>
         </div>
       </div>

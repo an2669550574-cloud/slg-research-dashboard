@@ -3,8 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from app.database import get_db
 from app.models.history import GameHistory
-from app.models.game import Game
-from app.services.ai_history import generate_history
+from app.services.history_builder import build_history
 from app.schemas import HistoryCreate, HistoryOut
 from app.rate_limit import limiter
 from app.config import settings
@@ -28,21 +27,16 @@ async def sync_history(
     app_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """触发 AI 自动生成发展历程。
+    """从 iTunes 元信息 + 本地 game_rankings 拼出**事实性**发展历程。
 
     slowapi(headers_enabled=True)在 handler 跑完后要把 X-RateLimit-* 注入
     响应——它按名字找 `response: Response` 参数；缺这个参数就会抛
-    "parameter `response` must be an instance of ..."，AI 兜底逻辑根本没机会
-    执行。`request`/`response` 名字是 slowapi 硬约定，不能改。
+    "parameter `response` must be an instance of ..."。`request`/`response`
+    名字是 slowapi 硬约定，不能改。
     """
-    game_result = await db.execute(select(Game).where(Game.app_id == app_id))
-    game = game_result.scalar_one_or_none()
-    name = game.name if game else app_id
-    publisher = game.publisher if game else ""
+    events = await build_history(app_id, db)
 
-    events = await generate_history(app_id, name, publisher)
-
-    # 清除旧的 AI 生成数据，保留手动录入
+    # 清除旧的自动生成数据，保留手动录入
     await db.execute(
         delete(GameHistory).where(GameHistory.app_id == app_id, GameHistory.source != "manual")
     )
@@ -53,7 +47,7 @@ async def sync_history(
             event_type=event.get("event_type", "version"),
             title=event.get("title", ""),
             description=event.get("description", ""),
-            source="ai",
+            source="data",
         )
         db.add(h)
     await db.commit()

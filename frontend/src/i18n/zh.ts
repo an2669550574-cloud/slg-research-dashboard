@@ -103,10 +103,10 @@ export const zh = {
   gameDetail: {
     timelineTitle: '发展历程',
     timelineEmpty: '暂无历程数据',
-    timelineEmptyHint: '点击 AI 自动同步 →',
+    timelineEmptyHint: '点击同步历程 →',
     addEventButton: '手动添加',
-    aiSyncButton: 'AI 自动同步',
-    aiSyncedToast: 'AI 历程已同步',
+    syncButton: '同步历程',
+    syncedToast: '历程已同步',
     eventAddedToast: '已添加事件',
     eventDeletedToast: '已删除事件',
     timelineExportEmpty: '暂无可导出的事件',

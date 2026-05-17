@@ -105,10 +105,10 @@ export const en: Translations = {
   gameDetail: {
     timelineTitle: 'Timeline',
     timelineEmpty: 'No events yet',
-    timelineEmptyHint: 'Click AI sync →',
+    timelineEmptyHint: 'Click sync timeline →',
     addEventButton: 'Add manually',
-    aiSyncButton: 'AI sync',
-    aiSyncedToast: 'Timeline synced',
+    syncButton: 'Sync timeline',
+    syncedToast: 'Timeline synced',
     eventAddedToast: 'Event added',
     eventDeletedToast: 'Event deleted',
     timelineExportEmpty: 'No events to export',
