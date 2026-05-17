@@ -59,6 +59,14 @@ def _mock_rank_series(days: int, start_date: str | None = None, end_date: str | 
     return [{"date": d, "rank": max(1, base_rank + random.randint(-3, 3))} for d in dates]
 
 
+def _sales_metrics(r: dict, platform: str) -> tuple[float, float]:
+    """单条 sales_report_estimates 记录 → (下载量, 收入分)。
+    iOS: iu+au 下载 / ir+ar 收入(分)；Android: u 下载 / r 收入(分)。"""
+    if platform == "android":
+        return (r.get("u") or 0), (r.get("r") or 0)
+    return ((r.get("iu") or 0) + (r.get("au") or 0)), ((r.get("ir") or 0) + (r.get("ar") or 0))
+
+
 def _parse_sales(data, platform: str) -> dict:
     """把 /v1/{os}/sales_report_estimates 的扁平数组解析成
     {"downloads":[{date,value}], "revenue":[{date,value}]}（value=下载量/美元）。
@@ -78,12 +86,7 @@ def _parse_sales(data, platform: str) -> dict:
         # ST 返回的是 "2026-05-14T00:00:00Z"；本地排名序列用 "2026-05-14"。
         # 截到日，两条序列在前端图表 X 轴才对得齐。
         d = d[:10]
-        if platform == "android":
-            u = r.get("u") or 0
-            c = r.get("r") or 0
-        else:
-            u = (r.get("iu") or 0) + (r.get("au") or 0)
-            c = (r.get("ir") or 0) + (r.get("ar") or 0)
+        u, c = _sales_metrics(r, platform)
         dl[d] = dl.get(d, 0) + u
         rev_cents[d] = rev_cents.get(d, 0) + c
     downloads = [{"date": d, "value": round(dl[d], 0)} for d in sorted(dl)]
@@ -108,13 +111,31 @@ def _parse_sales_by_app(data, platform: str) -> dict:
         if aid in latest and d <= latest[aid]:
             continue
         latest[aid] = d
-        if platform == "android":
-            u = r.get("u") or 0
-            c = r.get("r") or 0
-        else:
-            u = (r.get("iu") or 0) + (r.get("au") or 0)
-            c = (r.get("ir") or 0) + (r.get("ar") or 0)
+        u, c = _sales_metrics(r, platform)
         out[aid] = {"downloads": round(u, 0), "revenue": round(c / 100.0, 2)}
+    return out
+
+
+def _parse_sales_series(data, platform: str) -> dict:
+    """sales_report_estimates 扁平数组 → {app_id: {date: {"downloads","revenue"}}}。
+
+    历史回填用：保留每个 app 的**每一天**（不像 _parse_sales_by_app 只取最新）。
+    同 app 同日多区记录按日累加。收入分→美元。"""
+    rows = data if isinstance(data, list) else (data.get("data") or data.get("results") or [])
+    agg: dict = {}  # (aid, date) -> [downloads, revenue_cents]
+    for r in rows:
+        aid = r.get("aid") or r.get("app_id")
+        d = r.get("d") or r.get("date")
+        if not aid or not d:
+            continue
+        aid, d = str(aid), d[:10]
+        u, c = _sales_metrics(r, platform)
+        cell = agg.setdefault((aid, d), [0.0, 0.0])
+        cell[0] += u
+        cell[1] += c
+    out: dict = {}
+    for (aid, d), (u, c) in agg.items():
+        out.setdefault(aid, {})[d] = {"downloads": round(u, 0), "revenue": round(c / 100.0, 2)}
     return out
 
 
@@ -256,6 +277,30 @@ class SensorTowerService:
             fallback=lambda: {},
         )
         return _parse_sales_by_app(data, platform)
+
+    async def fetch_sales_series(self, app_ids: list[str], country: str, platform: str,
+                                 start_date: str, end_date: str):
+        """历史回填底层：单次 sales_report_estimates（日粒度、批量 app_ids、
+        指定区间），按月度配额计费（不走 L1/L2，不污染缓存键）。
+
+        返回 {app_id: {date: {downloads, revenue}}}；配额耗尽返回 None（调用方
+        应停止整轮回填）；本次调用失败返回 {}（已退还配额，调用方可继续下一段）。
+        失败/退还纪律对齐 _cached_get。"""
+        if self.use_mock or not app_ids:
+            return {}
+        if not await quota.try_consume():
+            logger.warning("Sales backfill aborted: monthly quota exhausted")
+            return None
+        params = {"app_ids": ",".join(app_ids), "countries": country,
+                  "date_granularity": "daily", "start_date": start_date, "end_date": end_date}
+        try:
+            data = await self._get(f"/v1/{platform}/sales_report_estimates", params)
+        except Exception as e:
+            await quota.refund()
+            logger.error("Sales backfill chunk failed %s/%s %s..%s: %s",
+                         country, platform, start_date, end_date, e)
+            return {}
+        return _parse_sales_series(data, platform)
 
     def _today_key(self, country: str, platform: str) -> tuple[str, str, str]:
         """今日榜的 (cache_key, chart_type, category)。key 必须含 chart_type+
