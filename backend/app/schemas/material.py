@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict
 
 
 class MaterialCreate(BaseModel):
+    """外链素材。上传素材走 POST /api/materials/upload（multipart），不走这里。"""
     app_id: str
     title: str
     url: str
@@ -28,7 +29,13 @@ class MaterialOut(BaseModel):
     id: int
     app_id: str
     title: str
-    url: str
+    url: Optional[str] = None
+    source: str = "link"  # link / upload
+    file_name: Optional[str] = None
+    file_size: Optional[int] = None
+    mime_type: Optional[str] = None
+    # upload 素材的站内播放/预览签名 URL（含短时令牌）；link 素材为 None
+    stream_url: Optional[str] = None
     platform: Optional[str] = None
     material_type: str = "video"
     tags: list[str] = []

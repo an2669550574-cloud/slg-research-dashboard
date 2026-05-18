@@ -66,6 +66,15 @@ class Settings(BaseSettings):
     # 收入环比 |变化%| ≥ 该值才报（两日都需有收入数据）。
     COMPETITOR_REVENUE_PCT: int = 50
 
+    # 素材库上传文件落盘根目录。容器内走已挂载的 ./data:/app/data 卷，
+    # 宿主机即 /opt/slg-research-dashboard/data/materials，与 DB 同一备份域。
+    MEDIA_ROOT: str = "./data/materials"
+    # 单文件大小上限（字节）。默认 200MB，覆盖绝大多数广告视频素材。
+    MEDIA_MAX_BYTES: int = 200 * 1024 * 1024
+    # 站内播放/预览签名 URL 有效期（秒）。<video src> 带不了请求头，故用
+    # HMAC 短时令牌走 query string；列表每次刷新会重签，过期自然失效。
+    MEDIA_URL_TTL_SECONDS: int = 6 * 3600
+
     # Sentry：留空时不上报。生产环境填入 DSN 即开启
     SENTRY_DSN: Optional[str] = None
     SENTRY_ENVIRONMENT: str = "production"

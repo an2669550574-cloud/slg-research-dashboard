@@ -3,7 +3,8 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tansta
 import toast from 'react-hot-toast'
 import { materialsApi, gamesApi } from '../lib/api'
 import { PLATFORM_CONFIG } from '../lib/utils'
-import { ExternalLink, Trash2, Plus, Search, Download as DownloadIcon } from 'lucide-react'
+import { ExternalLink, Trash2, Plus, Search, Download as DownloadIcon, Upload } from 'lucide-react'
+import { MaterialPreview } from '../components/MaterialPreview'
 import { useNavigate } from 'react-router-dom'
 import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
@@ -13,6 +14,8 @@ import { useDebouncedValue } from '../lib/hooks'
 import type { MaterialOut } from '../lib/types'
 
 const PAGE_SIZE = 12
+const MAX_UPLOAD = 200 * 1024 * 1024
+const ACCEPT = '.mp4,.webm,.mov,.m4v,.jpg,.jpeg,.png,.gif,.webp'
 
 export default function Materials() {
   const navigate = useNavigate()
@@ -23,6 +26,9 @@ export default function Materials() {
   const [offset, setOffset] = useState(0)
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ title: '', url: '', app_id: '', platform: 'youtube', material_type: 'video', tags: '', notes: '' })
+  const [mode, setMode] = useState<'link' | 'upload'>('link')
+  const [file, setFile] = useState<File | null>(null)
+  const [progress, setProgress] = useState(0)
   const debouncedSearch = useDebouncedValue(search)
 
   // 任一筛选条件变化都回到第一页
@@ -47,14 +53,23 @@ export default function Materials() {
     queryFn: () => gamesApi.list({ limit: 200 }),
   })
 
+  const resetForm = () => {
+    setShowForm(false)
+    setForm({ title: '', url: '', app_id: '', platform: 'youtube', material_type: 'video', tags: '', notes: '' })
+    setMode('link')
+    setFile(null)
+    setProgress(0)
+    qc.invalidateQueries({ queryKey: ['materials'] })
+    toast.success(t.materials.addedToast)
+  }
   const createMut = useMutation({
     mutationFn: (data: any) => materialsApi.create(data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['materials'] })
-      setShowForm(false)
-      setForm({ title: '', url: '', app_id: '', platform: 'youtube', material_type: 'video', tags: '', notes: '' })
-      toast.success(t.materials.addedToast)
-    },
+    onSuccess: resetForm,
+  })
+  const uploadMut = useMutation({
+    mutationFn: (fd: FormData) => materialsApi.upload(fd, setProgress),
+    onSuccess: resetForm,
+    onError: () => setProgress(0),
   })
   const deleteMut = useMutation({
     mutationFn: (id: number) => materialsApi.delete(id),
@@ -70,7 +85,22 @@ export default function Materials() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    createMut.mutate({ ...form, tags: form.tags ? form.tags.split(',').map((t: string) => t.trim()) : [] })
+    const tags = form.tags ? form.tags.split(',').map((s: string) => s.trim()) : []
+    if (mode === 'link') {
+      createMut.mutate({ ...form, tags })
+      return
+    }
+    if (!file) { toast.error(t.materials.chooseFile); return }
+    if (file.size > MAX_UPLOAD) { toast.error(t.materials.fileTooLarge(200)); return }
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('title', form.title)
+    fd.append('app_id', form.app_id)
+    fd.append('platform', form.platform)
+    fd.append('material_type', form.material_type)
+    fd.append('tags', tags.join(','))
+    if (form.notes) fd.append('notes', form.notes)
+    uploadMut.mutate(fd)
   }
 
   const inputClass = "bg-elevated border border-default rounded-lg px-3 py-2 text-sm text-primary placeholder:text-muted focus:outline-none focus:border-brand-500"
@@ -100,7 +130,7 @@ export default function Materials() {
                 { header: t.csv.title, get: (m: MaterialOut) => m.title },
                 { header: t.csv.platform, get: (m: MaterialOut) => m.platform ?? '' },
                 { header: t.csv.type, get: (m: MaterialOut) => m.material_type },
-                { header: t.csv.url, get: (m: MaterialOut) => m.url },
+                { header: t.csv.url, get: (m: MaterialOut) => m.url ?? m.file_name ?? '' },
                 { header: t.csv.tags, get: (m: MaterialOut) => m.tags.join(';') },
                 { header: t.csv.notes, get: (m: MaterialOut) => m.notes ?? '' },
                 { header: t.csv.createdAt, get: (m: MaterialOut) => m.created_at },
@@ -128,8 +158,40 @@ export default function Materials() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <input required placeholder={t.materials.titlePlaceholder} value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
               className={`col-span-2 ${inputClass}`} />
-            <input required placeholder={t.materials.urlPlaceholder} value={form.url} onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
-              className={`col-span-2 ${inputClass}`} />
+            <div className="col-span-2 flex gap-1 bg-elevated rounded-lg p-1 w-fit">
+              {(['link', 'upload'] as const).map(md => (
+                <button type="button" key={md} onClick={() => setMode(md)}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${mode === md ? 'bg-brand-600 text-white' : 'text-secondary hover:text-primary'}`}>
+                  {md === 'link' ? t.materials.sourceLink : t.materials.sourceUpload}
+                </button>
+              ))}
+            </div>
+            {mode === 'link' ? (
+              <input required placeholder={t.materials.urlPlaceholder} value={form.url} onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
+                className={`col-span-2 ${inputClass}`} />
+            ) : (
+              <div className="col-span-2 space-y-2">
+                <label className="flex items-center gap-2 px-3 py-2 bg-elevated border border-dashed border-default rounded-lg text-sm text-secondary cursor-pointer hover:text-primary">
+                  <Upload size={14} className="shrink-0" />
+                  <span className="truncate">
+                    {file ? `${file.name} (${(file.size / 1048576).toFixed(1)}MB)` : t.materials.chooseFile}
+                  </span>
+                  <input type="file" accept={ACCEPT} className="hidden"
+                    onChange={e => {
+                      const f = e.target.files?.[0] ?? null
+                      if (f && f.size > MAX_UPLOAD) { toast.error(t.materials.fileTooLarge(200)); return }
+                      setFile(f)
+                      if (f && !form.title) setForm(s => ({ ...s, title: f.name.replace(/\.[^.]+$/, '') }))
+                    }} />
+                </label>
+                <div className="text-xs text-muted">{t.materials.maxHint}</div>
+                {uploadMut.isPending && (
+                  <div className="h-1.5 bg-elevated rounded overflow-hidden">
+                    <div className="h-full bg-brand-600 transition-all" style={{ width: `${progress}%` }} />
+                  </div>
+                )}
+              </div>
+            )}
             <select value={form.app_id} onChange={e => setForm(f => ({ ...f, app_id: e.target.value }))} className={inputClass}>
               <option value="">{t.materials.selectGame}</option>
               {allGames.map(g => <option key={g.app_id} value={g.app_id}>{g.name}</option>)}
@@ -149,10 +211,11 @@ export default function Materials() {
             <input placeholder={t.materials.notesPlaceholder} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className={inputClass} />
           </div>
           <div className="flex justify-end gap-2 pt-1">
-            <button type="button" onClick={() => setShowForm(false)} className="px-3 py-1.5 text-sm text-secondary hover:text-primary">{t.common.cancel}</button>
-            <button type="submit" disabled={createMut.isPending}
+            <button type="button" onClick={() => { setShowForm(false); setFile(null); setMode('link') }} className="px-3 py-1.5 text-sm text-secondary hover:text-primary">{t.common.cancel}</button>
+            <button type="submit" disabled={createMut.isPending || uploadMut.isPending}
               className="px-4 py-1.5 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 rounded-lg text-sm text-white transition-colors">
-              {createMut.isPending ? t.common.saving : t.common.save}
+              {uploadMut.isPending ? `${t.materials.uploading} ${progress}%`
+                : createMut.isPending ? t.common.saving : t.common.save}
             </button>
           </div>
         </form>
@@ -234,16 +297,19 @@ export default function Materials() {
                     )}
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
-                    <a href={m.url} target="_blank" rel="noopener noreferrer"
-                      className="p-1.5 text-muted hover:text-brand-400 transition-colors">
-                      <ExternalLink size={14} />
-                    </a>
+                    {(m.source === 'upload' ? m.stream_url : m.url) && (
+                      <a href={(m.source === 'upload' ? m.stream_url : m.url) as string} target="_blank" rel="noopener noreferrer"
+                        className="p-1.5 text-muted hover:text-brand-400 transition-colors" title={t.materials.openFile}>
+                        <ExternalLink size={14} />
+                      </a>
+                    )}
                     <button onClick={() => deleteMut.mutate(m.id)}
                       className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 text-muted hover:text-red-400">
                       <Trash2 size={14} />
                     </button>
                   </div>
                 </div>
+                <MaterialPreview m={m} />
               </div>
             )
           })}

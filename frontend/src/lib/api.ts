@@ -124,6 +124,12 @@ export const materialsApi = {
     api.get('/materials/', { params }).then(r => withTotal(r.headers, r.data)),
   create: (data: MaterialCreate): Promise<MaterialOut> =>
     api.post('/materials/', data).then(r => r.data),
+  upload: (form: FormData, onProgress?: (pct: number) => void): Promise<MaterialOut> =>
+    api.post('/materials/upload', form, {
+      onUploadProgress: e => {
+        if (onProgress && e.total) onProgress(Math.round((e.loaded / e.total) * 100))
+      },
+    }).then(r => r.data),
   update: (id: number, data: MaterialUpdate): Promise<MaterialOut> =>
     api.put(`/materials/${id}`, data).then(r => r.data),
   delete: (id: number): Promise<DeleteResponse> =>

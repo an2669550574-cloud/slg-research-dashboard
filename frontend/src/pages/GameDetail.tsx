@@ -12,6 +12,7 @@ import {
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { GameIcon } from '../components/GameIcon'
 import { QueryError } from '../components/QueryError'
+import { MaterialPreview } from '../components/MaterialPreview'
 
 const EMPTY_EVENT = { event_date: '', event_type: 'version', title: '', description: '' }
 
@@ -302,34 +303,39 @@ function MaterialsPanel({ appId }: { appId: string }) {
           {materials.map((m: any) => {
             const platCfg = PLATFORM_CONFIG[m.platform] || PLATFORM_CONFIG.other
             return (
-              <div key={m.id} className="group flex items-start gap-3 bg-elevated/50 rounded-xl p-3 border border-default hover:border-default transition-colors">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-0.5">
-                    <span className={`text-xs font-medium ${platCfg.color}`}>{platCfg.label}</span>
-                    <span className="text-xs text-muted">·</span>
-                    <span className="text-xs text-muted">{typeLabel(m.material_type)}</span>
-                  </div>
-                  <div className="text-sm font-medium text-primary truncate">{m.title}</div>
-                  {m.notes && <div className="text-xs text-muted mt-0.5 truncate">{m.notes}</div>}
-                  {m.tags?.length > 0 && (
-                    <div className="flex gap-1 mt-1.5 flex-wrap">
-                      {m.tags.map((tag: string) => (
-                        <span key={tag} className="px-1.5 py-0.5 bg-elevated rounded text-xs text-secondary">{tag}</span>
-                      ))}
+              <div key={m.id} className="group bg-elevated/50 rounded-xl p-3 border border-default hover:border-default transition-colors">
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span className={`text-xs font-medium ${platCfg.color}`}>{platCfg.label}</span>
+                      <span className="text-xs text-muted">·</span>
+                      <span className="text-xs text-muted">{typeLabel(m.material_type)}</span>
                     </div>
-                  )}
+                    <div className="text-sm font-medium text-primary truncate">{m.title}</div>
+                    {m.notes && <div className="text-xs text-muted mt-0.5 truncate">{m.notes}</div>}
+                    {m.tags?.length > 0 && (
+                      <div className="flex gap-1 mt-1.5 flex-wrap">
+                        {m.tags.map((tag: string) => (
+                          <span key={tag} className="px-1.5 py-0.5 bg-elevated rounded text-xs text-secondary">{tag}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {(m.source === 'upload' ? m.stream_url : m.url) && (
+                      <a href={m.source === 'upload' ? m.stream_url : m.url} target="_blank" rel="noopener noreferrer"
+                        className="p-1.5 text-muted hover:text-brand-400 transition-colors"
+                        onClick={e => e.stopPropagation()}>
+                        <ExternalLink size={14} />
+                      </a>
+                    )}
+                    <button onClick={() => deleteMut.mutate(m.id)}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 text-muted hover:text-red-400">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <a href={m.url} target="_blank" rel="noopener noreferrer"
-                    className="p-1.5 text-muted hover:text-brand-400 transition-colors"
-                    onClick={e => e.stopPropagation()}>
-                    <ExternalLink size={14} />
-                  </a>
-                  <button onClick={() => deleteMut.mutate(m.id)}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 text-muted hover:text-red-400">
-                    <Trash2 size={14} />
-                  </button>
-                </div>
+                <MaterialPreview m={m} />
               </div>
             )
           })}

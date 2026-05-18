@@ -96,7 +96,12 @@ export interface MaterialOut {
   id: number
   app_id: string
   title: string
-  url: string
+  url: string | null
+  source: 'link' | 'upload'
+  file_name: string | null
+  file_size: number | null
+  mime_type: string | null
+  stream_url: string | null
   platform: string | null
   material_type: string
   tags: string[]

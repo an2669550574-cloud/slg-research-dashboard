@@ -63,6 +63,8 @@ _protected = [Depends(require_api_key)]
 app.include_router(games.router, dependencies=_protected)
 app.include_router(history.router, dependencies=_protected)
 app.include_router(materials.router, dependencies=_protected)
+# 素材文件流：自带 HMAC 令牌鉴权，不挂 _protected（<video>/<img> 带不了头）
+app.include_router(materials.file_router)
 app.include_router(quota.router, dependencies=_protected)
 
 
