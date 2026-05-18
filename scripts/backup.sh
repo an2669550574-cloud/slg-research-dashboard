@@ -74,6 +74,22 @@ if [[ -n "${COS_BACKUP_DIR:-}" ]]; then
     else
       echo "[backup] offsite copy FAILED (cp error) — local backup kept" >&2
     fi
+
+    # 素材文件异地镜像：增量、**不删远端**（删本地不连带删异地，留恢复余量）。
+    # 与 DB 备份共用上面的「活 cosfs 挂载」守卫；cosfs 抖动只告警，不致整次失败。
+    MATERIALS_DIR="${REPO_ROOT}/data/materials"
+    if [[ -d "$MATERIALS_DIR" ]] && [[ -n "$(ls -A "$MATERIALS_DIR" 2>/dev/null)" ]]; then
+      mkdir -p "${COS_BACKUP_DIR}/materials"
+      if command -v rsync >/dev/null 2>&1; then
+        rsync -a "$MATERIALS_DIR"/ "${COS_BACKUP_DIR}/materials/" \
+          && echo "[backup] materials mirrored (rsync) → ${COS_BACKUP_DIR}/materials/" \
+          || echo "[backup] materials mirror had errors — DB backup unaffected" >&2
+      else
+        cp -ru "$MATERIALS_DIR"/. "${COS_BACKUP_DIR}/materials/" \
+          && echo "[backup] materials mirrored (cp -ru) → ${COS_BACKUP_DIR}/materials/" \
+          || echo "[backup] materials mirror had errors — DB backup unaffected" >&2
+      fi
+    fi
   else
     echo "[backup] offsite SKIPPED: $COS_BACKUP_DIR not a live cosfs mount — local backup kept" >&2
   fi
