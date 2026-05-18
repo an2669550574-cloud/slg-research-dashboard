@@ -15,11 +15,13 @@ chmod +x scripts/backup.sh scripts/restore.sh
 
 ## 定时执行
 
-加到 crontab（每天 02:00 UTC）：
+加到 crontab。当前生产（HK）实际跑的是每天 **04:00 UTC**（= 12:00 CST，刻意排在 app 同步窗口之后），并通过 `COS_BACKUP_DIR` 触发离站镜像、日志落 `backups/backup.log`：
 
 ```cron
-0 2 * * * cd /opt/slg-research-dashboard && ./scripts/backup.sh >> /var/log/slg-backup.log 2>&1
+0 12 * * * cd /opt/slg-research-dashboard && COS_BACKUP_DIR=/lhcos-data/slg-backups /bin/bash scripts/backup.sh >> /opt/slg-research-dashboard/backups/backup.log 2>&1
 ```
+
+> 时区取决于宿主机：上面 `0 12` 是机器本地时区为 CST 时的写法（对应 04:00 UTC）。机器若是 UTC，直接写 `0 4 * * *`。
 
 或者用 systemd timer（推荐生产环境，错误能上 journald）：
 
@@ -55,12 +57,12 @@ sudo systemctl enable --now slg-backup.timer
 
 ## 异地备份
 
-`backup.sh` 落地后，建议把 `backups/` 同步到对象存储。例如 rclone：
+`backup.sh` 内置离站逻辑：设了环境变量 `COS_BACKUP_DIR` 就把本次 `.db.gz` 再拷一份到该目录，并增量镜像 `data/materials/`。脚本会先校验该目录确是**活的 fuse.cosfs 挂载**——cosfs 掉挂后挂载点退化成本地空目录，绝不能把"异地副本"静默写进本地磁盘，所以掉挂时只告警跳过、本地备份照常保留。
 
-```bash
-# /etc/cron.d/slg-offsite
-0 3 * * * root rclone sync /opt/slg-research-dashboard/backups remote:slg-backups --max-age 30d
-```
+当前生产（HK）即用此法：腾讯云 Lighthouse 把 COS 桶以 cosfs 挂在 `/lhcos-data`，cron 行内联 `COS_BACKUP_DIR=/lhcos-data/slg-backups`（见上「定时执行」）。素材镜像**不删远端**（删本地不连带删异地，留恢复余量，故离站会留下本地已删的孤儿文件，属预期）。
+
+> 备选方案：若不用 cosfs，也可单独加一条 rclone 同步——
+> `0 3 * * * root rclone sync /opt/slg-research-dashboard/backups remote:slg-backups --max-age 30d`
 
 ## 恢复
 
