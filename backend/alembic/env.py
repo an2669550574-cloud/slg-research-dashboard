@@ -1,3 +1,4 @@
+import logging
 from logging.config import fileConfig
 from sqlalchemy import engine_from_config, pool
 from alembic import context
@@ -15,7 +16,12 @@ def _sync_url(url: str) -> str:
 
 config.set_main_option("sqlalchemy.url", _sync_url(settings.DATABASE_URL))
 
-if config.config_file_name is not None:
+# 仅在 alembic CLI 独立运行时按 alembic.ini 配日志。应用内 init_db() 跑迁移时
+# app.main 已 import → configure_logging()/init_sentry() 已给 root 挂好 handler；
+# 此处再 fileConfig（disable_existing_loggers 默认 True）会清掉应用的 JSON 日志
+# **和 Sentry 的 LoggingIntegration handler**，导致生产日志与告警双双静默。
+# 用「root 已有 handler」判别在进程内运行，跳过即可（CLI 时 root 为空，正常配）。
+if config.config_file_name is not None and not logging.getLogger().handlers:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
