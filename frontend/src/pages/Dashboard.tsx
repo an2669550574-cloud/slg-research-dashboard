@@ -19,13 +19,13 @@ function StatCard({ icon: Icon, label, value, sub, color }: any) {
   return (
     <div className="group hud relative bg-surface/80 border border-default rounded-xl p-5 transition-colors hover:border-strong">
       <div className="flex items-center justify-between mb-3">
-        <span className="eyebrow text-muted">{label}</span>
+        <span className="text-sm text-secondary">{label}</span>
         <div className={`p-2 rounded-lg ${color}`}>
           <Icon size={16} className="text-white" />
         </div>
       </div>
-      <div className="font-display text-[28px] leading-none font-extrabold text-primary tabular-nums">{value}</div>
-      {sub && <div className="font-data text-[11px] text-muted mt-1.5">{sub}</div>}
+      <div className="font-display text-[30px] leading-none font-extrabold text-primary tabular-nums">{value}</div>
+      {sub && <div className="text-xs text-muted mt-2">{sub}</div>}
     </div>
   )
 }

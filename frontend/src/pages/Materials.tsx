@@ -120,7 +120,7 @@ export default function Materials() {
 
   const PLATFORM_TABS = ['', 'youtube', 'tiktok', 'meta', 'other']
 
-  const AssetCard = ({ m, n, featured }: { m: MaterialOut; n: number; featured?: boolean }) => {
+  const AssetCard = ({ m, n }: { m: MaterialOut; n: number }) => {
     const platCfg = (m.platform && PLATFORM_CONFIG[m.platform]) || PLATFORM_CONFIG.other
     const game = gameMap[m.app_id]
     const href = (m.source === 'upload' ? m.stream_url : m.url) as string | undefined
@@ -129,11 +129,11 @@ export default function Materials() {
       <div className="hud relative aspect-video w-full bg-gradient-to-br from-elevated to-base overflow-hidden">
         {hasPreview ? <MaterialPreview m={m} fill /> : (
           <div className="absolute inset-0 grid place-items-center text-muted/40">
-            <FilmIcon size={featured ? 40 : 26} />
+            <FilmIcon size={26} />
           </div>
         )}
-        <span className="absolute top-3 left-3 font-data text-[10px] tracking-wider px-2 py-0.5 rounded bg-base/75 backdrop-blur-sm text-secondary border border-default">
-          {(m.platform ? platLabel(m.platform) : platCfg.label).toUpperCase()}
+        <span className="absolute top-3 left-3 text-[11px] px-2 py-0.5 rounded bg-base/75 backdrop-blur-sm text-secondary border border-default">
+          {m.platform ? platLabel(m.platform) : platCfg.label}
         </span>
         {href && (
           <a href={href} target="_blank" rel="noopener noreferrer" title={t.materials.openFile}
@@ -145,21 +145,21 @@ export default function Materials() {
     )
     const meta = (
       <div className="flex flex-col gap-2 p-4">
-        <div className="font-data text-[10px] text-muted flex items-center gap-2">
-          <span className="text-accent">{String(n).padStart(2, '0')}</span>
-          <span className="text-muted/40">/</span>
-          <span className="uppercase tracking-wider">{typeLabel(m.material_type)}</span>
+        <div className="flex items-center gap-2 text-[11px] text-muted">
+          <span className="font-data text-accent">{String(n).padStart(2, '0')}</span>
+          <span className="text-muted/40">·</span>
+          <span>{typeLabel(m.material_type)}</span>
           {game && (
             <>
-              <span className="text-muted/50">·</span>
+              <span className="text-muted/40">·</span>
               <button onClick={() => navigate(`/game/${m.app_id}`)}
-                className="text-accent hover:underline truncate max-w-[150px] normal-case tracking-normal">
+                className="text-accent hover:underline truncate max-w-[150px]">
                 {game.name}
               </button>
             </>
           )}
         </div>
-        <div className={`font-display font-bold text-primary leading-tight line-clamp-2 ${featured ? 'text-xl' : 'text-[15px]'}`}>
+        <div className="font-display font-bold text-primary text-[15px] leading-tight line-clamp-2">
           {m.title}
         </div>
         {m.notes && <div className="text-xs text-muted line-clamp-1">{m.notes}</div>}
@@ -173,8 +173,8 @@ export default function Materials() {
       </div>
     )
     return (
-      <div className={`group relative flex rounded-xl border border-default bg-surface/80 overflow-hidden shadow-card transition-all duration-200 hover:border-strong hover:-translate-y-0.5 ${featured ? 'flex-col lg:flex-row' : 'flex-col'}`}>
-        <div className={featured ? 'lg:w-3/5 shrink-0' : ''}>{media}</div>
+      <div className="group relative flex flex-col rounded-xl border border-default bg-surface/80 overflow-hidden shadow-card transition-all duration-200 hover:border-strong hover:-translate-y-0.5">
+        {media}
         <div className="flex-1 flex flex-col justify-between">
           {meta}
         </div>
@@ -330,15 +330,10 @@ export default function Materials() {
             </p>
           </div>
         ) : (
-          <div className="space-y-4">
-            <div className="reveal reveal-3"><AssetCard m={materials[0]} n={offset + 1} featured /></div>
-            {materials.length > 1 && (
-              <div className="reveal reveal-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {materials.slice(1).map((m, i) => (
-                  <AssetCard key={m.id} m={m} n={offset + i + 2} />
-                ))}
-              </div>
-            )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {materials.map((m, i) => (
+              <AssetCard key={m.id} m={m} n={offset + i + 1} />
+            ))}
           </div>
         )}
       </div>
