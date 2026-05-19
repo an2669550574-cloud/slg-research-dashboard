@@ -267,8 +267,31 @@ async def get_game_metrics(
     platform: str = "ios",
     start_date: Optional[str] = Query(None, description="YYYY-MM-DD；与 end_date 同时提供时优先于 days"),
     end_date: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    aggregate: bool = Query(False, description="跨该 app 全部已监测市场按日合计下载/收入"),
     db: AsyncSession = Depends(get_db),
 ):
+    if aggregate:
+        # 单产品总计：把该 app 在 game_rankings 里所有 (国家,平台) 行按日
+        # 求和 —— 纯本地、零 ST 配额、与发展历程同源。(app_id,date,country,
+        # platform) 唯一约束保证不重复计。rank 不能跨市场相加（#1+#5≠#6），
+        # 故 rankings 留空，前端在合计视图提示"排名按市场单看"。
+        win = _resolve_window(days, start_date, end_date)
+        res = await db.execute(
+            select(
+                GameRanking.date,
+                func.sum(GameRanking.downloads),
+                func.sum(GameRanking.revenue),
+            ).where(
+                GameRanking.app_id == app_id,
+                GameRanking.date >= win[0],
+                GameRanking.date <= win[-1],
+            ).group_by(GameRanking.date).order_by(GameRanking.date)
+        )
+        rows = res.all()
+        downloads = [{"date": d, "value": dl} for d, dl, _ in rows if dl is not None]
+        revenue = [{"date": d, "value": rv} for d, _, rv in rows if rv is not None]
+        return {"rankings": [], "downloads": downloads, "revenue": revenue}
+
     kw = {"country": country, "platform": platform, "days": days, "start_date": start_date, "end_date": end_date}
     if sensor_tower_service.use_mock:
         sales = await sensor_tower_service.get_sales(app_id, **kw)

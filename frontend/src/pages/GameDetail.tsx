@@ -357,28 +357,47 @@ export default function GameDetail() {
   const monthAgo = new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10)
   const [customStart, setCustomStart] = useState(monthAgo)
   const [customEnd, setCustomEnd] = useState(today)
-  // null = 还没手动选，沿用 coverage 自动默认（数据最全的组合）
-  const [pickedCombo, setPickedCombo] = useState<{ country: string; platform: string } | null>(null)
+  // 选中市场：'all' = 跨已监测市场合计（默认，每款产品一致）；否则具体组合
+  const [sel, setSel] = useState<'all' | { country: string; platform: string }>('all')
 
   // 该 app 本地实际有数据的国家/平台组合（零 ST 配额，纯本地聚合）。
-  const { data: coverage, isLoading: coverageLoading } = useQuery({
+  const { data: coverage } = useQuery({
     queryKey: ['coverage', appId],
     queryFn: () => gamesApi.coverage(appId!),
     enabled: !!appId,
   })
-  // 有效组合：手选 > coverage 最佳 > 兜底 US/ios（库里完全没数据时与改前一致）
-  const combo = pickedCombo ?? coverage?.[0] ?? { country: 'US', platform: 'ios' }
 
-  const queryParams = range.kind === 'preset'
-    ? { days: range.days, ...combo }
-    : { start_date: range.start, end_date: range.end, ...combo }
+  const baseRange = range.kind === 'preset'
+    ? { days: range.days }
+    : { start_date: range.start, end_date: range.end }
 
-  const { data: metrics, isLoading: metricsLoading, isError: metricsError, refetch: refetchMetrics } = useQuery({
-    queryKey: ['metrics', appId, range, combo.country, combo.platform],
-    queryFn: () => gamesApi.metrics(appId!, queryParams),
-    // 等 coverage 落定再查：否则先用 US/ios 查一次空、命中 ST 回退白烧配额
-    enabled: !!appId && !coverageLoading,
+  // 单产品总计：跨该 app 全部已监测市场按日合计。纯本地、零 ST 配额。
+  // 始终拉取——既驱动头部"合计"指标，也作合计视图的图表数据。
+  const { data: aggMetrics, isLoading: aggLoading, isError: aggError, refetch: refetchAgg } = useQuery({
+    queryKey: ['metrics', appId, range, 'agg'],
+    queryFn: () => gamesApi.metrics(appId!, { ...baseRange, aggregate: true }),
+    enabled: !!appId,
   })
+
+  const isAll = sel === 'all'
+  const combo = isAll ? null : sel
+
+  // 具体市场视图：单组合 rank/下载/收入（含排名走势）。仅选了具体市场才拉。
+  const { data: comboMetrics, isLoading: comboLoading, isError: comboError, refetch: refetchCombo } = useQuery({
+    queryKey: ['metrics', appId, range, combo?.country, combo?.platform],
+    queryFn: () => gamesApi.metrics(appId!, { ...baseRange, country: combo!.country, platform: combo!.platform }),
+    enabled: !!appId && !isAll,
+  })
+
+  const metrics = isAll ? aggMetrics : comboMetrics
+  const metricsLoading = isAll ? aggLoading : comboLoading
+  const metricsError = isAll ? aggError : comboError
+  const refetchMetrics = isAll ? refetchAgg : refetchCombo
+
+  // 头部"已监测市场合计"：区间内合计收入/下载，始终展示（iOS/安卓一致）。
+  const totalRevenue = (aggMetrics?.revenue ?? []).reduce((s, p) => s + (p.value ?? 0), 0)
+  const totalDownloads = (aggMetrics?.downloads ?? []).reduce((s, p) => s + (p.value ?? 0), 0)
+  const hasTotals = (aggMetrics?.revenue?.length ?? 0) > 0 || (aggMetrics?.downloads?.length ?? 0) > 0
 
   // 游戏元信息从 games 表读：今日榜单 rankings 只覆盖 Top N，
   // 游戏掉出榜单时详情页头部不应该空白
@@ -388,13 +407,13 @@ export default function GameDetail() {
     enabled: !!appId,
   })
 
-  // 今日榜单数据只用于显示当日 rank/revenue/downloads 三个数字；
-  // 跟随选中的国家/平台，安卓游戏不再用 US/ios 查空。
+  // 选了具体市场时显示该市场今日 rank/收入/下载；合计视图不显示（头部已有合计）
   const { data: rankings } = useQuery({
-    queryKey: ['rankings', combo.country, combo.platform],
-    queryFn: () => gamesApi.rankings(combo.country, combo.platform),
+    queryKey: ['rankings', combo?.country ?? '', combo?.platform ?? ''],
+    queryFn: () => gamesApi.rankings(combo!.country, combo!.platform),
+    enabled: !isAll,
   })
-  const todayStats = rankings?.find((g: any) => g.app_id === appId)
+  const todayStats = isAll ? undefined : rankings?.find((g: any) => g.app_id === appId)
 
   const chartTooltipStyle = {
     contentStyle: { background: 'rgb(var(--bg-elevated))', border: '1px solid rgb(var(--border-default))', borderRadius: 8 },
@@ -419,8 +438,15 @@ export default function GameDetail() {
           <div>
             <h1 className="text-xl font-bold text-primary">{game.name}</h1>
             <p className="text-muted text-sm mt-0.5">{game.publisher}</p>
+            {hasTotals && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2">
+                <span className="text-xs text-muted">{t.gameDetail.trackedTotal}</span>
+                <span className="text-xs text-emerald-400 font-medium">{formatRevenue(totalRevenue)}</span>
+                <span className="text-xs text-secondary">{formatNumber(totalDownloads)} {t.dashboard.downloadsSuffix}</span>
+              </div>
+            )}
             {todayStats && (
-              <div className="flex items-center gap-3 mt-2">
+              <div className="flex items-center gap-3 mt-1">
                 <span className="text-xs text-yellow-400 font-medium">{t.gameDetail.rankPrefix} #{todayStats.rank}</span>
                 <span className="text-xs text-emerald-400">{formatRevenue(todayStats.revenue ?? 0)} / {t.gameDetail.today}</span>
                 <span className="text-xs text-secondary">{formatNumber(todayStats.downloads ?? 0)} {t.dashboard.downloadsSuffix}</span>
@@ -479,14 +505,18 @@ export default function GameDetail() {
         )}
       </div>
 
-      {coverage && coverage.length > 1 && (
+      {coverage && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-muted pr-1">{t.gameDetail.marketLabel}</span>
+          <button onClick={() => setSel('all')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${isAll ? 'bg-brand-600 text-white' : 'bg-elevated text-secondary hover:text-primary'}`}>
+            {t.gameDetail.aggregateLabel}
+          </button>
           {coverage.map(cv => {
-            const active = combo.country === cv.country && combo.platform === cv.platform
+            const active = !isAll && combo!.country === cv.country && combo!.platform === cv.platform
             return (
               <button key={`${cv.country}:${cv.platform}`}
-                onClick={() => setPickedCombo({ country: cv.country, platform: cv.platform })}
+                onClick={() => setSel({ country: cv.country, platform: cv.platform })}
                 title={t.gameDetail.marketDataHint(cv.sales_days)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${active ? 'bg-brand-600 text-white' : 'bg-elevated text-secondary hover:text-primary'}`}>
                 {cv.country} · {cv.platform === 'android' ? 'Android' : 'iOS'}
@@ -504,6 +534,10 @@ export default function GameDetail() {
               <QueryError compact onRetry={() => refetchMetrics()} />
             ) : metricsLoading ? (
               <div className="h-28 flex items-center justify-center text-muted text-xs">{t.common.loading}</div>
+            ) : key === 'rankings' && isAll ? (
+              <div className="h-28 flex items-center justify-center text-center text-muted text-xs px-3">
+                {t.gameDetail.rankPerMarketNote}
+              </div>
             ) : (
               <ResponsiveContainer width="100%" height={110}>
                 <AreaChart data={metrics?.[key] || []} margin={{ top: 0, right: 0, left: -30, bottom: 0 }}>

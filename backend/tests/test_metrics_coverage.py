@@ -50,3 +50,27 @@ async def test_coverage_empty_when_no_local_rows(client):
     r = await client.get("/api/games/nobody.zzz/coverage")
     assert r.status_code == 200
     assert r.json() == []
+
+
+@pytest.mark.asyncio
+async def test_metrics_aggregate_sums_across_markets_by_date(client):
+    """单产品总计：跨该 app 全部已监测市场按日合计下载/收入；
+    rank 不跨市场相加（返回空）。纯本地，无需 monkeypatch ST。"""
+    await _seed([
+        ("agg.1", "2026-05-17", 3, 100, 10.0, "US", "ios"),
+        ("agg.1", "2026-05-17", 5, 200, 20.0, "US", "android"),
+        ("agg.1", "2026-05-17", 9, 50,  5.0,  "JP", "ios"),
+        ("agg.1", "2026-05-18", 2, 70,  7.0,  "US", "ios"),
+        ("other.x", "2026-05-17", 1, 999, 99.0, "US", "ios"),  # 别串
+    ])
+    r = await client.get("/api/games/agg.1/metrics", params={
+        "aggregate": "true", "start_date": "2026-05-17", "end_date": "2026-05-18",
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert body["rankings"] == []  # 排名不能跨市场相加
+    assert body["downloads"] == [
+        {"date": "2026-05-17", "value": 350, "rank": None},  # 100+200+50
+        {"date": "2026-05-18", "value": 70,  "rank": None},
+    ]
+    assert [p["value"] for p in body["revenue"]] == [35.0, 7.0]

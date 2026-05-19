@@ -65,6 +65,7 @@ export interface MetricsParams {
   platform?: string
   start_date?: string
   end_date?: string
+  aggregate?: boolean
 }
 
 export const gamesApi = {

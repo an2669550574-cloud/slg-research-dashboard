@@ -50,9 +50,10 @@ class Settings(BaseSettings):
     SENSOR_TOWER_SNAPSHOT_FRESH_HOURS: int = 24
 
     # 每日 scheduler 同步的 (country, platform) 组合。逗号分隔 "country:platform"。
-    # 每组每天消耗 1 次月度配额，注意 500/月 ÷ 30 天 ≈ 16 组上限。
-    # 默认 4 组覆盖 SLG 主要市场。
-    SYNC_RANKING_COMBOS: str = "US:ios,US:android,JP:ios,KR:ios"
+    # 每组每天约 2 次月度配额(1 拉榜 + 1 批量销量)，注意 500/月 硬上限。
+    # 6 组 ≈ 360/月核心同步；安卓也覆盖 US/JP/KR，与 iOS 对称（详情页两端
+    # 都能切国家）。代价：配额吃紧，历史回填会更常被护栏跳过（设计内）。
+    SYNC_RANKING_COMBOS: str = "US:ios,US:android,JP:ios,KR:ios,JP:android,KR:android"
 
     # ── 历史排名回填 ─────────────────────────────────────────────
     # ST 无"某 app 排名历史"接口；只能逐 (combo, 日期) 拉整张品类榜
