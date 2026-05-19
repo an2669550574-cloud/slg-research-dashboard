@@ -120,6 +120,16 @@ async def _scheduled_sync(country: str = "US", platform: str = "ios") -> None:
         )
 
 
+async def _run_rank_backfill() -> None:
+    """定时任务包装：回填异常不能拖垮 scheduler。异常走 logger.exception
+    (ERROR→Sentry)。任务自身已含 enabled/mock/配额护栏。"""
+    from app.services.rank_backfill import backfill_rank_history
+    try:
+        await backfill_rank_history()
+    except Exception:
+        logger.exception("Rank backfill job crashed")
+
+
 async def sync_seed_games_if_empty() -> None:
     """若 games 表为空则从 mock 数据建立一个起始集，避免 dashboard 空数据。"""
     from app.services.sensor_tower import MOCK_SLG_GAMES
@@ -162,6 +172,16 @@ def start_scheduler() -> None:
             replace_existing=True,
             misfire_grace_time=3600,
         )
+
+    # 历史排名回填：03:30 UTC（核心同步 02:30~02:38 已结束，DB 备份 04:00
+    # 之前）。任务内部自带 enabled/mock/配额护栏，空跑也无害，故无条件挂。
+    scheduler.add_job(
+        _run_rank_backfill,
+        CronTrigger(hour=3, minute=30, timezone="UTC"),
+        id="rank_backfill",
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
     scheduler.start()
     logger.info(
         "Scheduler started with %d jobs (combos: %s)",

@@ -54,6 +54,18 @@ class Settings(BaseSettings):
     # 默认 4 组覆盖 SLG 主要市场。
     SYNC_RANKING_COMBOS: str = "US:ios,US:android,JP:ios,KR:ios"
 
+    # ── 历史排名回填 ─────────────────────────────────────────────
+    # ST 无"某 app 排名历史"接口；只能逐 (combo, 日期) 拉整张品类榜
+    # (1 调用/日/组合)，从有序列表里读出名次。粒度用周(rank 长期趋势够看)：
+    # 4 组合 × 52 周 ≈ 208 次一次性。每晚日常同步后涓流补，受配额护栏约束，
+    # 永不挤占核心日同步；补完自动停（按 game_rankings 已有 rank 行判进度）。
+    RANK_BACKFILL_ENABLED: bool = True
+    RANK_BACKFILL_WEEKS: int = 52          # 回填多少周历史（每周采 1 个锚点日）
+    RANK_BACKFILL_DAILY_BUDGET: int = 5    # 每晚最多消耗多少次配额做回填
+    # 当月剩余配额 ≤ 此值则当晚跳过回填，把预算留给核心日同步/仪表盘。
+    RANK_BACKFILL_QUOTA_FLOOR: int = 150
+    RANK_BACKFILL_LIMIT: int = 400         # 每次拉榜深度（同 1 次配额，多捞深位）
+
     # 竞品异动告警：每日同步后比对 game_rankings 今日 vs 上一可用日，SLG 行
     # 里出现「新进 TopN / 大幅窜升 / 跌出 TopN / 收入异动」就汇总成一条
     # logger.error（经现有 LoggingIntegration 推送 Sentry，零额外配额/基建）。

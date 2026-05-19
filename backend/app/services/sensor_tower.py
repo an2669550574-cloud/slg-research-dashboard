@@ -367,6 +367,35 @@ class SensorTowerService:
             return rows
         return data.get("apps", [])
 
+    async def get_ranking_on_date(
+        self, country: str, platform: str, date: str
+    ) -> list[dict]:
+        """某历史日某 (国家,平台) 品类榜 → [{"app_id","rank"}]（仅名次，
+        不补名字/不取销量——历史排名回填只要名次，省配额省时）。
+
+        走 _cached_get：配额计入月度预算 + 落 L2 快照（重跑/重启不重烧）。
+        cache_key 含 date+chart_type+category，与今日榜 key 隔离、互不串。
+        """
+        if self.use_mock:
+            return [{"app_id": r["app_id"], "rank": r["rank"]}
+                    for r in _mock_today_rankings()]
+        _, chart_type, category = self._today_key(country, platform)
+        key = f"rankhist:{platform}:{country}:{chart_type}:{category}:{date}"
+        data = await self._cached_get(
+            key,
+            f"/v1/{platform}/ranking",
+            {
+                "category": category,
+                "country": country,
+                "chart_type": chart_type,
+                "date": date,
+                "limit": settings.RANK_BACKFILL_LIMIT,
+            },
+            fallback=lambda: {"ranking": []},
+        )
+        return [{"app_id": str(aid), "rank": i + 1}
+                for i, aid in enumerate(data.get("ranking") or [])]
+
     async def force_refresh_today_rankings(self, country: str = "US", platform: str = "ios") -> list[dict]:
         """绕过 L1+L2 缓存，强制重新拉取今日榜单。会消耗一次月度配额。
 
