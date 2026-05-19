@@ -11,20 +11,21 @@ import { useNavigate } from 'react-router-dom'
 import { QuotaBanner } from '../components/QuotaBanner'
 import { GameIcon } from '../components/GameIcon'
 import { QueryError } from '../components/QueryError'
+import { PageHeader } from '../components/PageHeader'
 import { useLocalStorageState } from '../lib/hooks'
 import { COUNTRIES, PLATFORMS, platformLabel, type Country, type Platform } from '../lib/markets'
 
 function StatCard({ icon: Icon, label, value, sub, color }: any) {
   return (
-    <div className="bg-surface border border-default rounded-xl p-5">
+    <div className="group hud relative bg-surface/80 border border-default rounded-xl p-5 transition-colors hover:border-strong">
       <div className="flex items-center justify-between mb-3">
-        <span className="text-secondary text-sm">{label}</span>
+        <span className="eyebrow text-muted">{label}</span>
         <div className={`p-2 rounded-lg ${color}`}>
           <Icon size={16} className="text-white" />
         </div>
       </div>
-      <div className="text-2xl font-bold text-primary">{value}</div>
-      {sub && <div className="text-xs text-muted mt-1">{sub}</div>}
+      <div className="font-display text-[28px] leading-none font-extrabold text-primary tabular-nums">{value}</div>
+      {sub && <div className="font-data text-[11px] text-muted mt-1.5">{sub}</div>}
     </div>
   )
 }
@@ -118,30 +119,24 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="p-4 sm:p-6 space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-primary">{t.dashboard.title}</h1>
-          <p className="text-muted text-sm mt-0.5">{t.dashboard.subtitle}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleExport}
-            className="flex items-center gap-2 px-3 py-2 bg-elevated hover:bg-elevated/70 rounded-lg text-sm text-primary transition-colors"
-          >
-            <DownloadIcon size={14} />
-            {t.common.export}
-          </button>
-          <button
-            onClick={() => refreshMut.mutate()}
-            disabled={refreshMut.isPending || cooling}
-            className="flex items-center gap-2 px-3 py-2 bg-elevated hover:bg-elevated/70 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm text-primary transition-colors"
-          >
-            {refreshMut.isPending ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-            {cooling ? t.common.refreshCooldown(cooldownLeft) : t.common.refresh}
-          </button>
-        </div>
-      </div>
+    <div className="px-4 sm:px-7 py-5 sm:py-7 max-w-[1500px] mx-auto space-y-6">
+      <PageHeader eyebrow="Overview" title={t.dashboard.title} subtitle={t.dashboard.subtitle}>
+        <button
+          onClick={handleExport}
+          className="flex items-center gap-2 px-3.5 py-2.5 rounded-lg font-data text-xs text-secondary border border-default hover:border-strong hover:text-primary bg-surface/60 transition-colors"
+        >
+          <DownloadIcon size={14} />
+          <span className="hidden sm:inline">{t.common.export}</span>
+        </button>
+        <button
+          onClick={() => refreshMut.mutate()}
+          disabled={refreshMut.isPending || cooling}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold text-white bg-accent hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed glow-accent transition-all"
+        >
+          {refreshMut.isPending ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+          {cooling ? t.common.refreshCooldown(cooldownLeft) : t.common.refresh}
+        </button>
+      </PageHeader>
 
       <QuotaBanner quota={quota} />
 

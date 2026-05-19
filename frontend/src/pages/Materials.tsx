@@ -6,6 +6,7 @@ import { PLATFORM_CONFIG } from '../lib/utils'
 import { ExternalLink, Trash2, Plus, Search, Download as DownloadIcon, Upload, Film as FilmIcon, Radio } from 'lucide-react'
 import { MaterialPreview } from '../components/MaterialPreview'
 import { Select } from '../components/Select'
+import { PageHeader } from '../components/PageHeader'
 import { useNavigate } from 'react-router-dom'
 import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
@@ -20,16 +21,6 @@ const ACCEPT = '.mp4,.webm,.mov,.m4v,.jpg,.jpeg,.png,.gif,.webp'
 
 const inputClass =
   "w-full bg-elevated/60 border border-default rounded-lg px-3 py-2.5 text-sm text-primary placeholder:text-muted focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-colors"
-
-function Stat({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <span className="flex items-baseline gap-2">
-      <span className="text-muted/70">{label}</span>
-      <span className="text-accent">▸</span>
-      <span className="text-secondary">{value}</span>
-    </span>
-  )
-}
 
 export default function Materials() {
   const navigate = useNavigate()
@@ -197,41 +188,28 @@ export default function Materials() {
 
   return (
     <div className="min-h-full px-4 sm:px-7 py-5 sm:py-7 max-w-[1500px] mx-auto">
-      {/* ══ MASTHEAD ══════════════════════════════════════════ */}
-      <header className="reveal reveal-1">
-        <div className="flex items-center gap-2.5 eyebrow text-muted">
-          <span className="w-1.5 h-1.5 rounded-full bg-signal pulse-dot inline-block" />
-          Creative&nbsp;Intel
-        </div>
-        <div className="mt-3 flex flex-wrap items-end justify-between gap-5">
-          <div>
-            <h1 className="font-display text-[38px] sm:text-[50px] leading-[0.92] font-extrabold text-primary">
-              {t.materials.title}
-            </h1>
-            <p className="text-secondary text-sm mt-2.5 max-w-md">{t.materials.subtitle}</p>
-          </div>
-          <div className="flex items-center gap-2.5">
-            <button onClick={exportCsv}
-              className="flex items-center gap-2 px-3.5 py-2.5 rounded-lg font-data text-xs text-secondary border border-default hover:border-strong hover:text-primary bg-surface/60 transition-colors">
-              <DownloadIcon size={14} />
-              <span className="hidden sm:inline">{t.common.export}</span>
-            </button>
-            <button onClick={() => setShowForm(!showForm)}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold text-white bg-accent hover:brightness-110 glow-accent transition-all">
-              <Plus size={15} />
-              {t.materials.addMaterial}
-            </button>
-          </div>
-        </div>
-        {/* 遥测条 */}
-        <div className="mt-5 flex flex-wrap items-center gap-x-7 gap-y-2 font-data text-[11px]">
-          <Stat label="ASSETS" value={<span className="text-primary font-bold">{total}</span>} />
-          <Stat label="FILTER" value={(filterPlatform ? platLabel(filterPlatform) : 'ALL').toUpperCase()} />
-          <Stat label="QUERY" value={debouncedSearch ? `"${debouncedSearch}"` : '—'} />
-          <Stat label="PAGE" value={`${page} / ${pages}`} />
-        </div>
-        <div className="scan-rule mt-4" />
-      </header>
+      <PageHeader
+        eyebrow="Creative Intel"
+        title={t.materials.title}
+        subtitle={t.materials.subtitle}
+        stats={[
+          { label: 'ASSETS', value: <span className="text-primary font-bold">{total}</span> },
+          { label: 'FILTER', value: (filterPlatform ? platLabel(filterPlatform) : 'ALL').toUpperCase() },
+          { label: 'QUERY', value: debouncedSearch ? `"${debouncedSearch}"` : '—' },
+          { label: 'PAGE', value: `${page} / ${pages}` },
+        ]}
+      >
+        <button onClick={exportCsv}
+          className="flex items-center gap-2 px-3.5 py-2.5 rounded-lg font-data text-xs text-secondary border border-default hover:border-strong hover:text-primary bg-surface/60 transition-colors">
+          <DownloadIcon size={14} />
+          <span className="hidden sm:inline">{t.common.export}</span>
+        </button>
+        <button onClick={() => setShowForm(!showForm)}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold text-white bg-accent hover:brightness-110 glow-accent transition-all">
+          <Plus size={15} />
+          {t.materials.addMaterial}
+        </button>
+      </PageHeader>
 
       {showForm && (
         <form onSubmit={handleSubmit}

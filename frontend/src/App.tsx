@@ -42,10 +42,10 @@ function Sidebar({ open, onNavigate }: { open: boolean; onNavigate: () => void }
       <div className="px-5 py-5 border-b border-default flex items-start justify-between">
         <div>
           <div className="flex items-center gap-2">
-            <Gamepad2 className="text-brand-500" size={22} />
-            <span className="font-bold text-primary text-base leading-tight">{t.app.title}</span>
+            <Gamepad2 className="text-accent" size={22} />
+            <span className="font-display font-extrabold text-primary text-lg leading-tight">{t.app.title}</span>
           </div>
-          <p className="text-xs text-muted mt-1">{t.app.subtitle}</p>
+          <p className="eyebrow text-muted mt-1.5">{t.app.subtitle}</p>
         </div>
         <button onClick={onNavigate} className="md:hidden text-muted hover:text-primary" aria-label="close menu">
           <X size={18} />
@@ -59,9 +59,9 @@ function Sidebar({ open, onNavigate }: { open: boolean; onNavigate: () => void }
             end={to === '/'}
             onClick={onNavigate}
             className={({ isActive }) =>
-              cn('flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors',
+              cn('relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors',
                 isActive
-                  ? 'bg-brand-600 text-white'
+                  ? 'bg-accent/12 text-accent font-medium before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-0.5 before:rounded-full before:bg-accent'
                   : 'text-secondary hover:text-primary hover:bg-elevated')
             }
           >
@@ -85,7 +85,7 @@ function Sidebar({ open, onNavigate }: { open: boolean; onNavigate: () => void }
           {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
           {theme === 'dark' ? t.app.themeLight : t.app.themeDark}
         </button>
-        <p className="text-xs text-muted text-center">{t.app.powered}</p>
+        <p className="font-data text-[10px] text-muted/70 text-center tracking-wide">{t.app.powered}</p>
       </div>
     </aside>
   )
@@ -98,8 +98,8 @@ function MobileTopBar({ onMenu }: { onMenu: () => void }) {
       <button onClick={onMenu} className="text-secondary hover:text-primary" aria-label="open menu">
         <Menu size={20} />
       </button>
-      <Gamepad2 className="text-brand-500" size={18} />
-      <span className="font-bold text-primary text-sm">{t.app.title}</span>
+      <Gamepad2 className="text-accent" size={18} />
+      <span className="font-display font-extrabold text-primary text-base">{t.app.title}</span>
     </header>
   )
 }

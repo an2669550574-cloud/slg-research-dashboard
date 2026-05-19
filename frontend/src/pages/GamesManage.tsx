@@ -7,6 +7,7 @@ import { Plus, Trash2, Search, Loader2, Check, Pencil } from 'lucide-react'
 import { Pagination } from '../components/Pagination'
 import { GameIcon } from '../components/GameIcon'
 import { QueryError } from '../components/QueryError'
+import { PageHeader } from '../components/PageHeader'
 import { useDebouncedValue } from '../lib/hooks'
 import type { GameOut, AppLookupResult } from '../lib/types'
 
@@ -156,20 +157,16 @@ export default function GamesManage() {
   const inputClass = "bg-elevated border border-default rounded-lg px-3 py-2 text-sm text-primary placeholder:text-muted focus:outline-none focus:border-brand-500"
 
   return (
-    <div className="p-4 sm:p-6 space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-primary">{t.gamesManage.title}</h1>
-          <p className="text-muted text-sm mt-0.5">{t.gamesManage.subtitle}</p>
-        </div>
+    <div className="px-4 sm:px-7 py-5 sm:py-7 max-w-[1500px] mx-auto space-y-5">
+      <PageHeader eyebrow="Roster" title={t.gamesManage.title} subtitle={t.gamesManage.subtitle}>
         <button
           onClick={() => isOpen ? closeForm() : openCreate()}
-          className="flex items-center gap-2 px-4 py-2 bg-brand-600 hover:bg-brand-700 rounded-lg text-sm text-white transition-colors"
+          className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold text-white bg-accent hover:brightness-110 glow-accent transition-all"
         >
           <Plus size={14} />
           {t.gamesManage.addGame}
         </button>
-      </div>
+      </PageHeader>
 
       {isOpen && (
         <form onSubmit={handleSubmit} className="bg-surface border border-default rounded-xl p-5 space-y-4">

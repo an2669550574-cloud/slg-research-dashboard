@@ -10,6 +10,7 @@ import { Search, Download as DownloadIcon } from 'lucide-react'
 import { COUNTRIES, PLATFORMS, platformLabel, type Country, type Platform } from '../lib/markets'
 import { GameIcon } from '../components/GameIcon'
 import { QueryError } from '../components/QueryError'
+import { PageHeader } from '../components/PageHeader'
 import { useLocalStorageState } from '../lib/hooks'
 
 export default function Rankings() {
@@ -33,12 +34,8 @@ export default function Rankings() {
   )
 
   return (
-    <div className="p-4 sm:p-6 space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-primary">{t.rankings.title}</h1>
-          <p className="text-muted text-sm mt-0.5">{t.rankings.subtitle}</p>
-        </div>
+    <div className="px-4 sm:px-7 py-5 sm:py-7 max-w-[1500px] mx-auto space-y-5">
+      <PageHeader eyebrow="Live Board" title={t.rankings.title} subtitle={t.rankings.subtitle}>
         <button
           onClick={() => {
             if (filtered.length === 0) { toast.error(t.common.noExportData); return }
@@ -54,12 +51,12 @@ export default function Rankings() {
             ])
             toast.success(t.common.exported(filtered.length))
           }}
-          className="flex items-center gap-2 px-3 py-2 bg-elevated hover:bg-elevated/70 rounded-lg text-sm text-primary transition-colors"
+          className="flex items-center gap-2 px-3.5 py-2.5 rounded-lg font-data text-xs text-secondary border border-default hover:border-strong hover:text-primary bg-surface/60 transition-colors"
         >
           <DownloadIcon size={14} />
-          {t.common.export}
+          <span className="hidden sm:inline">{t.common.export}</span>
         </button>
-      </div>
+      </PageHeader>
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[180px] max-w-xs">
