@@ -1,72 +1,86 @@
-@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Archivo+Expanded:wght@600;700;800&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* 自托管字体：不依赖谷歌(境内常被墙/极慢)。Bricolage Grotesque=有个性的
+   展示字；JetBrains Mono=数据/标签的"终端"母题。中文走系统优质黑体回退。 */
+@font-face {
+  font-family: 'Bricolage Grotesque'; font-style: normal; font-weight: 700;
+  src: url('/fonts/bricolage-700.woff2') format('woff2'); font-display: swap;
+}
+@font-face {
+  font-family: 'Bricolage Grotesque'; font-style: normal; font-weight: 800;
+  src: url('/fonts/bricolage-800.woff2') format('woff2'); font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono'; font-style: normal; font-weight: 500;
+  src: url('/fonts/jbmono-500.woff2') format('woff2'); font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono'; font-style: normal; font-weight: 700;
+  src: url('/fonts/jbmono-700.woff2') format('woff2'); font-display: swap;
+}
+
 @layer base {
   :root {
-    /* 「情报终端」深色：分层近黑(微冷)、发丝可见描边、电光蓝主强调 + 信号琥珀点缀 */
-    --bg-base: 7 9 14;
-    --bg-surface: 14 17 25;
-    --bg-elevated: 22 27 38;
-    --border-default: 44 52 68;        /* 关键：不再与 elevated 同色，描边真的看得见 */
-    --border-strong: 64 74 94;
-    --text-primary: 240 243 250;
-    --text-secondary: 165 173 190;
-    --text-muted: 108 117 138;
-    --accent: 70 150 255;              /* 电光azure：主强调 */
+    /* 「情报终端」深色：更深的冷墨、可见发丝描边、电光azure主调 + 信号琥珀 */
+    --bg-base: 6 8 13;
+    --bg-surface: 13 16 23;
+    --bg-elevated: 20 25 35;
+    --border-default: 38 45 60;
+    --border-strong: 62 72 92;
+    --text-primary: 238 242 249;
+    --text-secondary: 158 167 186;
+    --text-muted: 99 108 128;
+    --accent: 74 153 255;
     --accent-contrast: 255 255 255;
-    --signal: 245 180 75;              /* 信号琥珀：仅用于"在线/活跃"等极少处 */
-    --scrollbar-track: 14 17 25;
+    --signal: 247 184 80;
+    --scrollbar-track: 13 16 23;
     --scrollbar-thumb: 44 52 68;
   }
 
   :root[data-theme="light"] {
-    --bg-base: 247 248 251;
+    --bg-base: 246 247 250;
     --bg-surface: 255 255 255;
-    --bg-elevated: 240 243 248;
-    --border-default: 218 224 233;
-    --border-strong: 194 202 215;
-    --text-primary: 17 22 34;
-    --text-secondary: 71 81 99;
-    --text-muted: 120 130 148;
-    --accent: 37 110 230;
+    --bg-elevated: 239 242 247;
+    --border-default: 216 222 232;
+    --border-strong: 190 199 213;
+    --text-primary: 16 21 33;
+    --text-secondary: 69 79 98;
+    --text-muted: 118 128 147;
+    --accent: 33 104 226;
     --accent-contrast: 255 255 255;
-    --signal: 196 124 20;
-    --scrollbar-track: 240 243 248;
+    --signal: 188 118 16;
+    --scrollbar-track: 239 242 247;
     --scrollbar-thumb: 203 213 225;
   }
 
   body {
     background-color: rgb(var(--bg-base));
     color: rgb(var(--text-primary));
-    font-family: 'Archivo', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+    font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
       'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', sans-serif;
-    font-feature-settings: 'cv11', 'ss01';
     @apply antialiased;
-    /* 氛围:极淡分层光晕 + 细网格,替代死黑平涂 */
+    /* 氛围:强调辉光 + 暗角 + 极淡 CRT 扫描线 + 细网格,层层叠出深度 */
     background-image:
-      radial-gradient(900px 500px at 78% -8%, rgb(var(--accent) / 0.10), transparent 70%),
-      radial-gradient(700px 600px at 0% 100%, rgb(var(--accent) / 0.05), transparent 60%),
-      linear-gradient(rgb(var(--border-default) / 0.18) 1px, transparent 1px),
-      linear-gradient(90deg, rgb(var(--border-default) / 0.18) 1px, transparent 1px);
-    background-size: 100% 100%, 100% 100%, 44px 44px, 44px 44px;
+      radial-gradient(1100px 620px at 82% -10%, rgb(var(--accent) / 0.13), transparent 68%),
+      radial-gradient(820px 700px at -6% 108%, rgb(var(--accent) / 0.06), transparent 60%),
+      radial-gradient(1200px 900px at 50% 50%, transparent 60%, rgb(0 0 0 / 0.45) 100%),
+      repeating-linear-gradient(0deg, rgb(255 255 255 / 0.014) 0 1px, transparent 1px 3px),
+      linear-gradient(rgb(var(--border-default) / 0.16) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(var(--border-default) / 0.16) 1px, transparent 1px);
+    background-size: 100% 100%, 100% 100%, 100% 100%, 100% 100%, 52px 52px, 52px 52px;
     background-attachment: fixed;
   }
-
   :root[data-theme="light"] body {
     background-image:
-      radial-gradient(900px 500px at 78% -8%, rgb(var(--accent) / 0.07), transparent 70%),
-      linear-gradient(rgb(var(--border-default) / 0.5) 1px, transparent 1px),
-      linear-gradient(90deg, rgb(var(--border-default) / 0.5) 1px, transparent 1px);
-    background-size: 100% 100%, 44px 44px, 44px 44px;
+      radial-gradient(1000px 560px at 82% -10%, rgb(var(--accent) / 0.07), transparent 66%),
+      linear-gradient(rgb(var(--border-default) / 0.45) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(var(--border-default) / 0.45) 1px, transparent 1px);
+    background-size: 100% 100%, 52px 52px, 52px 52px;
   }
 
-  /* 数字一律 tabular（数据工具的纪律） */
-  .tabular, table, .nums { font-variant-numeric: tabular-nums; }
-
-  ::-webkit-scrollbar { width: 7px; height: 7px; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-track { background-color: rgb(var(--scrollbar-track)); }
   ::-webkit-scrollbar-thumb {
     background-color: rgb(var(--scrollbar-thumb));
@@ -76,26 +90,68 @@
 }
 
 @layer utilities {
-  /* 字偶距更紧的展示标题（拉丁部分有个性，中文回退干净） */
+  /* 展示字:拉丁用 Bricolage(有个性),中文回退系统黑体 */
   .font-display {
-    font-family: 'Archivo Expanded', 'Archivo', ui-sans-serif, 'PingFang SC',
+    font-family: 'Bricolage Grotesque', ui-sans-serif, 'PingFang SC',
       'Microsoft YaHei', sans-serif;
-    letter-spacing: -0.01em;
+    letter-spacing: -0.02em;
   }
-  /* 命名避开 Tailwind 生成的 ring-accent(那是描边色)；这里是辉光 */
-  .glow-accent { box-shadow: 0 0 0 1px rgb(var(--accent) / 0.45), 0 8px 28px -8px rgb(var(--accent) / 0.5); }
+  /* 终端母题:数据/标签一律等宽 */
+  .font-data {
+    font-family: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
+    font-feature-settings: 'tnum' 1;
+  }
+  .eyebrow {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.28em;
+    font-size: 10px;
+  }
+  .glow-accent { box-shadow: 0 0 0 1px rgb(var(--accent) / 0.45), 0 10px 30px -10px rgb(var(--accent) / 0.55); }
 
-  /* 一次编排好的入场:错峰显现（skill: 高影响时刻 > 撒碎动效） */
-  @keyframes reveal {
-    from { opacity: 0; transform: translateY(10px); }
-    to   { opacity: 1; transform: translateY(0); }
+  /* HUD 角标:对角两个 L 形括号,侦察/情报母题 */
+  .hud { position: relative; }
+  .hud::before, .hud::after {
+    content: ''; position: absolute; width: 14px; height: 14px; pointer-events: none;
+    border-color: rgb(var(--border-strong)); transition: border-color 0.2s;
   }
-  .reveal { opacity: 0; animation: reveal 0.5s cubic-bezier(0.16,1,0.3,1) forwards; }
-  .reveal-1 { animation-delay: 0.04s; }
-  .reveal-2 { animation-delay: 0.10s; }
-  .reveal-3 { animation-delay: 0.16s; }
-  .reveal-4 { animation-delay: 0.22s; }
+  .hud::before { top: -1px; left: -1px; border-top: 1.5px solid; border-left: 1.5px solid; }
+  .hud::after { bottom: -1px; right: -1px; border-bottom: 1.5px solid; border-right: 1.5px solid; }
+  .group:hover .hud::before, .group:hover .hud::after { border-color: rgb(var(--accent)); }
+
+  /* 顶部扫描分隔线:一次高影响的强调扫光 */
+  .scan-rule {
+    height: 1px; width: 100%;
+    background: linear-gradient(90deg, transparent, rgb(var(--border-strong)) 12%,
+      rgb(var(--border-strong)) 88%, transparent);
+    position: relative; overflow: hidden;
+  }
+  .scan-rule::after {
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent, rgb(var(--accent) / 0.9), transparent);
+    width: 34%; transform: translateX(-120%);
+    animation: scan 4.2s cubic-bezier(0.5,0,0.5,1) 0.6s infinite;
+  }
+  @keyframes scan { 0% { transform: translateX(-120%) } 55%,100% { transform: translateX(360%) } }
+
+  @keyframes reveal {
+    from { opacity: 0; transform: translateY(12px) scale(0.985); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .reveal { opacity: 0; animation: reveal 0.55s cubic-bezier(0.16,1,0.3,1) forwards; }
+  .reveal-1 { animation-delay: 0.05s; }
+  .reveal-2 { animation-delay: 0.12s; }
+  .reveal-3 { animation-delay: 0.20s; }
+  .reveal-4 { animation-delay: 0.28s; }
+
+  @keyframes pulse-dot {
+    0%,100% { opacity: 1; box-shadow: 0 0 0 0 rgb(var(--signal) / 0.6); }
+    50% { opacity: 0.6; box-shadow: 0 0 0 5px rgb(var(--signal) / 0); }
+  }
+  .pulse-dot { animation: pulse-dot 2.4s ease-in-out infinite; }
+
   @media (prefers-reduced-motion: reduce) {
-    .reveal { animation: none; opacity: 1; }
+    .reveal, .scan-rule::after, .pulse-dot { animation: none; opacity: 1; }
+    .reveal { transform: none; }
   }
 }

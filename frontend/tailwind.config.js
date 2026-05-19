@@ -16,9 +16,6 @@ export default {
         accent: 'rgb(var(--accent) / <alpha-value>)',
         signal: 'rgb(var(--signal) / <alpha-value>)',
       },
-      fontFamily: {
-        display: ['"Archivo Expanded"', '"Archivo"', 'ui-sans-serif', 'sans-serif'],
-      },
       boxShadow: {
         card: '0 1px 0 0 rgb(255 255 255 / 0.03) inset, 0 8px 24px -12px rgb(0 0 0 / 0.6)',
         pop: '0 16px 40px -12px rgb(0 0 0 / 0.7)',

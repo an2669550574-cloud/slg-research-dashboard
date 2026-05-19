@@ -8,7 +8,8 @@ function readInitial(): Theme {
   if (typeof window === 'undefined') return 'dark'
   const stored = window.localStorage.getItem(STORAGE_KEY)
   if (stored === 'light' || stored === 'dark') return stored
-  return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+  // 暗色优先设计：未显式选择一律暗色（不跟随系统亮色偏好，否则首因印象就弱）
+  return 'dark'
 }
 
 function applyTheme(theme: Theme) {
