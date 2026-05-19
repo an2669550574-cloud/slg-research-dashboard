@@ -1,41 +1,101 @@
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Archivo+Expanded:wght@600;700;800&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   :root {
-    --bg-base: 3 7 18;
-    --bg-surface: 17 24 39;
-    --bg-elevated: 31 41 55;
-    --border-default: 31 41 55;
-    --text-primary: 249 250 251;
-    --text-secondary: 209 213 219;
-    --text-muted: 107 114 128;
-    --scrollbar-track: 17 24 39;
-    --scrollbar-thumb: 55 65 81;
+    /* 「情报终端」深色：分层近黑(微冷)、发丝可见描边、电光蓝主强调 + 信号琥珀点缀 */
+    --bg-base: 7 9 14;
+    --bg-surface: 14 17 25;
+    --bg-elevated: 22 27 38;
+    --border-default: 44 52 68;        /* 关键：不再与 elevated 同色，描边真的看得见 */
+    --border-strong: 64 74 94;
+    --text-primary: 240 243 250;
+    --text-secondary: 165 173 190;
+    --text-muted: 108 117 138;
+    --accent: 70 150 255;              /* 电光azure：主强调 */
+    --accent-contrast: 255 255 255;
+    --signal: 245 180 75;              /* 信号琥珀：仅用于"在线/活跃"等极少处 */
+    --scrollbar-track: 14 17 25;
+    --scrollbar-thumb: 44 52 68;
   }
 
   :root[data-theme="light"] {
-    --bg-base: 248 250 252;
+    --bg-base: 247 248 251;
     --bg-surface: 255 255 255;
-    --bg-elevated: 241 245 249;
-    --border-default: 226 232 240;
-    --text-primary: 15 23 42;
-    --text-secondary: 51 65 85;
-    --text-muted: 100 116 139;
-    --scrollbar-track: 241 245 249;
+    --bg-elevated: 240 243 248;
+    --border-default: 218 224 233;
+    --border-strong: 194 202 215;
+    --text-primary: 17 22 34;
+    --text-secondary: 71 81 99;
+    --text-muted: 120 130 148;
+    --accent: 37 110 230;
+    --accent-contrast: 255 255 255;
+    --signal: 196 124 20;
+    --scrollbar-track: 240 243 248;
     --scrollbar-thumb: 203 213 225;
   }
 
   body {
     background-color: rgb(var(--bg-base));
     color: rgb(var(--text-primary));
+    font-family: 'Archivo', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+      'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', sans-serif;
+    font-feature-settings: 'cv11', 'ss01';
     @apply antialiased;
+    /* 氛围:极淡分层光晕 + 细网格,替代死黑平涂 */
+    background-image:
+      radial-gradient(900px 500px at 78% -8%, rgb(var(--accent) / 0.10), transparent 70%),
+      radial-gradient(700px 600px at 0% 100%, rgb(var(--accent) / 0.05), transparent 60%),
+      linear-gradient(rgb(var(--border-default) / 0.18) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(var(--border-default) / 0.18) 1px, transparent 1px);
+    background-size: 100% 100%, 100% 100%, 44px 44px, 44px 44px;
+    background-attachment: fixed;
   }
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
+
+  :root[data-theme="light"] body {
+    background-image:
+      radial-gradient(900px 500px at 78% -8%, rgb(var(--accent) / 0.07), transparent 70%),
+      linear-gradient(rgb(var(--border-default) / 0.5) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(var(--border-default) / 0.5) 1px, transparent 1px);
+    background-size: 100% 100%, 44px 44px, 44px 44px;
+  }
+
+  /* 数字一律 tabular（数据工具的纪律） */
+  .tabular, table, .nums { font-variant-numeric: tabular-nums; }
+
+  ::-webkit-scrollbar { width: 7px; height: 7px; }
   ::-webkit-scrollbar-track { background-color: rgb(var(--scrollbar-track)); }
   ::-webkit-scrollbar-thumb {
     background-color: rgb(var(--scrollbar-thumb));
     @apply rounded-full;
+    border: 2px solid rgb(var(--bg-base));
+  }
+}
+
+@layer utilities {
+  /* 字偶距更紧的展示标题（拉丁部分有个性，中文回退干净） */
+  .font-display {
+    font-family: 'Archivo Expanded', 'Archivo', ui-sans-serif, 'PingFang SC',
+      'Microsoft YaHei', sans-serif;
+    letter-spacing: -0.01em;
+  }
+  /* 命名避开 Tailwind 生成的 ring-accent(那是描边色)；这里是辉光 */
+  .glow-accent { box-shadow: 0 0 0 1px rgb(var(--accent) / 0.45), 0 8px 28px -8px rgb(var(--accent) / 0.5); }
+
+  /* 一次编排好的入场:错峰显现（skill: 高影响时刻 > 撒碎动效） */
+  @keyframes reveal {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .reveal { opacity: 0; animation: reveal 0.5s cubic-bezier(0.16,1,0.3,1) forwards; }
+  .reveal-1 { animation-delay: 0.04s; }
+  .reveal-2 { animation-delay: 0.10s; }
+  .reveal-3 { animation-delay: 0.16s; }
+  .reveal-4 { animation-delay: 0.22s; }
+  @media (prefers-reduced-motion: reduce) {
+    .reveal { animation: none; opacity: 1; }
   }
 }
