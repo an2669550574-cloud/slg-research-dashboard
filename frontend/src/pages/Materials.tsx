@@ -5,6 +5,7 @@ import { materialsApi, gamesApi } from '../lib/api'
 import { PLATFORM_CONFIG } from '../lib/utils'
 import { ExternalLink, Trash2, Plus, Search, Download as DownloadIcon, Upload } from 'lucide-react'
 import { MaterialPreview } from '../components/MaterialPreview'
+import { Select } from '../components/Select'
 import { useNavigate } from 'react-router-dom'
 import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
@@ -153,67 +154,76 @@ export default function Materials() {
       </div>
 
       {showForm && (
-        <form onSubmit={handleSubmit} className="bg-surface border border-default rounded-xl p-5 space-y-3">
-          <h3 className="text-sm font-semibold text-primary mb-3">{t.materials.addMaterialFormTitle}</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <input required placeholder={t.materials.titlePlaceholder} value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
-              className={`col-span-2 ${inputClass}`} />
-            <div className="col-span-2 flex gap-1 bg-elevated rounded-lg p-1 w-fit">
-              {(['link', 'upload'] as const).map(md => (
-                <button type="button" key={md} onClick={() => setMode(md)}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${mode === md ? 'bg-brand-600 text-white' : 'text-secondary hover:text-primary'}`}>
-                  {md === 'link' ? t.materials.sourceLink : t.materials.sourceUpload}
-                </button>
-              ))}
-            </div>
-            {mode === 'link' ? (
-              <input required placeholder={t.materials.urlPlaceholder} value={form.url} onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
-                className={`col-span-2 ${inputClass}`} />
-            ) : (
-              <div className="col-span-2 space-y-2">
-                <label className="flex items-center gap-2 px-3 py-2 bg-elevated border border-dashed border-default rounded-lg text-sm text-secondary cursor-pointer hover:text-primary">
-                  <Upload size={14} className="shrink-0" />
-                  <span className="truncate">
-                    {file ? `${file.name} (${(file.size / 1048576).toFixed(1)}MB)` : t.materials.chooseFile}
-                  </span>
-                  <input type="file" accept={ACCEPT} className="hidden"
-                    onChange={e => {
-                      const f = e.target.files?.[0] ?? null
-                      if (f && f.size > MAX_UPLOAD) { toast.error(t.materials.fileTooLarge(200)); return }
-                      setFile(f)
-                      if (f && !form.title) setForm(s => ({ ...s, title: f.name.replace(/\.[^.]+$/, '') }))
-                    }} />
-                </label>
-                <div className="text-xs text-muted">{t.materials.maxHint}</div>
-                {uploadMut.isPending && (
-                  <div className="h-1.5 bg-elevated rounded overflow-hidden">
-                    <div className="h-full bg-brand-600 transition-all" style={{ width: `${progress}%` }} />
-                  </div>
-                )}
-              </div>
-            )}
-            <select value={form.app_id} onChange={e => setForm(f => ({ ...f, app_id: e.target.value }))} className={inputClass}>
-              <option value="">{t.materials.selectGame}</option>
-              {allGames.map(g => <option key={g.app_id} value={g.app_id}>{g.name}</option>)}
-            </select>
-            <select value={form.platform} onChange={e => setForm(f => ({ ...f, platform: e.target.value }))} className={inputClass}>
-              <option value="youtube">YouTube</option>
-              <option value="tiktok">TikTok</option>
-              <option value="meta">Meta Ads</option>
-              <option value="other">{t.materials.platforms.other}</option>
-            </select>
-            <select value={form.material_type} onChange={e => setForm(f => ({ ...f, material_type: e.target.value }))} className={inputClass}>
-              <option value="video">{t.materials.types.video}</option>
-              <option value="image">{t.materials.types.image}</option>
-              <option value="playable">{t.materials.types.playable}</option>
-            </select>
-            <input placeholder={t.materials.tagsPlaceholder} value={form.tags} onChange={e => setForm(f => ({ ...f, tags: e.target.value }))} className={inputClass} />
-            <input placeholder={t.materials.notesPlaceholder} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className={inputClass} />
+        <form onSubmit={handleSubmit} className="bg-surface border border-default rounded-xl p-5 sm:p-6 space-y-4">
+          <h3 className="text-sm font-semibold text-primary">{t.materials.addMaterialFormTitle}</h3>
+
+          <input required placeholder={t.materials.titlePlaceholder} value={form.title}
+            onChange={e => setForm(f => ({ ...f, title: e.target.value }))} className={`w-full ${inputClass}`} />
+
+          <div className="inline-flex gap-1 bg-elevated rounded-lg p-1">
+            {(['link', 'upload'] as const).map(md => (
+              <button type="button" key={md} onClick={() => setMode(md)}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${mode === md ? 'bg-brand-600 text-white' : 'text-secondary hover:text-primary'}`}>
+                {md === 'link' ? t.materials.sourceLink : t.materials.sourceUpload}
+              </button>
+            ))}
           </div>
-          <div className="flex justify-end gap-2 pt-1">
-            <button type="button" onClick={() => { setShowForm(false); setFile(null); setMode('link') }} className="px-3 py-1.5 text-sm text-secondary hover:text-primary">{t.common.cancel}</button>
+
+          {mode === 'link' ? (
+            <input required placeholder={t.materials.urlPlaceholder} value={form.url}
+              onChange={e => setForm(f => ({ ...f, url: e.target.value }))} className={`w-full ${inputClass}`} />
+          ) : (
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 px-3 py-3 bg-elevated border border-dashed border-default rounded-lg text-sm text-secondary cursor-pointer hover:text-primary hover:border-brand-500 transition-colors">
+                <Upload size={16} className="shrink-0" />
+                <span className="truncate">
+                  {file ? `${file.name} (${(file.size / 1048576).toFixed(1)}MB)` : t.materials.chooseFile}
+                </span>
+                <input type="file" accept={ACCEPT} className="hidden"
+                  onChange={e => {
+                    const f = e.target.files?.[0] ?? null
+                    if (f && f.size > MAX_UPLOAD) { toast.error(t.materials.fileTooLarge(200)); return }
+                    setFile(f)
+                    if (f && !form.title) setForm(s => ({ ...s, title: f.name.replace(/\.[^.]+$/, '') }))
+                  }} />
+              </label>
+              <div className="text-xs text-muted">{t.materials.maxHint}</div>
+              {uploadMut.isPending && (
+                <div className="space-y-1">
+                  <div className="h-1.5 bg-elevated rounded-full overflow-hidden">
+                    <div className="h-full bg-brand-600 transition-all duration-300" style={{ width: `${progress}%` }} />
+                  </div>
+                  <div className="text-xs text-muted text-right tabular-nums">{t.materials.uploading} {progress}%</div>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Select aria-label={t.materials.selectGame} value={form.app_id}
+              onChange={v => setForm(f => ({ ...f, app_id: v }))}
+              options={[{ value: '', label: t.materials.selectGame },
+                ...allGames.map(g => ({ value: g.app_id, label: g.name }))]} />
+            <Select value={form.platform}
+              onChange={v => setForm(f => ({ ...f, platform: v }))}
+              options={[{ value: 'youtube', label: 'YouTube' }, { value: 'tiktok', label: 'TikTok' },
+                { value: 'meta', label: 'Meta Ads' }, { value: 'other', label: t.materials.platforms.other }]} />
+            <Select value={form.material_type}
+              onChange={v => setForm(f => ({ ...f, material_type: v }))}
+              options={[{ value: 'video', label: t.materials.types.video },
+                { value: 'image', label: t.materials.types.image },
+                { value: 'playable', label: t.materials.types.playable }]} />
+            <input placeholder={t.materials.tagsPlaceholder} value={form.tags}
+              onChange={e => setForm(f => ({ ...f, tags: e.target.value }))} className={inputClass} />
+          </div>
+          <input placeholder={t.materials.notesPlaceholder} value={form.notes}
+            onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className={`w-full ${inputClass}`} />
+
+          <div className="flex justify-end gap-2 border-t border-default/60 mt-1 pt-4">
+            <button type="button" onClick={() => { setShowForm(false); setFile(null); setMode('link') }}
+              className="px-4 py-2 text-sm text-secondary hover:text-primary transition-colors">{t.common.cancel}</button>
             <button type="submit" disabled={createMut.isPending || uploadMut.isPending}
-              className="px-4 py-1.5 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 rounded-lg text-sm text-white transition-colors">
+              className="px-5 py-2 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 rounded-lg text-sm font-medium text-white transition-colors">
               {uploadMut.isPending ? `${t.materials.uploading} ${progress}%`
                 : createMut.isPending ? t.common.saving : t.common.save}
             </button>

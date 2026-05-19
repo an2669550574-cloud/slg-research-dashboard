@@ -12,6 +12,7 @@
     "gen:types": "python ../backend/scripts/dump_openapi.py ../backend/openapi.json && openapi-typescript ../backend/openapi.json -o src/lib/types.gen.ts"
   },
   "dependencies": {
+    "@headlessui/react": "^2.2.10",
     "@tanstack/react-query": "^5.40.0",
     "axios": "^1.7.2",
     "clsx": "^2.1.1",
