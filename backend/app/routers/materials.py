@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, text
 from typing import Optional, Literal
 from urllib.parse import quote
 from app.database import get_db
 from app.models.material import Material
-from app.schemas import MaterialCreate, MaterialUpdate, MaterialOut
+from app.schemas import MaterialCreate, MaterialUpdate, MaterialOut, MaterialTagCount
 from app.services import media
 
 router = APIRouter(prefix="/api/materials", tags=["materials"])
@@ -33,6 +33,7 @@ async def list_materials(
     app_id: Optional[str] = None,
     platform: Optional[str] = None,
     material_type: Optional[str] = None,
+    tag: Optional[str] = Query(None, description="精确匹配某个标签（素材 tags 含该标签）"),
     q: Optional[str] = Query(None, description="模糊匹配 title 或 notes"),
     sort_by: Literal["created_at", "title"] = "created_at",
     order: Literal["asc", "desc"] = "desc",
@@ -46,6 +47,16 @@ async def list_materials(
         base = base.where(Material.platform == platform)
     if material_type:
         base = base.where(Material.material_type == material_type)
+    if tag:
+        # tags 是 JSON 数组；用 SQLite JSON1 的 json_each 做"数组含某值"判定。
+        # json_valid 兜空/脏数据，避免 json_each(NULL) 报错。
+        base = base.where(
+            text(
+                "json_valid(materials.tags) AND EXISTS ("
+                "SELECT 1 FROM json_each(materials.tags) "
+                "WHERE json_each.value = :tag)"
+            ).bindparams(tag=tag)
+        )
     if q:
         like = f"%{q}%"
         base = base.where((Material.title.ilike(like)) | (Material.notes.ilike(like)))
@@ -58,6 +69,27 @@ async def list_materials(
     base = base.limit(limit).offset(offset)
     result = await db.execute(base)
     return [_to_out(m) for m in result.scalars().all()]
+
+
+@router.get("/tags", response_model=list[MaterialTagCount])
+async def list_material_tags(
+    db: AsyncSession = Depends(get_db),
+    app_id: Optional[str] = None,
+):
+    """全部标签 + 各自素材数，按热度降序。供前端标签筛选栏用——
+    纯本地 SQLite 聚合，零 Sensor Tower 配额。"""
+    sql = (
+        "SELECT je.value AS tag, COUNT(*) AS n "
+        "FROM materials, json_each(materials.tags) je "
+        "WHERE json_valid(materials.tags)"
+    )
+    params: dict = {}
+    if app_id:
+        sql += " AND materials.app_id = :app_id"
+        params["app_id"] = app_id
+    sql += " GROUP BY je.value ORDER BY n DESC, je.value ASC"
+    rows = (await db.execute(text(sql), params)).all()
+    return [MaterialTagCount(tag=r[0], count=r[1]) for r in rows]
 
 
 @router.post("/", response_model=MaterialOut, status_code=201)

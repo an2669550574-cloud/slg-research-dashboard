@@ -107,6 +107,37 @@ export const zh = {
     fileTooLarge: (mb: number) => `文件超过 ${mb}MB 上限`,
     platforms: { all: '全部', youtube: 'YouTube', tiktok: 'TikTok', meta: 'Meta Ads', other: '其他' },
     types: { video: '视频', image: '图片', playable: '试玩广告' },
+    // 编辑
+    editMaterial: '编辑素材',
+    editFormTitle: '编辑素材信息',
+    savedToast: '已保存修改',
+    saveFailed: '保存失败',
+    fileNotEditable: '已上传的文件本身不可替换，只能改下方信息',
+    // 批量上传
+    chooseFiles: '选择文件（可多选）…',
+    filesSelected: (n: number) => `已选 ${n} 个文件`,
+    batchHint: '可一次选多个文件批量上传，标题自动取文件名',
+    batchTitleNote: '批量上传时标题按各自文件名生成',
+    queuePending: '等待',
+    queueUploading: '上传中',
+    queueDone: '完成',
+    queueFailed: '失败',
+    batchResult: (ok: number, fail: number) =>
+      fail ? `${ok} 个成功，${fail} 个失败` : `${ok} 个全部成功`,
+    addBatch: (n: number) => `上传 ${n} 个文件`,
+    // 标签筛选栏
+    tagFilterLabel: '标签',
+    tagFilterAll: '全部',
+    noTags: '暂无标签',
+    clearTag: '清除标签筛选',
+    // 类型 / 游戏 / 排序
+    typeFilterAll: '全部类型',
+    gameFilterAll: '全部游戏',
+    sortLabel: '排序',
+    sortNewest: '最新优先',
+    sortOldest: '最早优先',
+    sortTitleAz: '标题 A→Z',
+    sortTitleZa: '标题 Z→A',
   },
   gameDetail: {
     timelineTitle: '发展历程',

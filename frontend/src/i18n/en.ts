@@ -109,6 +109,37 @@ export const en: Translations = {
     fileTooLarge: (mb: number) => `File exceeds ${mb}MB limit`,
     platforms: { all: 'All', youtube: 'YouTube', tiktok: 'TikTok', meta: 'Meta Ads', other: 'Other' },
     types: { video: 'Video', image: 'Image', playable: 'Playable' },
+    // edit
+    editMaterial: 'Edit material',
+    editFormTitle: 'Edit material',
+    savedToast: 'Changes saved',
+    saveFailed: 'Save failed',
+    fileNotEditable: 'The uploaded file itself cannot be replaced — only the fields below',
+    // batch upload
+    chooseFiles: 'Choose files (multiple)…',
+    filesSelected: (n: number) => `${n} file${n === 1 ? '' : 's'} selected`,
+    batchHint: 'Pick multiple files to upload at once — title taken from each filename',
+    batchTitleNote: 'In batch mode each title is derived from its filename',
+    queuePending: 'Queued',
+    queueUploading: 'Uploading',
+    queueDone: 'Done',
+    queueFailed: 'Failed',
+    batchResult: (ok: number, fail: number) =>
+      fail ? `${ok} succeeded, ${fail} failed` : `All ${ok} succeeded`,
+    addBatch: (n: number) => `Upload ${n} file${n === 1 ? '' : 's'}`,
+    // tag filter bar
+    tagFilterLabel: 'Tags',
+    tagFilterAll: 'All',
+    noTags: 'No tags yet',
+    clearTag: 'Clear tag filter',
+    // type / game / sort
+    typeFilterAll: 'All types',
+    gameFilterAll: 'All games',
+    sortLabel: 'Sort',
+    sortNewest: 'Newest first',
+    sortOldest: 'Oldest first',
+    sortTitleAz: 'Title A→Z',
+    sortTitleZa: 'Title Z→A',
   },
   gameDetail: {
     timelineTitle: 'Timeline',

@@ -119,7 +119,14 @@ export interface MaterialCreate {
   notes?: string | null
 }
 
-export type MaterialUpdate = Partial<Omit<MaterialCreate, 'app_id'>>
+// app_id 可改：把已有素材重新归类到游戏（空串 = 取消关联）。
+export type MaterialUpdate = Partial<MaterialCreate>
+
+/** GET /materials/tags：标签 + 该标签下素材数，热度降序。 */
+export interface MaterialTagCount {
+  tag: string
+  count: number
+}
 
 // ─── quota ───────────────────────────────────────────────────────────────
 

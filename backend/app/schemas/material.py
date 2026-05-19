@@ -15,12 +15,19 @@ class MaterialCreate(BaseModel):
 
 
 class MaterialUpdate(BaseModel):
+    # app_id 可改：用于给已有素材重新归类到游戏（空串 = 取消关联）。
+    app_id: Optional[str] = None
     title: Optional[str] = None
     url: Optional[str] = None
     platform: Optional[str] = None
     material_type: Optional[str] = None
     tags: Optional[list[str]] = None
     notes: Optional[str] = None
+
+
+class MaterialTagCount(BaseModel):
+    tag: str
+    count: int
 
 
 class MaterialOut(BaseModel):

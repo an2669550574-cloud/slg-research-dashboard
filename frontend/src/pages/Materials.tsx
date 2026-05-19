@@ -1,9 +1,9 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { materialsApi, gamesApi } from '../lib/api'
 import { PLATFORM_CONFIG } from '../lib/utils'
-import { ExternalLink, Trash2, Plus, Search, Download as DownloadIcon, Upload, Film as FilmIcon, Radio } from 'lucide-react'
+import { ExternalLink, Trash2, Plus, Search, Download as DownloadIcon, Upload, Film as FilmIcon, Radio, Pencil, X, Check, AlertCircle, Loader2, Tag as TagIcon } from 'lucide-react'
 import { MaterialPreview } from '../components/MaterialPreview'
 import { Select } from '../components/Select'
 import { PageHeader } from '../components/PageHeader'
@@ -18,9 +18,18 @@ import type { MaterialOut } from '../lib/types'
 const PAGE_SIZE = 12
 const MAX_UPLOAD = 200 * 1024 * 1024
 const ACCEPT = '.mp4,.webm,.mov,.m4v,.jpg,.jpeg,.png,.gif,.webp'
+const IMG_EXT = /\.(jpe?g|png|gif|webp)$/i
+// 后端按扩展名判 kind 并对 material_type 不符回 400；前端用同一套规则推断，避免误报。
+const inferType = (name: string) => (IMG_EXT.test(name) ? 'image' : 'video')
+const stem = (name: string) => name.replace(/\.[^.]+$/, '')
 
 const inputClass =
   "w-full bg-elevated/60 border border-default rounded-lg px-3 py-2.5 text-sm text-primary placeholder:text-muted focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-colors"
+
+type QStatus = 'pending' | 'uploading' | 'done' | 'error'
+interface QItem { name: string; status: QStatus; pct: number; error?: string }
+
+const emptyForm = { title: '', url: '', app_id: '', platform: 'youtube', material_type: 'video', tags: '', notes: '' }
 
 export default function Materials() {
   const navigate = useNavigate()
@@ -28,22 +37,35 @@ export default function Materials() {
   const qc = useQueryClient()
   const [search, setSearch] = useState('')
   const [filterPlatform, setFilterPlatform] = useState('')
+  const [filterType, setFilterType] = useState('')
+  const [filterGame, setFilterGame] = useState('')
+  const [filterTag, setFilterTag] = useState('')
+  const [sort, setSort] = useState('created_at:desc')
   const [offset, setOffset] = useState(0)
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ title: '', url: '', app_id: '', platform: 'youtube', material_type: 'video', tags: '', notes: '' })
+  const [form, setForm] = useState(emptyForm)
   const [mode, setMode] = useState<'link' | 'upload'>('link')
-  const [file, setFile] = useState<File | null>(null)
-  const [progress, setProgress] = useState(0)
+  const [editing, setEditing] = useState<MaterialOut | null>(null)
+  const [files, setFiles] = useState<File[]>([])
+  const [queue, setQueue] = useState<QItem[]>([])
+  const [busy, setBusy] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const debouncedSearch = useDebouncedValue(search)
 
-  useEffect(() => { setOffset(0) }, [debouncedSearch, filterPlatform])
+  const [sortBy, order] = sort.split(':') as ['created_at' | 'title', 'asc' | 'desc']
+
+  useEffect(() => { setOffset(0) }, [debouncedSearch, filterPlatform, filterType, filterGame, filterTag, sort])
 
   const { data: paged, isLoading, isError, refetch } = useQuery({
-    queryKey: ['materials', debouncedSearch, filterPlatform, offset],
+    queryKey: ['materials', debouncedSearch, filterPlatform, filterType, filterGame, filterTag, sort, offset],
     queryFn: () => materialsApi.listPaged({
       limit: PAGE_SIZE, offset,
       q: debouncedSearch || undefined,
       platform: filterPlatform || undefined,
+      material_type: filterType || undefined,
+      app_id: filterGame || undefined,
+      tag: filterTag || undefined,
+      sort_by: sortBy, order,
     }),
     placeholderData: keepPreviousData,
   })
@@ -57,21 +79,40 @@ export default function Materials() {
     queryFn: () => gamesApi.list({ limit: 200 }),
   })
 
-  const resetForm = () => {
-    setShowForm(false)
-    setForm({ title: '', url: '', app_id: '', platform: 'youtube', material_type: 'video', tags: '', notes: '' })
-    setMode('link'); setFile(null); setProgress(0)
-    qc.invalidateQueries({ queryKey: ['materials'] })
-    toast.success(t.materials.addedToast)
+  // 标签栏跟随"按游戏筛选"联动：选了某游戏只列该游戏的标签。零 ST 配额。
+  const { data: tagCounts = [] } = useQuery({
+    queryKey: ['materialTags', filterGame],
+    queryFn: () => materialsApi.tags(filterGame || undefined),
+  })
+
+  const closeForm = () => {
+    setShowForm(false); setEditing(null)
+    setForm(emptyForm); setMode('link'); setFiles([]); setQueue([])
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }
-  const createMut = useMutation({ mutationFn: (data: any) => materialsApi.create(data), onSuccess: resetForm })
-  const uploadMut = useMutation({
-    mutationFn: (fd: FormData) => materialsApi.upload(fd, setProgress),
-    onSuccess: resetForm, onError: () => setProgress(0),
+  const afterMutate = (msg: string) => {
+    closeForm()
+    qc.invalidateQueries({ queryKey: ['materials'] })
+    qc.invalidateQueries({ queryKey: ['materialTags'] })
+    toast.success(msg)
+  }
+
+  const createMut = useMutation({
+    mutationFn: (data: any) => materialsApi.create(data),
+    onSuccess: () => afterMutate(t.materials.addedToast),
+  })
+  const updateMut = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: any }) => materialsApi.update(id, data),
+    onSuccess: () => afterMutate(t.materials.savedToast),
+    onError: () => toast.error(t.materials.saveFailed),
   })
   const deleteMut = useMutation({
     mutationFn: (id: number) => materialsApi.delete(id),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['materials'] }); toast.success(t.materials.deletedToast) },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['materials'] })
+      qc.invalidateQueries({ queryKey: ['materialTags'] })
+      toast.success(t.materials.deletedToast)
+    },
   })
 
   const gameMap = useMemo(() => Object.fromEntries(allGames.map(g => [g.app_id, g])), [allGames])
@@ -79,21 +120,73 @@ export default function Materials() {
   const platLabel = (p: string) =>
     t.materials.platforms[p as keyof typeof t.materials.platforms] || PLATFORM_CONFIG[p]?.label || p
 
+  const openEdit = (m: MaterialOut) => {
+    setEditing(m)
+    setMode(m.source === 'upload' ? 'upload' : 'link')
+    setForm({
+      title: m.title, url: m.url ?? '', app_id: m.app_id,
+      platform: m.platform ?? 'other', material_type: m.material_type,
+      tags: m.tags.join(', '), notes: m.notes ?? '',
+    })
+    setFiles([]); setQueue([]); setShowForm(true)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  // 批量上传：前端串行调用现有 /upload。每个文件独立进度/成败，
+  // 部分失败不影响其余；大文件(≤200MB)逐个走，比单请求收一堆稳。
+  const runBatch = async () => {
+    const tags = form.tags ? form.tags.split(',').map(s => s.trim()).filter(Boolean) : []
+    const list = files
+    setQueue(list.map(f => ({ name: f.name, status: 'pending', pct: 0 })))
+    setBusy(true)
+    let ok = 0
+    for (let i = 0; i < list.length; i++) {
+      const f = list[i]
+      setQueue(q => q.map((it, idx) => idx === i ? { ...it, status: 'uploading' } : it))
+      const fd = new FormData()
+      fd.append('file', f)
+      fd.append('title', list.length === 1 && form.title ? form.title : stem(f.name))
+      fd.append('app_id', form.app_id)
+      fd.append('platform', form.platform)
+      fd.append('material_type', inferType(f.name))
+      fd.append('tags', tags.join(','))
+      if (form.notes) fd.append('notes', form.notes)
+      try {
+        await materialsApi.upload(fd, pct =>
+          setQueue(q => q.map((it, idx) => idx === i ? { ...it, pct } : it)))
+        ok++
+        setQueue(q => q.map((it, idx) => idx === i ? { ...it, status: 'done', pct: 100 } : it))
+      } catch (e: any) {
+        const msg = e?.response?.data?.detail || e?.message || 'error'
+        setQueue(q => q.map((it, idx) => idx === i ? { ...it, status: 'error', error: String(msg) } : it))
+      }
+    }
+    setBusy(false)
+    qc.invalidateQueries({ queryKey: ['materials'] })
+    qc.invalidateQueries({ queryKey: ['materialTags'] })
+    const fail = list.length - ok
+    if (fail === 0) { closeForm(); toast.success(t.materials.batchResult(ok, 0)) }
+    else toast.error(t.materials.batchResult(ok, fail))
+  }
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    const tags = form.tags ? form.tags.split(',').map((s: string) => s.trim()) : []
+    const tags = form.tags ? form.tags.split(',').map(s => s.trim()).filter(Boolean) : []
+
+    if (editing) {
+      const data: any = {
+        title: form.title, app_id: form.app_id, platform: form.platform,
+        material_type: form.material_type, tags, notes: form.notes,
+      }
+      if (editing.source === 'link') data.url = form.url
+      updateMut.mutate({ id: editing.id, data })
+      return
+    }
     if (mode === 'link') { createMut.mutate({ ...form, tags }); return }
-    if (!file) { toast.error(t.materials.chooseFile); return }
-    if (file.size > MAX_UPLOAD) { toast.error(t.materials.fileTooLarge(200)); return }
-    const fd = new FormData()
-    fd.append('file', file)
-    fd.append('title', form.title)
-    fd.append('app_id', form.app_id)
-    fd.append('platform', form.platform)
-    fd.append('material_type', form.material_type)
-    fd.append('tags', tags.join(','))
-    if (form.notes) fd.append('notes', form.notes)
-    uploadMut.mutate(fd)
+    if (files.length === 0) { toast.error(t.materials.chooseFile); return }
+    const tooBig = files.find(f => f.size > MAX_UPLOAD)
+    if (tooBig) { toast.error(t.materials.fileTooLarge(200)); return }
+    runBatch()
   }
 
   const exportCsv = async () => {
@@ -102,6 +195,10 @@ export default function Materials() {
       limit: 200, offset: 0,
       q: debouncedSearch || undefined,
       platform: filterPlatform || undefined,
+      material_type: filterType || undefined,
+      app_id: filterGame || undefined,
+      tag: filterTag || undefined,
+      sort_by: sortBy, order,
     }).catch(() => null)
     if (!all || all.items.length === 0) { toast.error(t.common.noExportData); return }
     const date = new Date().toISOString().slice(0, 10)
@@ -119,6 +216,12 @@ export default function Materials() {
   }
 
   const PLATFORM_TABS = ['', 'youtube', 'tiktok', 'meta', 'other']
+  const sortOptions = [
+    { value: 'created_at:desc', label: t.materials.sortNewest },
+    { value: 'created_at:asc', label: t.materials.sortOldest },
+    { value: 'title:asc', label: t.materials.sortTitleAz },
+    { value: 'title:desc', label: t.materials.sortTitleZa },
+  ]
 
   const AssetCard = ({ m, n }: { m: MaterialOut; n: number }) => {
     const platCfg = (m.platform && PLATFORM_CONFIG[m.platform]) || PLATFORM_CONFIG.other
@@ -135,12 +238,18 @@ export default function Materials() {
         <span className="absolute top-3 left-3 text-[11px] px-2 py-0.5 rounded bg-base/75 backdrop-blur-sm text-secondary border border-default">
           {m.platform ? platLabel(m.platform) : platCfg.label}
         </span>
-        {href && (
-          <a href={href} target="_blank" rel="noopener noreferrer" title={t.materials.openFile}
-            className="absolute top-3 right-3 p-1.5 rounded bg-base/75 backdrop-blur-sm text-secondary hover:text-accent opacity-0 group-hover:opacity-100 transition-opacity">
-            <ExternalLink size={14} />
-          </a>
-        )}
+        <div className="absolute top-3 right-3 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button onClick={() => openEdit(m)} title={t.materials.editMaterial}
+            className="p-1.5 rounded bg-base/75 backdrop-blur-sm text-secondary hover:text-accent">
+            <Pencil size={14} />
+          </button>
+          {href && (
+            <a href={href} target="_blank" rel="noopener noreferrer" title={t.materials.openFile}
+              className="p-1.5 rounded bg-base/75 backdrop-blur-sm text-secondary hover:text-accent">
+              <ExternalLink size={14} />
+            </a>
+          )}
+        </div>
       </div>
     )
     const meta = (
@@ -166,7 +275,10 @@ export default function Materials() {
         {m.tags?.length > 0 && (
           <div className="flex gap-1.5 flex-wrap pt-0.5">
             {m.tags.map((tag: string) => (
-              <span key={tag} className="font-data px-2 py-0.5 rounded bg-elevated border border-default text-[10px] text-secondary">{tag}</span>
+              <button key={tag} onClick={() => setFilterTag(tag)} title={tag}
+                className={`px-2 py-0.5 rounded border text-[11px] transition-colors ${filterTag === tag ? 'bg-accent/15 border-accent/40 text-accent' : 'bg-elevated border-default text-secondary hover:border-strong hover:text-primary'}`}>
+                {tag}
+              </button>
             ))}
           </div>
         )}
@@ -186,6 +298,9 @@ export default function Materials() {
     )
   }
 
+  const isUpload = mode === 'upload'
+  const submitting = createMut.isPending || updateMut.isPending || busy
+
   return (
     <div className="min-h-full px-4 sm:px-7 py-5 sm:py-7 max-w-[1500px] mx-auto">
       <PageHeader
@@ -195,7 +310,7 @@ export default function Materials() {
         stats={[
           { label: 'ASSETS', value: <span className="text-primary font-bold">{total}</span> },
           { label: 'FILTER', value: (filterPlatform ? platLabel(filterPlatform) : 'ALL').toUpperCase() },
-          { label: 'QUERY', value: debouncedSearch ? `"${debouncedSearch}"` : '—' },
+          { label: 'TAG', value: filterTag ? <span className="text-accent">{filterTag}</span> : '—' },
           { label: 'PAGE', value: `${page} / ${pages}` },
         ]}
       >
@@ -204,7 +319,7 @@ export default function Materials() {
           <DownloadIcon size={14} />
           <span className="hidden sm:inline">{t.common.export}</span>
         </button>
-        <button onClick={() => setShowForm(!showForm)}
+        <button onClick={() => { editing ? closeForm() : setShowForm(!showForm) }}
           className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold text-white bg-accent hover:brightness-110 glow-accent transition-all">
           <Plus size={15} />
           {t.materials.addMaterial}
@@ -214,46 +329,88 @@ export default function Materials() {
       {showForm && (
         <form onSubmit={handleSubmit}
           className="reveal mt-6 rounded-2xl border border-strong bg-surface shadow-pop p-5 sm:p-6 space-y-4">
-          <div className="eyebrow text-muted">{t.materials.addMaterialFormTitle}</div>
-          <input required placeholder={t.materials.titlePlaceholder} value={form.title}
-            onChange={e => setForm(f => ({ ...f, title: e.target.value }))} className={inputClass} />
-          <div className="inline-flex gap-1 bg-elevated rounded-lg p-1 border border-default">
-            {(['link', 'upload'] as const).map(md => (
-              <button type="button" key={md} onClick={() => setMode(md)}
-                className={`px-3.5 py-1.5 rounded-md font-data text-xs transition-colors ${mode === md ? 'bg-accent text-white' : 'text-secondary hover:text-primary'}`}>
-                {md === 'link' ? t.materials.sourceLink : t.materials.sourceUpload}
-              </button>
-            ))}
+          <div className="flex items-center justify-between">
+            <div className="eyebrow text-muted">{editing ? t.materials.editFormTitle : t.materials.addMaterialFormTitle}</div>
+            <button type="button" onClick={closeForm} className="text-muted hover:text-primary transition-colors">
+              <X size={16} />
+            </button>
           </div>
-          {mode === 'link' ? (
-            <input required placeholder={t.materials.urlPlaceholder} value={form.url}
-              onChange={e => setForm(f => ({ ...f, url: e.target.value }))} className={inputClass} />
-          ) : (
+
+          {!editing && (
+            <div className="inline-flex gap-1 bg-elevated rounded-lg p-1 border border-default">
+              {(['link', 'upload'] as const).map(md => (
+                <button type="button" key={md} onClick={() => setMode(md)}
+                  className={`px-3.5 py-1.5 rounded-md font-data text-xs transition-colors ${mode === md ? 'bg-accent text-white' : 'text-secondary hover:text-primary'}`}>
+                  {md === 'link' ? t.materials.sourceLink : t.materials.sourceUpload}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* 标题：批量上传时按各自文件名生成，不显示标题输入 */}
+          {!(isUpload && !editing && files.length > 1) && (
+            <input required={!isUpload || !!editing} placeholder={t.materials.titlePlaceholder} value={form.title}
+              onChange={e => setForm(f => ({ ...f, title: e.target.value }))} className={inputClass} />
+          )}
+
+          {isUpload && !editing ? (
             <div className="space-y-2">
               <label className="flex items-center justify-center gap-2 px-3 py-7 bg-elevated/40 border border-dashed border-strong rounded-xl text-sm text-secondary cursor-pointer hover:text-primary hover:border-accent hover:bg-elevated transition-colors">
                 <Upload size={18} className="shrink-0 text-accent" />
                 <span className="truncate">
-                  {file ? `${file.name} (${(file.size / 1048576).toFixed(1)}MB)` : t.materials.chooseFile}
+                  {files.length === 1 ? `${files[0].name} (${(files[0].size / 1048576).toFixed(1)}MB)`
+                    : files.length > 1 ? t.materials.filesSelected(files.length)
+                    : t.materials.chooseFiles}
                 </span>
-                <input type="file" accept={ACCEPT} className="hidden"
+                <input ref={fileInputRef} type="file" accept={ACCEPT} multiple className="hidden"
                   onChange={e => {
-                    const f = e.target.files?.[0] ?? null
-                    if (f && f.size > MAX_UPLOAD) { toast.error(t.materials.fileTooLarge(200)); return }
-                    setFile(f)
-                    if (f && !form.title) setForm(s => ({ ...s, title: f.name.replace(/\.[^.]+$/, '') }))
+                    const picked = Array.from(e.target.files ?? [])
+                    const tooBig = picked.find(f => f.size > MAX_UPLOAD)
+                    if (tooBig) { toast.error(t.materials.fileTooLarge(200)); return }
+                    setFiles(picked)
+                    if (picked.length === 1 && !form.title) setForm(s => ({ ...s, title: stem(picked[0].name) }))
                   }} />
               </label>
               <div className="font-data text-[11px] text-muted">{t.materials.maxHint}</div>
-              {uploadMut.isPending && (
-                <div className="space-y-1">
-                  <div className="h-1.5 bg-elevated rounded-full overflow-hidden">
-                    <div className="h-full bg-accent transition-all duration-300" style={{ width: `${progress}%` }} />
-                  </div>
-                  <div className="font-data text-[11px] text-muted text-right">{t.materials.uploading} {progress}%</div>
-                </div>
+              {files.length > 1 && <div className="text-[11px] text-muted">{t.materials.batchTitleNote}</div>}
+              {queue.length > 0 && (
+                <ul className="space-y-1.5 pt-1">
+                  {queue.map((it, i) => (
+                    <li key={i} className="flex items-center gap-2.5 text-xs">
+                      <span className="shrink-0">
+                        {it.status === 'done' ? <Check size={14} className="text-emerald-400" />
+                          : it.status === 'error' ? <AlertCircle size={14} className="text-red-400" />
+                          : it.status === 'uploading' ? <Loader2 size={14} className="text-accent animate-spin" />
+                          : <span className="block w-3.5 h-3.5 rounded-full border border-default" />}
+                      </span>
+                      <span className="truncate flex-1 text-secondary">{it.name}</span>
+                      {it.status === 'uploading' && (
+                        <span className="w-24 h-1.5 bg-elevated rounded-full overflow-hidden shrink-0">
+                          <span className="block h-full bg-accent transition-all duration-300" style={{ width: `${it.pct}%` }} />
+                        </span>
+                      )}
+                      <span className={`font-data shrink-0 ${it.status === 'error' ? 'text-red-400' : it.status === 'done' ? 'text-emerald-400' : 'text-muted'}`}>
+                        {it.status === 'done' ? t.materials.queueDone
+                          : it.status === 'error' ? t.materials.queueFailed
+                          : it.status === 'uploading' ? `${it.pct}%`
+                          : t.materials.queuePending}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
               )}
             </div>
+          ) : mode === 'link' ? (
+            <input required placeholder={t.materials.urlPlaceholder} value={form.url}
+              onChange={e => setForm(f => ({ ...f, url: e.target.value }))} className={inputClass} />
+          ) : (
+            // 编辑已上传素材：文件本身不可换
+            <div className="rounded-lg border border-dashed border-default bg-elevated/30 px-3 py-2.5 text-xs text-muted">
+              {t.materials.fileNotEditable}
+              {editing?.file_name && <span className="block mt-1 text-secondary truncate">{editing.file_name}</span>}
+            </div>
           )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Select aria-label={t.materials.selectGame} value={form.app_id}
               onChange={v => setForm(f => ({ ...f, app_id: v }))}
@@ -262,21 +419,27 @@ export default function Materials() {
             <Select value={form.platform} onChange={v => setForm(f => ({ ...f, platform: v }))}
               options={[{ value: 'youtube', label: 'YouTube' }, { value: 'tiktok', label: 'TikTok' },
                 { value: 'meta', label: 'Meta Ads' }, { value: 'other', label: t.materials.platforms.other }]} />
-            <Select value={form.material_type} onChange={v => setForm(f => ({ ...f, material_type: v }))}
-              options={[{ value: 'video', label: t.materials.types.video },
-                { value: 'image', label: t.materials.types.image },
-                { value: 'playable', label: t.materials.types.playable }]} />
+            {/* 上传走文件扩展名自动判类型；link/编辑才需手选 */}
+            {(!isUpload || !!editing) && (
+              <Select value={form.material_type} onChange={v => setForm(f => ({ ...f, material_type: v }))}
+                options={[{ value: 'video', label: t.materials.types.video },
+                  { value: 'image', label: t.materials.types.image },
+                  { value: 'playable', label: t.materials.types.playable }]} />
+            )}
             <input placeholder={t.materials.tagsPlaceholder} value={form.tags}
               onChange={e => setForm(f => ({ ...f, tags: e.target.value }))} className={inputClass} />
           </div>
           <input placeholder={t.materials.notesPlaceholder} value={form.notes}
             onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className={inputClass} />
+
           <div className="flex justify-end gap-2 border-t border-default pt-4">
-            <button type="button" onClick={() => { setShowForm(false); setFile(null); setMode('link') }}
+            <button type="button" onClick={closeForm}
               className="px-4 py-2 text-sm text-secondary hover:text-primary transition-colors">{t.common.cancel}</button>
-            <button type="submit" disabled={createMut.isPending || uploadMut.isPending}
+            <button type="submit" disabled={submitting}
               className="px-5 py-2 bg-accent hover:brightness-110 disabled:opacity-50 rounded-lg text-sm font-semibold text-white transition-all">
-              {uploadMut.isPending ? `${t.materials.uploading} ${progress}%`
+              {editing ? (updateMut.isPending ? t.common.saving : t.common.save)
+                : busy ? t.materials.uploading
+                : isUpload && files.length > 1 ? t.materials.addBatch(files.length)
                 : createMut.isPending ? t.common.saving : t.common.save}
             </button>
           </div>
@@ -284,21 +447,62 @@ export default function Materials() {
       )}
 
       {/* ══ TOOLBAR ══════════════════════════════════════════ */}
-      <div className="reveal reveal-2 mt-6 flex flex-wrap items-center gap-3">
-        <div className="flex items-center flex-1 min-w-[220px] max-w-md rounded-lg border border-default bg-surface/60 focus-within:border-accent transition-colors">
-          <span className="pl-3 pr-1 text-muted"><Search size={15} /></span>
-          <input type="text" placeholder={t.materials.searchPlaceholder} value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="w-full bg-transparent py-2.5 pr-3 text-sm text-primary placeholder:text-muted focus:outline-none" />
+      <div className="reveal reveal-2 mt-6 space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center flex-1 min-w-[220px] max-w-md rounded-lg border border-default bg-surface/60 focus-within:border-accent transition-colors">
+            <span className="pl-3 pr-1 text-muted"><Search size={15} /></span>
+            <input type="text" placeholder={t.materials.searchPlaceholder} value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full bg-transparent py-2.5 pr-3 text-sm text-primary placeholder:text-muted focus:outline-none" />
+          </div>
+          <div className="flex gap-1 p-1 rounded-lg border border-default bg-surface/60">
+            {PLATFORM_TABS.map(p => {
+              const label = p === '' ? t.materials.platforms.all : platLabel(p)
+              const active = filterPlatform === p
+              return (
+                <button key={p} onClick={() => setFilterPlatform(p)}
+                  className={`px-3 py-1.5 rounded-md font-data text-[11px] tracking-wide transition-colors ${active ? 'bg-accent/15 text-accent' : 'text-secondary hover:text-primary hover:bg-elevated'}`}>
+                  {label}
+                </button>
+              )
+            })}
+          </div>
         </div>
-        <div className="flex gap-1 p-1 rounded-lg border border-default bg-surface/60">
-          {PLATFORM_TABS.map(p => {
-            const label = p === '' ? t.materials.platforms.all : platLabel(p)
-            const active = filterPlatform === p
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="w-44">
+            <Select aria-label={t.materials.gameFilterAll} value={filterGame} onChange={setFilterGame}
+              options={[{ value: '', label: t.materials.gameFilterAll },
+                ...allGames.map(g => ({ value: g.app_id, label: g.name }))]} />
+          </div>
+          <div className="w-36">
+            <Select aria-label={t.materials.typeFilterAll} value={filterType} onChange={setFilterType}
+              options={[{ value: '', label: t.materials.typeFilterAll },
+                { value: 'video', label: t.materials.types.video },
+                { value: 'image', label: t.materials.types.image },
+                { value: 'playable', label: t.materials.types.playable }]} />
+          </div>
+          <div className="w-40">
+            <Select aria-label={t.materials.sortLabel} value={sort} onChange={setSort} options={sortOptions} />
+          </div>
+        </div>
+        {/* 标签筛选栏：本地聚合，零 ST 配额；点卡片标签也会落到这里 */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="flex items-center gap-1.5 text-xs text-muted pr-1">
+            <TagIcon size={13} /> {t.materials.tagFilterLabel}
+          </span>
+          <button onClick={() => setFilterTag('')}
+            className={`px-2.5 py-1 rounded-md text-xs border transition-colors ${filterTag === '' ? 'bg-accent/15 border-accent/40 text-accent' : 'border-default text-secondary hover:border-strong hover:text-primary'}`}>
+            {t.materials.tagFilterAll}
+          </button>
+          {tagCounts.length === 0 ? (
+            <span className="text-xs text-muted/60">{t.materials.noTags}</span>
+          ) : tagCounts.map(({ tag, count }) => {
+            const active = filterTag === tag
             return (
-              <button key={p} onClick={() => setFilterPlatform(p)}
-                className={`px-3 py-1.5 rounded-md font-data text-[11px] tracking-wide transition-colors ${active ? 'bg-accent/15 text-accent' : 'text-secondary hover:text-primary hover:bg-elevated'}`}>
-                {label}
+              <button key={tag} onClick={() => setFilterTag(active ? '' : tag)} title={tag}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border transition-colors ${active ? 'bg-accent/15 border-accent/40 text-accent' : 'border-default text-secondary hover:border-strong hover:text-primary'}`}>
+                <span className="max-w-[160px] truncate">{tag}</span>
+                <span className="font-data text-[10px] text-muted">{count}</span>
               </button>
             )
           })}
@@ -326,7 +530,7 @@ export default function Materials() {
             <Radio size={26} className="text-muted/50 mb-3" />
             <div className="eyebrow text-muted">No Signal</div>
             <p className="text-secondary text-sm mt-2">
-              {debouncedSearch || filterPlatform ? t.common.noResult : t.materials.empty}
+              {debouncedSearch || filterPlatform || filterType || filterGame || filterTag ? t.common.noResult : t.materials.empty}
             </p>
           </div>
         ) : (

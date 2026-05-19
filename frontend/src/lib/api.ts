@@ -11,6 +11,7 @@ import type {
   MaterialCreate,
   MaterialOut,
   MaterialUpdate,
+  MaterialTagCount,
   MetricsOut,
   PagedResponse,
   QuotaInfo,
@@ -110,6 +111,7 @@ export const quotaApi = {
 export interface MaterialListParams {
   platform?: string
   material_type?: string
+  tag?: string
   q?: string
   sort_by?: 'created_at' | 'title'
   order?: 'asc' | 'desc'
@@ -122,6 +124,8 @@ export const materialsApi = {
     api.get('/materials/', { params: { ...(appId ? { app_id: appId } : {}), ...params } }).then(r => r.data),
   listPaged: (params?: MaterialListParams & { app_id?: string }): Promise<PagedResponse<MaterialOut>> =>
     api.get('/materials/', { params }).then(r => withTotal(r.headers, r.data)),
+  tags: (appId?: string): Promise<MaterialTagCount[]> =>
+    api.get('/materials/tags', { params: appId ? { app_id: appId } : {} }).then(r => r.data),
   create: (data: MaterialCreate): Promise<MaterialOut> =>
     api.post('/materials/', data).then(r => r.data),
   upload: (form: FormData, onProgress?: (pct: number) => void): Promise<MaterialOut> =>
