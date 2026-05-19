@@ -112,6 +112,35 @@ async def test_serve_file_token_and_range(client, monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_serve_file_non_ascii_filename(client, monkeypatch, tmp_path):
+    """中文（非 ASCII）文件名：取流不能 500。
+
+    回归：Content-Disposition 直接塞中文文件名 → uvicorn 发头 latin-1
+    编码 UnicodeEncodeError → 整个 /file 500，视频永远卡 0:00 播不了。
+    """
+    _media_tmp(monkeypatch, tmp_path)
+    up = (await client.post(
+        "/api/materials/upload",
+        data={"title": "v", "app_id": "g1", "material_type": "video"},
+        files={"file": ("26.05.06挖矿2-越南语.mp4", b"0123456789", "video/mp4")},
+    )).json()
+    mid = up["id"]
+
+    full = await client.get(f"/api/materials/{mid}/file")
+    assert full.status_code == 200, full.text          # 不再 500
+    assert full.content == b"0123456789"
+    cd = full.headers.get("content-disposition", "")
+    # ASCII 兜底里不得残留任何非 latin-1 字符；真实名走 filename*=UTF-8''
+    cd.encode("latin-1")  # 不抛即说明响应头合法
+    assert "filename*=UTF-8''" in cd
+    assert "%E6%8C%96%E7%9F%BF" in cd  # “挖矿” 的 UTF-8 百分号编码
+
+    part = await client.get(f"/api/materials/{mid}/file", headers={"Range": "bytes=2-5"})
+    assert part.status_code == 206
+    assert part.content == b"2345"
+
+
+@pytest.mark.asyncio
 async def test_delete_unlinks_file(client, monkeypatch, tmp_path):
     _media_tmp(monkeypatch, tmp_path)
     up = (await client.post(

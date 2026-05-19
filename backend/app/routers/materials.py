@@ -3,6 +3,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from typing import Optional, Literal
+from urllib.parse import quote
 from app.database import get_db
 from app.models.material import Material
 from app.schemas import MaterialCreate, MaterialUpdate, MaterialOut
@@ -170,9 +171,18 @@ async def serve_material_file(
 
     size = path.stat().st_size
     mime = m.mime_type or "application/octet-stream"
+    # HTTP 头只能 latin-1：中文/非 ASCII 文件名直接塞 filename= 会让 uvicorn
+    # 发响应头时 UnicodeEncodeError → 整个取流 500（视频永远播不了）。
+    # 按 RFC 6266：filename= 给 ASCII 兜底，filename*=UTF-8'' 带真实名。
+    raw_name = m.file_name or path.name
+    ascii_name = "".join(
+        c for c in raw_name.encode("ascii", "ignore").decode()
+        if c.isprintable() and c not in '"\\'
+    ).strip() or "file"
+    disposition = f"inline; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(raw_name)}"
     common = {
         "Accept-Ranges": "bytes",
-        "Content-Disposition": f'inline; filename="{m.file_name or path.name}"',
+        "Content-Disposition": disposition,
         "Cache-Control": "private, max-age=3600",
     }
     range_header = request.headers.get("range")
