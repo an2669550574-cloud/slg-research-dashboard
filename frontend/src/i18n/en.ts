@@ -161,6 +161,8 @@ export const en: Translations = {
     chartRevenue: 'Revenue trend ($)',
     chartDownloads: 'Downloads trend',
     chartRanking: 'Rank trend (lower is better)',
+    marketLabel: 'Market',
+    marketDataHint: (n: number) => `${n} days with sales data in this market`,
     rankPrefix: 'Rank',
     today: 'today',
   },

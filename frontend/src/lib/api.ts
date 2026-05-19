@@ -13,6 +13,7 @@ import type {
   MaterialUpdate,
   MaterialTagCount,
   MetricsOut,
+  MetricsCoverage,
   PagedResponse,
   QuotaInfo,
   RankingTodayOut,
@@ -75,6 +76,8 @@ export const gamesApi = {
     api.get('/games/rankings', { params: { country, platform } }).then(r => r.data),
   get: (appId: string): Promise<GameOut> =>
     api.get(`/games/${appId}`).then(r => r.data),
+  coverage: (appId: string): Promise<MetricsCoverage[]> =>
+    api.get(`/games/${appId}/coverage`).then(r => r.data),
   metrics: (appId: string, params: MetricsParams = {}): Promise<MetricsOut> =>
     api.get(`/games/${appId}/metrics`, { params: { country: 'WW', days: 30, ...params } }).then(r => r.data),
   seed: (): Promise<SeedResponse> => api.get('/games/seed').then(r => r.data),

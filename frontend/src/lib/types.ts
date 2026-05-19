@@ -68,6 +68,16 @@ export interface MetricsOut {
   revenue: TrendPoint[]
 }
 
+/** GET /games/{app_id}/coverage：该 app 本地实际有数据的国家/平台组合，
+ *  按销量覆盖最全→最少排，[0] 即详情页最佳默认。 */
+export interface MetricsCoverage {
+  country: string
+  platform: string
+  days: number
+  sales_days: number
+  rank_days: number
+}
+
 // ─── history ─────────────────────────────────────────────────────────────
 
 export interface HistoryOut {

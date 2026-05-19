@@ -159,6 +159,8 @@ export const zh = {
     chartRevenue: '收入趋势（$）',
     chartDownloads: '下载量趋势',
     chartRanking: '排名趋势（越低越好）',
+    marketLabel: '市场',
+    marketDataHint: (n: number) => `该组合 ${n} 天有销量数据`,
     rankPrefix: '排名',
     today: '今日',
   },

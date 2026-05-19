@@ -9,7 +9,8 @@ from app.services.sensor_tower import sensor_tower_service, MOCK_SLG_GAMES, _res
 from app.services.appstore import fetch_app_info
 from app.services.slg_publishers import is_slg
 from app.scheduler import sync_daily_rankings
-from app.schemas import GameCreate, GameOut, GameUpdate, RankingTodayOut, MetricsOut
+from app.config import settings
+from app.schemas import GameCreate, GameOut, GameUpdate, RankingTodayOut, MetricsOut, MetricsCoverage
 
 router = APIRouter(prefix="/api/games", tags=["games"])
 
@@ -226,6 +227,36 @@ async def delete_game(app_id: str, db: AsyncSession = Depends(get_db)):
     await db.delete(game)
     await db.commit()
     return {"message": "deleted", "app_id": app_id}
+
+
+@router.get("/{app_id}/coverage", response_model=list[MetricsCoverage])
+async def get_game_metrics_coverage(app_id: str, db: AsyncSession = Depends(get_db)):
+    """该 app 在本地 game_rankings 里实际有数据的 (国家,平台) 组合。
+
+    详情页图表曾死写 US/ios，但库里只按 SYNC_RANKING_COMBOS 累积，多数 app
+    其实只在 US/android 或 JP/KR/ios 进榜 → US/ios 查空、ST 回退也空 → 三图空白。
+    前端拿这个列表渲染国家/平台切换，默认选销量覆盖最全的组合。**零 ST 配额**
+    （纯本地聚合，与发展历程同源）。返回按"销量天数多→少、再按 SYNC_RANKING_COMBOS
+    偏好序"排，故 items[0] 即最佳默认。
+    """
+    res = await db.execute(
+        select(
+            GameRanking.country,
+            GameRanking.platform,
+            func.count().label("days"),
+            func.count(GameRanking.revenue).label("sales_days"),
+            func.count(GameRanking.rank).label("rank_days"),
+        )
+        .where(GameRanking.app_id == app_id)
+        .group_by(GameRanking.country, GameRanking.platform)
+    )
+    pref = {cp: i for i, cp in enumerate(settings.sync_combos_list)}
+    items = [
+        MetricsCoverage(country=c, platform=p, days=d, sales_days=s, rank_days=rk)
+        for c, p, d, s, rk in res.all()
+    ]
+    items.sort(key=lambda x: (-x.sales_days, pref.get((x.country, x.platform), 99)))
+    return items
 
 
 @router.get("/{app_id}/metrics", response_model=MetricsOut)

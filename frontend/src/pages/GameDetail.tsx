@@ -357,15 +357,27 @@ export default function GameDetail() {
   const monthAgo = new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10)
   const [customStart, setCustomStart] = useState(monthAgo)
   const [customEnd, setCustomEnd] = useState(today)
+  // null = 还没手动选，沿用 coverage 自动默认（数据最全的组合）
+  const [pickedCombo, setPickedCombo] = useState<{ country: string; platform: string } | null>(null)
+
+  // 该 app 本地实际有数据的国家/平台组合（零 ST 配额，纯本地聚合）。
+  const { data: coverage, isLoading: coverageLoading } = useQuery({
+    queryKey: ['coverage', appId],
+    queryFn: () => gamesApi.coverage(appId!),
+    enabled: !!appId,
+  })
+  // 有效组合：手选 > coverage 最佳 > 兜底 US/ios（库里完全没数据时与改前一致）
+  const combo = pickedCombo ?? coverage?.[0] ?? { country: 'US', platform: 'ios' }
 
   const queryParams = range.kind === 'preset'
-    ? { days: range.days, country: 'US', platform: 'ios' }
-    : { start_date: range.start, end_date: range.end, country: 'US', platform: 'ios' }
+    ? { days: range.days, ...combo }
+    : { start_date: range.start, end_date: range.end, ...combo }
 
   const { data: metrics, isLoading: metricsLoading, isError: metricsError, refetch: refetchMetrics } = useQuery({
-    queryKey: ['metrics', appId, range],
+    queryKey: ['metrics', appId, range, combo.country, combo.platform],
     queryFn: () => gamesApi.metrics(appId!, queryParams),
-    enabled: !!appId,
+    // 等 coverage 落定再查：否则先用 US/ios 查一次空、命中 ST 回退白烧配额
+    enabled: !!appId && !coverageLoading,
   })
 
   // 游戏元信息从 games 表读：今日榜单 rankings 只覆盖 Top N，
@@ -376,10 +388,11 @@ export default function GameDetail() {
     enabled: !!appId,
   })
 
-  // 今日榜单数据只用于显示当日 rank/revenue/downloads 三个数字
+  // 今日榜单数据只用于显示当日 rank/revenue/downloads 三个数字；
+  // 跟随选中的国家/平台，安卓游戏不再用 US/ios 查空。
   const { data: rankings } = useQuery({
-    queryKey: ['rankings', 'US', 'ios'],
-    queryFn: () => gamesApi.rankings('US', 'ios'),
+    queryKey: ['rankings', combo.country, combo.platform],
+    queryFn: () => gamesApi.rankings(combo.country, combo.platform),
   })
   const todayStats = rankings?.find((g: any) => g.app_id === appId)
 
@@ -465,6 +478,23 @@ export default function GameDetail() {
           </div>
         )}
       </div>
+
+      {coverage && coverage.length > 1 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted pr-1">{t.gameDetail.marketLabel}</span>
+          {coverage.map(cv => {
+            const active = combo.country === cv.country && combo.platform === cv.platform
+            return (
+              <button key={`${cv.country}:${cv.platform}`}
+                onClick={() => setPickedCombo({ country: cv.country, platform: cv.platform })}
+                title={t.gameDetail.marketDataHint(cv.sales_days)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${active ? 'bg-brand-600 text-white' : 'bg-elevated text-secondary hover:text-primary'}`}>
+                {cv.country} · {cv.platform === 'android' ? 'Android' : 'iOS'}
+              </button>
+            )
+          })}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {chartCards.map(({ key, dataKey, label, color, formatter }) => (

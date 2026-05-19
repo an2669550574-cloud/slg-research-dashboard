@@ -84,3 +84,13 @@ class MetricsOut(BaseModel):
     rankings: list[TrendPoint] = []
     downloads: list[TrendPoint] = []
     revenue: list[TrendPoint] = []
+
+
+class MetricsCoverage(BaseModel):
+    """某 app 在本地 game_rankings 里实际有数据的 (国家, 平台) 组合。
+    前端据此渲染国家/平台切换并默认选数据最全的那个。"""
+    country: str
+    platform: str
+    days: int        # 该组合总行数（含 rank=NULL 的历史销量回填行）
+    sales_days: int  # 有下载/收入的天数 —— 决定收入/下载图是否画得出
+    rank_days: int   # 有 rank 的天数 —— 决定排名走势图密度
