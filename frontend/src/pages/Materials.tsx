@@ -49,7 +49,9 @@ export default function Materials() {
   const [files, setFiles] = useState<File[]>([])
   const [queue, setQueue] = useState<QItem[]>([])
   const [busy, setBusy] = useState(false)
+  const [dragActive, setDragActive] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const folderInputRef = useRef<HTMLInputElement | null>(null)
   const debouncedSearch = useDebouncedValue(search)
 
   const [sortBy, order] = sort.split(':') as ['created_at' | 'title', 'asc' | 'desc']
@@ -89,6 +91,8 @@ export default function Materials() {
     setShowForm(false); setEditing(null)
     setForm(emptyForm); setMode('link'); setFiles([]); setQueue([])
     if (fileInputRef.current) fileInputRef.current.value = ''
+    if (folderInputRef.current) folderInputRef.current.value = ''
+    setDragActive(false)
   }
   const afterMutate = (msg: string) => {
     closeForm()
@@ -130,6 +134,82 @@ export default function Materials() {
     })
     setFiles([]); setQueue([]); setShowForm(true)
     window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  // 接受一批 (file, relativePath)：按扩展名过滤 + 大小校验 + 顶层文件夹
+  // 名自动并入标签。文件夹选择/拖入文件夹/普通多选三条路径共用此函数。
+  const acceptItems = (items: { file: File; path: string }[]) => {
+    if (items.length === 0) return
+    const total = items.length
+    const supported = items.filter(({ file }) =>
+      ACCEPT.split(',').some(ext => file.name.toLowerCase().endsWith(ext)))
+    const tooBig = supported.find(({ file }) => file.size > MAX_UPLOAD)
+    if (tooBig) { toast.error(t.materials.fileTooLarge(200)); return }
+    if (supported.length === 0) {
+      toast.error(t.materials.skippedNonMedia(total))
+      return
+    }
+    // 顶层文件夹名 → 自动标签（合并进 form.tags，保留用户已输入的）
+    const folderTags = Array.from(new Set(
+      supported.map(({ path }) => path.includes('/') ? path.split('/')[0] : '')
+               .filter(Boolean)))
+    if (folderTags.length > 0) {
+      setForm(s => {
+        const existing = s.tags ? s.tags.split(',').map(x => x.trim()).filter(Boolean) : []
+        const merged = Array.from(new Set([...existing, ...folderTags]))
+        return { ...s, tags: merged.join(', ') }
+      })
+    }
+    setFiles(supported.map(s => s.file))
+    if (supported.length === 1 && !form.title) {
+      setForm(s => ({ ...s, title: stem(supported[0].file.name) }))
+    }
+    const skipped = total - supported.length
+    if (skipped > 0) toast(t.materials.skippedNonMedia(skipped))
+  }
+
+  // 拖拽：递归遍历文件夹（webkitGetAsEntry / FileSystemEntry,Chrome/Edge/
+  // Firefox/Safari 现代版均支持）。createReader().readEntries 一次最多 100,
+  // 须循环读到空。
+  const readDirEntries = (dir: FileSystemDirectoryEntry): Promise<FileSystemEntry[]> => {
+    const reader = dir.createReader()
+    const all: FileSystemEntry[] = []
+    return new Promise((resolve, reject) => {
+      const pump = () => reader.readEntries(batch => {
+        if (batch.length === 0) resolve(all)
+        else { all.push(...batch); pump() }
+      }, reject)
+      pump()
+    })
+  }
+  const traverseEntry = async (entry: FileSystemEntry, prefix: string): Promise<{file: File; path: string}[]> => {
+    if (entry.isFile) {
+      const file = await new Promise<File>((res, rej) =>
+        (entry as FileSystemFileEntry).file(res, rej))
+      return [{ file, path: prefix + file.name }]
+    }
+    if (entry.isDirectory) {
+      const entries = await readDirEntries(entry as FileSystemDirectoryEntry)
+      const nested = await Promise.all(
+        entries.map(e => traverseEntry(e, prefix + entry.name + '/')))
+      return nested.flat()
+    }
+    return []
+  }
+  const onDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault(); setDragActive(false)
+    const dtItems = Array.from(e.dataTransfer.items ?? [])
+    const collected: {file: File; path: string}[] = []
+    for (const it of dtItems) {
+      const entry = (it as any).webkitGetAsEntry?.() as FileSystemEntry | null
+      if (entry) {
+        try { collected.push(...await traverseEntry(entry, '')) } catch { /* 忽略单条 */ }
+      } else {
+        const f = it.getAsFile?.()
+        if (f) collected.push({ file: f, path: '' })
+      }
+    }
+    acceptItems(collected)
   }
 
   // 批量上传：前端串行调用现有 /upload。每个文件独立进度/成败，
@@ -355,22 +435,54 @@ export default function Materials() {
 
           {isUpload && !editing ? (
             <div className="space-y-2">
-              <label className="flex items-center justify-center gap-2 px-3 py-7 bg-elevated/40 border border-dashed border-strong rounded-xl text-sm text-secondary cursor-pointer hover:text-primary hover:border-accent hover:bg-elevated transition-colors">
-                <Upload size={18} className="shrink-0 text-accent" />
-                <span className="truncate">
-                  {files.length === 1 ? `${files[0].name} (${(files[0].size / 1048576).toFixed(1)}MB)`
+              <div
+                onDragOver={e => { e.preventDefault(); if (!dragActive) setDragActive(true) }}
+                onDragEnter={e => { e.preventDefault(); setDragActive(true) }}
+                onDragLeave={e => { if (e.currentTarget === e.target) setDragActive(false) }}
+                onDrop={onDrop}
+                className={`flex flex-col items-center justify-center gap-2 px-3 py-7 bg-elevated/40 border border-dashed rounded-xl text-sm transition-colors ${dragActive ? 'border-accent bg-elevated text-primary' : 'border-strong text-secondary'}`}
+              >
+                <Upload size={20} className="shrink-0 text-accent" />
+                <div className="text-center px-2 max-w-full truncate">
+                  {files.length === 1
+                    ? `${files[0].name} (${(files[0].size / 1048576).toFixed(1)}MB)`
                     : files.length > 1 ? t.materials.filesSelected(files.length)
-                    : t.materials.chooseFiles}
-                </span>
+                    : t.materials.dropHint}
+                </div>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <button type="button" onClick={() => fileInputRef.current?.click()}
+                    className="px-3 py-1.5 rounded-lg bg-surface border border-default hover:border-strong text-xs text-secondary hover:text-primary transition-colors">
+                    {t.materials.chooseFiles}
+                  </button>
+                  <span className="text-[11px] text-muted">{t.materials.or}</span>
+                  <button type="button" onClick={() => folderInputRef.current?.click()}
+                    className="px-3 py-1.5 rounded-lg bg-surface border border-default hover:border-strong text-xs text-secondary hover:text-primary transition-colors">
+                    {t.materials.chooseFolder}
+                  </button>
+                  {files.length > 0 && (
+                    <button type="button" onClick={() => {
+                      setFiles([])
+                      if (fileInputRef.current) fileInputRef.current.value = ''
+                      if (folderInputRef.current) folderInputRef.current.value = ''
+                    }}
+                      className="px-3 py-1.5 rounded-lg text-xs text-muted hover:text-red-400 transition-colors">
+                      {t.materials.clearFiles}
+                    </button>
+                  )}
+                </div>
                 <input ref={fileInputRef} type="file" accept={ACCEPT} multiple className="hidden"
-                  onChange={e => {
-                    const picked = Array.from(e.target.files ?? [])
-                    const tooBig = picked.find(f => f.size > MAX_UPLOAD)
-                    if (tooBig) { toast.error(t.materials.fileTooLarge(200)); return }
-                    setFiles(picked)
-                    if (picked.length === 1 && !form.title) setForm(s => ({ ...s, title: stem(picked[0].name) }))
-                  }} />
-              </label>
+                  onChange={e => acceptItems(
+                    Array.from(e.target.files ?? []).map(f => ({ file: f, path: f.webkitRelativePath || '' }))
+                  )} />
+                {/* webkitdirectory: React 类型未声明，用 ref 回调挂 DOM 属性 */}
+                <input ref={el => {
+                  if (el) { el.setAttribute('webkitdirectory', ''); el.setAttribute('directory', '') }
+                  folderInputRef.current = el
+                }} type="file" multiple className="hidden"
+                  onChange={e => acceptItems(
+                    Array.from(e.target.files ?? []).map(f => ({ file: f, path: f.webkitRelativePath || '' }))
+                  )} />
+              </div>
               <div className="font-data text-[11px] text-muted">{t.materials.maxHint}</div>
               {files.length > 1 && <div className="text-[11px] text-muted">{t.materials.batchTitleNote}</div>}
               {queue.length > 0 && (
