@@ -78,6 +78,17 @@ export interface MetricsCoverage {
   rank_days: number
 }
 
+/** GET /games/aggregate-leaderboard：跨该 app 全部已监测市场在窗口内合计
+ *  下载/收入，与详情页头部「已监测市场合计」同口径，可直接对账。 */
+export interface AggregateLeaderboardOut {
+  app_id: string
+  name: string | null
+  publisher: string | null
+  icon_url: string | null
+  downloads: number
+  revenue: number
+}
+
 // ─── history ─────────────────────────────────────────────────────────────
 
 export interface HistoryOut {

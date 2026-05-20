@@ -1,4 +1,4 @@
-from app.schemas.game import GameOut, GameCreate, GameUpdate, GameRankingOut, RankingTodayOut, MetricsOut, MetricsCoverage
+from app.schemas.game import GameOut, GameCreate, GameUpdate, GameRankingOut, RankingTodayOut, MetricsOut, MetricsCoverage, AggregateLeaderboardOut
 from app.schemas.history import HistoryOut, HistoryCreate
 from app.schemas.material import MaterialOut, MaterialCreate, MaterialUpdate, MaterialTagCount
 
@@ -10,6 +10,7 @@ __all__ = [
     "RankingTodayOut",
     "MetricsOut",
     "MetricsCoverage",
+    "AggregateLeaderboardOut",
     "HistoryOut",
     "HistoryCreate",
     "MaterialOut",

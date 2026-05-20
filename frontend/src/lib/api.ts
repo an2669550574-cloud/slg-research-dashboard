@@ -14,6 +14,7 @@ import type {
   MaterialTagCount,
   MetricsOut,
   MetricsCoverage,
+  AggregateLeaderboardOut,
   PagedResponse,
   QuotaInfo,
   RankingTodayOut,
@@ -79,6 +80,8 @@ export const gamesApi = {
     api.get(`/games/${appId}`).then(r => r.data),
   coverage: (appId: string): Promise<MetricsCoverage[]> =>
     api.get(`/games/${appId}/coverage`).then(r => r.data),
+  aggregateLeaderboard: (params: { days?: number; slg_only?: boolean; limit?: number } = {}): Promise<AggregateLeaderboardOut[]> =>
+    api.get('/games/aggregate-leaderboard', { params }).then(r => r.data),
   metrics: (appId: string, params: MetricsParams = {}): Promise<MetricsOut> =>
     api.get(`/games/${appId}/metrics`, { params: { country: 'WW', days: 30, ...params } }).then(r => r.data),
   seed: (): Promise<SeedResponse> => api.get('/games/seed').then(r => r.data),

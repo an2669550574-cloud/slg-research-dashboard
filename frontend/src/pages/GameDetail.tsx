@@ -440,7 +440,11 @@ export default function GameDetail() {
             <p className="text-muted text-sm mt-0.5">{game.publisher}</p>
             {hasTotals && (
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2">
-                <span className="text-xs text-muted">{t.gameDetail.trackedTotal}</span>
+                <span className="text-xs text-muted">
+                  {range.kind === 'preset'
+                    ? t.gameDetail.trackedTotalDays(range.days)
+                    : t.gameDetail.trackedTotalCustom}
+                </span>
                 <span className="text-xs text-emerald-400 font-medium">{formatRevenue(totalRevenue)}</span>
                 <span className="text-xs text-secondary">{formatNumber(totalDownloads)} {t.dashboard.downloadsSuffix}</span>
               </div>

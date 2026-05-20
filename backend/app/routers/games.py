@@ -10,7 +10,7 @@ from app.services.appstore import fetch_app_info
 from app.services.slg_publishers import is_slg
 from app.scheduler import sync_daily_rankings
 from app.config import settings
-from app.schemas import GameCreate, GameOut, GameUpdate, RankingTodayOut, MetricsOut, MetricsCoverage
+from app.schemas import GameCreate, GameOut, GameUpdate, RankingTodayOut, MetricsOut, MetricsCoverage, AggregateLeaderboardOut
 
 router = APIRouter(prefix="/api/games", tags=["games"])
 
@@ -134,6 +134,50 @@ async def seed_games(db: AsyncSession = Depends(get_db)):
         db.add(game)
     await db.commit()
     return {"message": f"已初始化 {len(MOCK_SLG_GAMES)} 款游戏"}
+
+
+@router.get("/aggregate-leaderboard", response_model=list[AggregateLeaderboardOut])
+async def get_aggregate_leaderboard(
+    days: int = Query(30, ge=1, le=365),
+    slg_only: bool = True,
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+):
+    """仪表盘「合计·区间」视图数据源：每个 app 在窗口内**跨全部已监测市场**
+    按日合计下载/收入，按收入降序。与详情页头部「已监测市场合计」同口径——
+    详情页那行的数字与本榜该行的数字应可直接对账（同 days、同 slg 过滤前提下）。
+
+    纯本地聚合，零 ST 配额。`is_slg` 用 game_rankings 行内的 publisher 兜底
+    判定（与 /games/rankings 同源）。
+    """
+    win = _resolve_window(days, None, None)
+    res = await db.execute(
+        select(
+            GameRanking.app_id,
+            func.max(GameRanking.name).label("name"),
+            func.max(GameRanking.publisher).label("publisher"),
+            func.max(GameRanking.icon_url).label("icon_url"),
+            func.sum(GameRanking.downloads).label("downloads"),
+            func.sum(GameRanking.revenue).label("revenue"),
+        ).where(
+            GameRanking.date >= win[0],
+            GameRanking.date <= win[-1],
+        ).group_by(GameRanking.app_id)
+    )
+    items: list[dict] = []
+    for r in res.all():
+        dl = r.downloads or 0
+        rv = r.revenue or 0
+        if dl == 0 and rv == 0:
+            continue  # rank-only 行（无销量）不进合计榜
+        if slg_only and not is_slg(r.app_id, r.publisher):
+            continue
+        items.append({
+            "app_id": r.app_id, "name": r.name, "publisher": r.publisher,
+            "icon_url": r.icon_url, "downloads": int(dl), "revenue": float(rv),
+        })
+    items.sort(key=lambda x: -x["revenue"])
+    return items[:limit]
 
 
 @router.get("/{app_id}", response_model=GameOut)
