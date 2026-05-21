@@ -5,7 +5,6 @@ import { useT } from '../i18n'
 import { formatNumber, formatRevenue } from '../lib/utils'
 import { X, Plus } from 'lucide-react'
 import { CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, XAxis, YAxis, Legend } from 'recharts'
-import { QuotaBanner } from '../components/QuotaBanner'
 import { GameIcon } from '../components/GameIcon'
 import { QueryError } from '../components/QueryError'
 import { PageHeader } from '../components/PageHeader'
@@ -87,7 +86,7 @@ export default function Compare() {
     <div className="px-4 sm:px-7 py-5 sm:py-7 max-w-[1500px] mx-auto space-y-5">
       <PageHeader eyebrow="Diff Engine" title={t.compare.title} subtitle={t.compare.subtitle} />
 
-      <QuotaBanner quota={quota} />
+      {/* 配额详细 Banner 只放仪表盘；本页用顶部全局警示条 + 控件旁的 quotaCostHint 已足够 */}
 
       <div className="bg-surface border border-default rounded-xl p-5 space-y-4">
         <div className="flex flex-wrap items-center gap-2">
