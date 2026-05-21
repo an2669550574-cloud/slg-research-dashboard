@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { gamesApi, quotaApi } from '../lib/api'
@@ -75,6 +75,35 @@ export default function Dashboard() {
     enabled: isTotal,
   })
 
+  // 合计视图的"美区名字参考表"：拉 US/iOS + US/Android 当日榜，按 app_id 把
+  // name/publisher/icon 统一到美区版本（iTunes/Play 用 country=US 抓的本地化
+  // 字段）。否则同款游戏会出现 #1「킹샷:Kingshot」#6「Kingshot」这种韩区/美区
+  // 混排观感不齐。queryKey 与 Rankings.tsx / 单市场视图共享，react-query 自动
+  // 去重；后端 24h L2 snapshot 已扛热，不会增加 ST 配额。
+  const usIosQ = useQuery({
+    queryKey: ['rankings', 'US', 'ios'],
+    queryFn: () => gamesApi.rankings('US', 'ios'),
+    enabled: isTotal,
+  })
+  const usAndroidQ = useQuery({
+    queryKey: ['rankings', 'US', 'android'],
+    queryFn: () => gamesApi.rankings('US', 'android'),
+    enabled: isTotal,
+  })
+  const usNameMap = useMemo(() => {
+    const m = new Map<string, { name: string | null; publisher: string | null; icon_url: string | null }>()
+    const ingest = (rows: typeof usIosQ.data | undefined) => {
+      ;(rows ?? []).forEach(r => {
+        // 仅当 US 这边拿到了 name 才覆盖；榜尾 enrich limit 之外的可能为 null,
+        // 这种情况不动 fallback。
+        if (r.name) m.set(r.app_id, { name: r.name, publisher: r.publisher, icon_url: r.icon_url })
+      })
+    }
+    ingest(usIosQ.data)
+    ingest(usAndroidQ.data)
+    return m
+  }, [usIosQ.data, usAndroidQ.data])
+
   const { data: quota } = useQuery({
     queryKey: ['quota'],
     queryFn: () => quotaApi.get(),
@@ -120,7 +149,16 @@ export default function Dashboard() {
   }> = isTotal
     ? (totalQ.data ?? [])
     : (todayQ.data ?? []).filter(g => g.is_slg)
-  const board = [...boardRaw].sort((a, b) => (b.revenue ?? 0) - (a.revenue ?? 0))
+  // 合计视图：用美区参考表覆盖 name/publisher/icon；单市场视图不覆盖（本身就是
+  // 选定市场的口径）。app_id 不在参考表里时保留原值（榜外/纯安卓且 US 未覆盖等）。
+  const board = [...boardRaw]
+    .sort((a, b) => (b.revenue ?? 0) - (a.revenue ?? 0))
+    .map(g => {
+      if (!isTotal) return g
+      const us = usNameMap.get(g.app_id)
+      if (!us) return g
+      return { ...g, name: us.name, publisher: us.publisher, icon_url: us.icon_url }
+    })
 
   const totalDownloads = board.reduce((s, g) => s + (g.downloads || 0), 0)
   const totalRevenue = board.reduce((s, g) => s + (g.revenue || 0), 0)
