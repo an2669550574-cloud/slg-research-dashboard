@@ -244,11 +244,12 @@ export const zh = {
   },
   compare: {
     title: '游戏对比',
-    subtitle: '选择 2-3 款游戏对比 30/90 天趋势',
+    subtitle: '选择 2-3 款 SLG 竞品对比 30/90 天趋势',
     pickGames: '请至少选择两款游戏',
     selectMore: '最多选择 3 款',
     selectGame: '选择游戏',
     metric: '指标',
+    market: '市场',
     revenue: '收入',
     downloads: '下载量',
     rank: '排名',

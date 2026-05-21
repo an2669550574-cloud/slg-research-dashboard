@@ -241,11 +241,12 @@ export const en: Translations = {
   },
   compare: {
     title: 'Compare',
-    subtitle: 'Pick 2-3 games to compare 30/90-day trends',
+    subtitle: 'Pick 2-3 SLG competitors to compare 30/90-day trends',
     pickGames: 'Pick at least two games',
     selectMore: 'Up to 3 games',
     selectGame: 'Select a game',
     metric: 'Metric',
+    market: 'Market',
     revenue: 'Revenue',
     downloads: 'Downloads',
     rank: 'Rank',
