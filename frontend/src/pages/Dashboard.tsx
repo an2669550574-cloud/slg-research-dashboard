@@ -30,7 +30,9 @@ function StatCard({ icon: Icon, label, value, sub, color }: any) {
   )
 }
 
-const AGG_DAYS_OPTIONS = [7, 30, 90] as const
+// 1 = 今日跨市场合计（窗口缩到今天那行 game_rankings），与 7/30/90 区分；
+// 比"单市场·今日"多了跨已监测市场加总，比 7 天合计少了历史平滑。
+const AGG_DAYS_OPTIONS = [1, 7, 30, 90] as const
 
 // 仪表盘有两套口径，必须给用户切换：
 //   today —— 单 (country,platform) 当日快照（ST 来源、可 force-refresh）
@@ -103,24 +105,28 @@ export default function Dashboard() {
   // 仪表盘是竞品速览：非 SLG 是纯噪声，会污染汇总/图表/Top 榜，故始终只看 SLG
   // （不给开关——「全部策略」属于排行榜页的探查动作）。今日榜需手动过滤;
   // 合计接口默认 slg_only=true，已在后端滤过。
-  const board: Array<{
+  //
+  // 两个视图统一按收入降序——单市场视图原本依赖 ST chart_type=topgrossing
+  // 的天然顺序（且有 is_slg 过滤后的位次跳号），现在显式重排让两视图的 #1
+  // 一律是"我们监测集合里收入最高的"，对得上下面排行的 #{i+1} 编号。
+  // null 收入排到尾（视为 0）。
+  const boardRaw: Array<{
     app_id: string
     name: string | null
     publisher: string | null
     icon_url: string | null
     downloads: number | null
     revenue: number | null
-    rank?: number | null
   }> = isTotal
     ? (totalQ.data ?? [])
     : (todayQ.data ?? []).filter(g => g.is_slg)
+  const board = [...boardRaw].sort((a, b) => (b.revenue ?? 0) - (a.revenue ?? 0))
 
   const totalDownloads = board.reduce((s, g) => s + (g.downloads || 0), 0)
   const totalRevenue = board.reduce((s, g) => s + (g.revenue || 0), 0)
   const topGame = board[0]
-  const topGameSub = isTotal
-    ? t.dashboard.statTopGameTotalSub
-    : `${t.dashboard.rankBadge} #${topGame?.rank ?? '—'}`
+  // 两个视图都按"收入位次"展示，副标统一成「TOP 收入」，不再展示 ST 原始 rank
+  const topGameSub = t.dashboard.statTopGameTotalSub
   const statSub = isTotal ? t.dashboard.periodSub(aggDays) : t.dashboard.worldwide
 
   // 两个图各按自己的指标排 Top 8；[...board] 复制后再 sort —— 别原地排序 React
@@ -150,8 +156,11 @@ export default function Dashboard() {
         { header: t.csv.downloadsToday, get: r => r.downloads ?? 0 },
       ])
     } else {
-      downloadCsv(`dashboard-${country}-${platform}-${date}.csv`, board, [
-        { header: t.csv.rank, get: r => r.rank ?? '' },
+      // 单市场视图 CSV：rank 字段改用收入位次（与页面排行号一致），不再
+      // 引用已弃用的 ST chart rank。位次随 board 已排好的顺序生成。
+      const positioned = board.map((g, i) => ({ ...g, position: i + 1 }))
+      downloadCsv(`dashboard-${country}-${platform}-${date}.csv`, positioned, [
+        { header: t.csv.rank, get: r => r.position },
         { header: t.csv.appId, get: r => r.app_id },
         { header: t.csv.gameName, get: r => r.name ?? '' },
         { header: t.csv.publisher, get: r => r.publisher ?? '' },
@@ -212,7 +221,7 @@ export default function Dashboard() {
                 onClick={() => setAggDays(d)}
                 className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${aggDays === d ? 'bg-brand-600 text-white' : 'text-secondary hover:text-primary'}`}
               >
-                {t.common.days(d)}
+                {d === 1 ? t.dashboard.aggDaysToday : t.common.days(d)}
               </button>
             ))}
           </div>
@@ -324,15 +333,10 @@ export default function Dashboard() {
                   className="px-5 py-3 flex items-center gap-4 hover:bg-elevated/50 cursor-pointer transition-colors"
                   onClick={() => navigate(`/game/${g.app_id}`)}
                 >
-                  {isTotal ? (
-                    <span className={`w-7 text-center text-sm font-bold ${i < 3 ? 'text-yellow-400' : 'text-muted'}`}>
-                      #{i + 1}
-                    </span>
-                  ) : (
-                    <span className={`w-7 text-center text-sm font-bold ${g.rank != null && g.rank <= 3 ? 'text-yellow-400' : 'text-muted'}`}>
-                      #{g.rank ?? '—'}
-                    </span>
-                  )}
+                  {/* 两视图统一按 board 收入降序后的位次编号；前 3 名高亮 */}
+                  <span className={`w-7 text-center text-sm font-bold ${i < 3 ? 'text-yellow-400' : 'text-muted'}`}>
+                    #{i + 1}
+                  </span>
                   <GameIcon src={g.icon_url} name={g.name ?? g.app_id} className="w-9 h-9 rounded-xl" />
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium text-primary truncate">{g.name}</div>
