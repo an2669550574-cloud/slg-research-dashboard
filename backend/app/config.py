@@ -49,6 +49,18 @@ class Settings(BaseSettings):
     # 不超过这个时长的快照，直接返回不消耗配额。设成跟 CACHE_TTL 一致即可。
     SENSOR_TOWER_SNAPSHOT_FRESH_HOURS: int = 24
 
+    # 拉 ST /v1/api_usage（公司账户级用量）的缓存窗口。本接口每次大概率自计
+    # organization.usage，TTL 宽点避免高频刷新自己撑爆公司总额；6h = 一天最多
+    # 4 次自查询，够即时性，又留足余量给业务调用。
+    SENSOR_TOWER_ACCOUNT_USAGE_TTL_HOURS: int = 6
+    # 公司账户池软预留：池剩余 ≤ 此值时本项目 try_consume 主动返 False，让出最后
+    # 几次给其他团队（避免我们一夜把池子拼光，导致他们的业务全断）。3000 池里留
+    # 30 缓冲，本项目日均同步约 12 次，相当于 2~3 天的安全余量。设 0 = 仅硬限。
+    SENSOR_TOWER_ORG_RESERVE: int = 30
+    # 公司账户池"黄色警示"门槛：池剩余 ≤ 此值时前端弹全局黄条提示用户。比
+    # ORG_RESERVE 高一档：给操作者预警窗口，"快没了"≠"已主动停"。
+    SENSOR_TOWER_ORG_LOW_THRESHOLD: int = 100
+
     # 每日 scheduler 同步的 (country, platform) 组合。逗号分隔 "country:platform"。
     # 每组每天约 2 次月度配额(1 拉榜 + 1 批量销量)，注意 500/月 硬上限。
     # 6 组 ≈ 360/月核心同步；安卓也覆盖 US/JP/KR，与 iOS 对称（详情页两端

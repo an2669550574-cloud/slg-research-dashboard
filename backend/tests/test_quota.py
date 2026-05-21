@@ -154,6 +154,197 @@ async def test_refund_decrements_and_floors_at_zero(client):
 
 
 @pytest.mark.asyncio
+async def test_try_consume_blocked_when_org_pool_in_reserved_band(client):
+    """公司池剩余 ≤ ORG_RESERVE 时 try_consume 返 False，且不动本地计数。
+
+    这是"对其他团队负责"的护栏：池子最后 30 次让出去，不要本项目一夜拼光。
+    """
+    from app.services import quota
+    from app.config import settings
+
+    # 灌一份 org pool 几近耗尽的 account_usage 快照
+    await quota.save_snapshot(quota.ACCOUNT_USAGE_KEY, {
+        "organization": {"usage": 2980, "limit": 3000, "tier": None},
+        "user": {"usage": 100},
+    })
+
+    with patch.object(settings, "SENSOR_TOWER_ORG_RESERVE", 30):
+        # 剩 20 ≤ 30 → 应被 reserve guard 拦下
+        assert await quota.try_consume() is False
+        # 本地 counter 不应被动到（拒绝路径根本没碰 _consume_in）
+        assert (await quota.current_usage())["used"] == 0
+
+
+@pytest.mark.asyncio
+async def test_try_consume_passes_when_org_pool_above_reserve(client):
+    """公司池剩余 > ORG_RESERVE 时仍可正常 consume。低/高阈值切换不影响放行。"""
+    from app.services import quota
+    from app.config import settings
+
+    await quota.save_snapshot(quota.ACCOUNT_USAGE_KEY, {
+        "organization": {"usage": 2000, "limit": 3000, "tier": None},
+        "user": {"usage": 100},
+    })
+
+    with patch.object(settings, "SENSOR_TOWER_ORG_RESERVE", 30):
+        assert await quota.try_consume() is True
+        assert (await quota.current_usage())["used"] == 1
+
+
+@pytest.mark.asyncio
+async def test_try_consume_passes_when_no_org_snapshot(client):
+    """缺账户用量快照（mock/启动初期）时不限流，保守放行。"""
+    from app.services import quota
+
+    # 不灌快照
+    assert await quota.try_consume() is True
+
+
+@pytest.mark.asyncio
+async def test_classify_state_thresholds(client):
+    """边界值：== reserve 算 reserved；== low 算 low；> low 算 normal。"""
+    from app.services import quota
+    from app.config import settings
+
+    with patch.object(settings, "SENSOR_TOWER_ORG_RESERVE", 30), \
+         patch.object(settings, "SENSOR_TOWER_ORG_LOW_THRESHOLD", 100):
+        assert quota._classify_state(None) == "normal"
+        assert quota._classify_state(101) == "normal"
+        assert quota._classify_state(100) == "low"
+        assert quota._classify_state(31) == "low"
+        assert quota._classify_state(30) == "reserved"
+        assert quota._classify_state(0) == "reserved"
+
+
+@pytest.mark.asyncio
+async def test_current_usage_reports_account_state(client):
+    """current_usage 暴露 account_state，前端据此决定弹什么色调的全局条。"""
+    from app.services import quota
+    from app.config import settings
+
+    async def fake_live():
+        return {
+            "organization": {"usage": 2950, "limit": 3000, "tier": None},
+            "user": {"usage": 100},
+        }
+
+    with patch.object(quota, "_fetch_account_usage_live", fake_live), \
+         patch.object(settings, "SENSOR_TOWER_ORG_RESERVE", 30), \
+         patch.object(settings, "SENSOR_TOWER_ORG_LOW_THRESHOLD", 100):
+        body = await quota.current_usage()
+
+    assert body["account_state"] == "low"  # 剩 50 ∈ (30, 100]
+    assert body["organization"]["remaining"] == 50
+
+
+@pytest.mark.asyncio
+async def test_get_account_usage_mock_mode_returns_none(client):
+    """mock 模式 / 无 API key 时不联网，直接返回 None；current_usage() 也带空字段。"""
+    from app.services import quota
+
+    # conftest 已把 USE_MOCK_DATA=true、SENSOR_TOWER_API_KEY="" 配好
+    assert await quota.get_account_usage() is None
+
+    body = await quota.current_usage()
+    assert body["organization"] is None
+    assert body["account_user_usage"] is None
+    assert body["account_stale"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_account_usage_caches_live_response(client):
+    """live 拉成功后写 snapshot；下次 TTL 内调用走缓存（不再打网络）。"""
+    from app.services import quota
+
+    fake_payload = {
+        "organization": {"usage": 2943, "limit": 3000, "tier": None},
+        "user": {"usage": 102},
+    }
+
+    call_count = {"n": 0}
+
+    async def fake_live():
+        call_count["n"] += 1
+        return fake_payload
+
+    with patch.object(quota, "_fetch_account_usage_live", fake_live):
+        first = await quota.get_account_usage()
+        assert first["organization"]["usage"] == 2943
+        assert first["user"]["usage"] == 102
+        assert first["stale"] is False
+        assert call_count["n"] == 1
+
+        # 第二次应当走 fresh snapshot，不再调 live
+        second = await quota.get_account_usage()
+        assert second["organization"]["usage"] == 2943
+        assert second["stale"] is False
+        assert call_count["n"] == 1, "TTL 内重复调用必须走缓存"
+
+
+@pytest.mark.asyncio
+async def test_get_account_usage_falls_back_to_stale_snapshot_on_failure(client):
+    """live 拉失败时回退到任何历史快照并标记 stale=True；无快照则返 None。"""
+    from app.services import quota
+    from sqlalchemy import text
+    from app.database import AsyncSessionLocal
+
+    # 无快照 + live 失败 → None
+    async def fail_live():
+        return None
+
+    with patch.object(quota, "_fetch_account_usage_live", fail_live):
+        assert await quota.get_account_usage() is None
+
+    # 灌一个旧快照并把 updated_at 推过 TTL，再让 live 失败 → 拿到 stale=True
+    fake = {
+        "organization": {"usage": 1500, "limit": 3000, "tier": None},
+        "user": {"usage": 50},
+    }
+    await quota.save_snapshot(quota.ACCOUNT_USAGE_KEY, fake)
+    async with AsyncSessionLocal() as s:
+        await s.execute(
+            text(
+                "UPDATE sensor_tower_snapshots SET updated_at = datetime('now', '-12 hours') "
+                "WHERE cache_key = :k"
+            ).bindparams(k=quota.ACCOUNT_USAGE_KEY)
+        )
+        await s.commit()
+
+    with patch.object(quota, "_fetch_account_usage_live", fail_live):
+        result = await quota.get_account_usage()
+        assert result is not None
+        assert result["organization"]["usage"] == 1500
+        assert result["stale"] is True
+
+
+@pytest.mark.asyncio
+async def test_current_usage_exposes_org_block_when_account_available(client):
+    """当 account_usage 有数据时，current_usage 暴露 organization 块（含 percentage）。"""
+    from app.services import quota
+
+    fake = {
+        "organization": {"usage": 2943, "limit": 3000, "tier": None},
+        "user": {"usage": 102},
+    }
+
+    async def fake_live():
+        return fake
+
+    with patch.object(quota, "_fetch_account_usage_live", fake_live):
+        body = await quota.current_usage()
+
+    assert body["organization"] == {
+        "usage": 2943,
+        "limit": 3000,
+        "remaining": 57,
+        "percentage": 98.1,  # round(2943/3000*100, 1)
+        "tier": None,
+    }
+    assert body["account_user_usage"] == 102
+    assert body["account_stale"] is False
+
+
+@pytest.mark.asyncio
 async def test_month_boundary_separate_counters(client):
     """模拟跨月：不同的 year_month 字符串各自计数互不干扰。"""
     from app.services import quota

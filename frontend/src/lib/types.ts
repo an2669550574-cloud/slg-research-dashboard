@@ -153,6 +153,24 @@ export interface MaterialTagCount {
 
 export type DataSource = 'real_api' | 'mock' | 'snapshot_stale'
 
+/** ST 公司账户级用量（/v1/api_usage 拉的，跨团队共享 3000/月）。
+ *  null = mock 模式 / 无 API key / 从未成功拉过——前端隐藏该行。 */
+export interface AccountOrgUsage {
+  usage: number | null
+  limit: number | null
+  /** limit - usage，公司池剩余次数；驱动全局警示条阈值判定 */
+  remaining: number | null
+  percentage: number
+  tier: string | null
+}
+
+/** 公司账户池状态（后端 quota._classify_state 给出）：
+ * - normal: 充裕，无需提示
+ * - low: 剩余 ≤ SENSOR_TOWER_ORG_LOW_THRESHOLD，弹黄条提醒
+ * - reserved: 剩余 ≤ SENSOR_TOWER_ORG_RESERVE，本项目已主动停拉，弹红条
+ */
+export type AccountState = 'normal' | 'low' | 'reserved'
+
 export interface QuotaInfo {
   year_month: string
   used: number
@@ -162,6 +180,14 @@ export interface QuotaInfo {
   exhausted: boolean
   data_source?: DataSource
   data_updated_at?: string | null
+  /** 公司账户级用量；null 表示无法获取（mock/无 key/拉取失败且无历史快照） */
+  organization?: AccountOrgUsage | null
+  /** 当前 token 持有者贡献的次数（ST 服务端口径，与本地 used 不同源） */
+  account_user_usage?: number | null
+  /** account_usage 是否走的是过期回退 */
+  account_stale?: boolean | null
+  /** 公司池状态：驱动全局警示条 + 本项目是否自停拉取 */
+  account_state?: AccountState
 }
 
 // ─── iTunes lookup（不是 Pydantic，但前端用到）──────────────────────────────

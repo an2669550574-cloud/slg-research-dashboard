@@ -11,6 +11,7 @@ import logging
 import math
 from typing import Any, Optional
 
+import httpx
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +19,10 @@ from app.config import settings
 from app.database import AsyncSessionLocal, utcnow_naive
 
 logger = logging.getLogger(__name__)
+
+# Sensor Tower /v1/api_usage 缓存键。下划线前缀确保不会与任何业务 cache_key
+# (sales:.../today:.../rankhist:...) 冲撞。同表复用，无需新建迁移。
+ACCOUNT_USAGE_KEY = "__sys:account_usage__"
 
 
 def current_year_month() -> str:
@@ -67,8 +72,54 @@ async def _consume_in(session: AsyncSession, ym: str, limit: int) -> bool:
     return True
 
 
+async def _org_remaining_cached() -> Optional[int]:
+    """读已缓存的 ST 账户用量算出公司池剩余（不打网络）。
+
+    走 load_snapshot 而非 get_account_usage：try_consume 是热路径，绝不能因为
+    查公司池又触发一次 live 拉取。如果缓存压根没有（mock 模式 / 启动后还没人
+    打开过 dashboard），返回 None，调用方按"不知道"处理（不限流，保守放行）。
+    """
+    snap = await load_snapshot(ACCOUNT_USAGE_KEY)
+    if snap is None:
+        return None
+    org = (snap.get("organization") or {})
+    usage, limit = org.get("usage"), org.get("limit")
+    if not isinstance(usage, int) or not isinstance(limit, int) or limit <= 0:
+        return None
+    return max(0, limit - usage)
+
+
+def _classify_state(remaining: Optional[int]) -> str:
+    """根据公司池剩余分类 normal / low / reserved。
+
+    None → normal（无信息，保守放行，等下一次 dashboard 拉到再分类）。
+    """
+    if remaining is None:
+        return "normal"
+    if remaining <= settings.SENSOR_TOWER_ORG_RESERVE:
+        return "reserved"
+    if remaining <= settings.SENSOR_TOWER_ORG_LOW_THRESHOLD:
+        return "low"
+    return "normal"
+
+
 async def try_consume() -> bool:
-    """尝试占用本月一次 API 调用配额；返回 True 表示允许调用。"""
+    """尝试占用本月一次 API 调用配额；返回 True 表示允许调用。
+
+    两道门：
+      1) 公司账户池软预留（reserved 状态）— 不要把池子最后几次拼光，让出给其他
+         团队。这里查的是已缓存的 account_usage 快照，不打额外网络。
+      2) 本项目本地月度上限（独立的硬护栏，防止某个 bug 一夜烧穿）。
+    """
+    remaining = await _org_remaining_cached()
+    if _classify_state(remaining) == "reserved":
+        logger.warning(
+            "Sensor Tower call refused: org pool reserve guard (remaining=%s ≤ %d). "
+            "Serving snapshot/mock instead.",
+            remaining, settings.SENSOR_TOWER_ORG_RESERVE,
+        )
+        return False
+
     limit = settings.SENSOR_TOWER_MONTHLY_LIMIT
     ym = current_year_month()
     async with AsyncSessionLocal() as session:
@@ -91,8 +142,69 @@ async def refund() -> None:
         await session.commit()
 
 
+def _percent(used: int | None, limit: int | None) -> float:
+    if not used or not limit or limit <= 0:
+        return 0.0
+    return round(used / limit * 100, 1)
+
+
+async def _fetch_account_usage_live() -> Optional[dict]:
+    """直连 ST /v1/api_usage 取账户级用量。失败返回 None。
+
+    本端点本身大概率会让 ST 服务端 organization.usage +1（swagger 无说明，
+    探测时观察到的现实），但**不计本地 api_quota_monthly**——故意走裸 httpx
+    不走 try_consume。用一次"自查询"换全局可见度，TTL 控制频率即可。
+    返回外层有 {data: {...}} 包裹（swagger 没标），剥一层再解析。
+    """
+    if settings.USE_MOCK_DATA or not settings.SENSOR_TOWER_API_KEY:
+        return None
+    url = f"{settings.SENSOR_TOWER_BASE_URL}/v1/api_usage"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.get(url, params={"auth_token": settings.SENSOR_TOWER_API_KEY})
+            r.raise_for_status()
+            data = r.json()
+    except (httpx.HTTPError, ValueError) as e:
+        logger.error("Failed to fetch ST /v1/api_usage: %s", e)
+        return None
+    inner = data.get("data", data) if isinstance(data, dict) else {}
+    org = inner.get("organization") or {}
+    usr = inner.get("user") or {}
+    return {
+        "organization": {
+            "usage": org.get("usage"),
+            "limit": org.get("limit"),
+            "tier": org.get("tier"),
+        },
+        "user": {"usage": usr.get("usage")},
+    }
+
+
+async def get_account_usage() -> Optional[dict]:
+    """TTL-缓存的 ST 账户级用量。返回 {organization, user, stale} 或 None。
+
+    fresh → 返回缓存（stale=False，不打网络）；
+    stale/缺失 → 拉实时，成功落 snapshot；
+    实时也失败 → 回退到任何历史快照并标记 stale=True；
+    都没有 → 返回 None（前端隐藏 org 行）。
+    """
+    ttl_seconds = settings.SENSOR_TOWER_ACCOUNT_USAGE_TTL_HOURS * 3600
+    fresh = await load_snapshot_if_fresh(ACCOUNT_USAGE_KEY, ttl_seconds)
+    if fresh is not None:
+        return {**fresh, "stale": False}
+    live = await _fetch_account_usage_live()
+    if live is not None:
+        await save_snapshot(ACCOUNT_USAGE_KEY, live)
+        return {**live, "stale": False}
+    stale = await load_snapshot(ACCOUNT_USAGE_KEY)
+    if stale is not None:
+        return {**stale, "stale": True}
+    return None
+
+
 async def current_usage() -> dict:
-    """返回 {year_month, used, limit, remaining, percentage, data_source, data_updated_at} 供前端展示。"""
+    """返回 {year_month, used, limit, remaining, percentage, data_source, data_updated_at,
+    organization, account_user_usage, account_stale} 供前端展示。"""
     limit = settings.SENSOR_TOWER_MONTHLY_LIMIT
     ym = current_year_month()
     async with AsyncSessionLocal() as session:
@@ -125,6 +237,31 @@ async def current_usage() -> dict:
         data_source = "real_api"
 
     remaining = max(0, limit - used)
+
+    # 公司账户级用量（ST 全局共享池），独立的可见性，跟本地 used 不同口径。
+    account = await get_account_usage()
+    org_block: Optional[dict] = None
+    account_user_usage: Optional[int] = None
+    account_stale: Optional[bool] = None
+    org_remaining: Optional[int] = None
+    if account is not None:
+        org = account.get("organization") or {}
+        org_usage = org.get("usage")
+        org_limit = org.get("limit")
+        if isinstance(org_usage, int) and isinstance(org_limit, int) and org_limit > 0:
+            org_remaining = max(0, org_limit - org_usage)
+        org_block = {
+            "usage": org_usage,
+            "limit": org_limit,
+            "remaining": org_remaining,
+            "percentage": _percent(org_usage, org_limit),
+            "tier": org.get("tier"),
+        }
+        account_user_usage = (account.get("user") or {}).get("usage")
+        account_stale = account.get("stale")
+
+    account_state = _classify_state(org_remaining)
+
     return {
         "year_month": ym,
         "used": used,
@@ -134,6 +271,12 @@ async def current_usage() -> dict:
         "exhausted": exhausted,
         "data_source": data_source,
         "data_updated_at": data_updated_at,
+        "organization": org_block,
+        "account_user_usage": account_user_usage,
+        "account_stale": account_stale,
+        # normal / low / reserved — 前端按此决定是否弹全局警示条。
+        # reserved 时本项目 try_consume 已自动停拉，UI 同步告知用户原因。
+        "account_state": account_state,
     }
 
 

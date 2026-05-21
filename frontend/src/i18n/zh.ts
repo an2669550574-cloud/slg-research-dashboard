@@ -76,6 +76,18 @@ export const zh = {
     quotaResetHint: (ym: string) => `${ym} · 月初 1 号自动重置`,
     quotaExhausted: '本月配额已用尽，正在显示历史快照数据',
     quotaWarning: '本月配额已用 80%，请节约调用',
+    // 公司账户级（ST 全局共享池）——比本项目计数更重要的硬约束
+    quotaOrgLabel: '公司账户本月（ST 共享池）',
+    quotaOrgWarning: '公司账户用量已超 80%，调用前请评估',
+    quotaOrgExhausted: '公司账户额度已耗尽，新请求会被 ST 拒绝',
+    quotaProjectLabel: '其中本项目',
+    quotaProjectSuffix: (n: number) => `${n} 次`,
+    quotaAccountStale: '账户用量读取失败，下方数字来自历史快照',
+    // 全站警示条（GlobalQuotaAlert）
+    globalAlertLow: (remaining: number) =>
+      `公司 Sensor Tower 配额仅剩 ${remaining} 次，本页面数据可能无法拉取到最新值`,
+    globalAlertReserved:
+      '公司 Sensor Tower 配额已耗尽，本项目暂停调用 API；所有页面数据均来自历史快照',
     dataSourceLabel: '数据来源',
     dataSource: (src: string) => ({ real_api: '实时 API', mock: 'Mock 数据', snapshot_stale: '历史快照' }[src] || src),
     dataUpdatedAt: '更新时间',

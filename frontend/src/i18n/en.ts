@@ -77,6 +77,16 @@ export const en: Translations = {
     quotaResetHint: (ym: string) => `${ym} · resets on the 1st`,
     quotaExhausted: 'Monthly quota exhausted — serving last cached snapshots',
     quotaWarning: 'Monthly quota over 80% — please use carefully',
+    quotaOrgLabel: 'Org account this month (ST shared pool)',
+    quotaOrgWarning: 'Org account over 80% — review usage before more calls',
+    quotaOrgExhausted: 'Org account quota exhausted — new requests will be rejected by ST',
+    quotaProjectLabel: 'This project',
+    quotaProjectSuffix: (n: number) => `${n} calls`,
+    quotaAccountStale: 'Failed to read account usage — numbers below are from a cached snapshot',
+    globalAlertLow: (remaining: number) =>
+      `Only ${remaining} Sensor Tower calls left in the org pool — this page may not show the freshest data`,
+    globalAlertReserved:
+      'Org Sensor Tower quota exhausted — this project has stopped calling the API; all pages serve cached snapshots',
     dataSourceLabel: 'Data source',
     dataSource: (src: string) => ({ real_api: 'Live API', mock: 'Mock data', snapshot_stale: 'Cached snapshot' }[src] || src),
     dataUpdatedAt: 'Updated',

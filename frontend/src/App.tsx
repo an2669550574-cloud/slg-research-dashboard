@@ -4,6 +4,7 @@ import { LayoutDashboard, Trophy, Gamepad2, BookImage, Sun, Moon, Languages, Set
 import { cn } from './lib/utils'
 import { useTheme } from './lib/theme'
 import { useLocale, setLocale, useT } from './i18n'
+import { GlobalQuotaAlert } from './components/GlobalQuotaAlert'
 
 // 路由级拆包：每页（含 recharts 等重依赖）单独 chunk，首屏只下当前页。
 const Dashboard = lazy(() => import('./pages/Dashboard'))
@@ -119,6 +120,8 @@ export default function App() {
         <Sidebar open={menuOpen} onNavigate={() => setMenuOpen(false)} />
         <div className="flex-1 flex flex-col min-w-0">
           <MobileTopBar onMenu={() => setMenuOpen(true)} />
+          {/* 全站警示条：公司 ST 池处于 low/reserved 时出现；shrink-0 不被 main 滚动吞掉 */}
+          <GlobalQuotaAlert />
           <main className="flex-1 overflow-y-auto">
             <Suspense fallback={<PageFallback />}>
               <Routes>
