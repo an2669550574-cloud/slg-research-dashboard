@@ -67,6 +67,8 @@ export interface MetricsParams {
   start_date?: string
   end_date?: string
   aggregate?: boolean
+  /** 把同款 iOS+Android 姐妹 app_id 一起合并，避免详情页只看到当前 app_id 的半边 */
+  merge_siblings?: boolean
 }
 
 export const gamesApi = {
@@ -78,8 +80,10 @@ export const gamesApi = {
     api.get('/games/rankings', { params: { country, platform } }).then(r => r.data),
   get: (appId: string): Promise<GameOut> =>
     api.get(`/games/${appId}`).then(r => r.data),
-  coverage: (appId: string): Promise<MetricsCoverage[]> =>
-    api.get(`/games/${appId}/coverage`).then(r => r.data),
+  coverage: (appId: string, opts: { mergeSiblings?: boolean } = {}): Promise<MetricsCoverage[]> =>
+    api.get(`/games/${appId}/coverage`, {
+      params: opts.mergeSiblings ? { merge_siblings: true } : undefined,
+    }).then(r => r.data),
   aggregateLeaderboard: (params: { days?: number; slg_only?: boolean; limit?: number } = {}): Promise<AggregateLeaderboardOut[]> =>
     api.get('/games/aggregate-leaderboard', { params }).then(r => r.data),
   metrics: (appId: string, params: MetricsParams = {}): Promise<MetricsOut> =>

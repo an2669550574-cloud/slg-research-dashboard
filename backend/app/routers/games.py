@@ -8,6 +8,7 @@ from app.rate_limit import refresh_cooldown
 from app.services.sensor_tower import sensor_tower_service, MOCK_SLG_GAMES, _resolve_window
 from app.services.appstore import fetch_app_info
 from app.services.slg_publishers import is_slg
+from app.services.sibling_match import find_sibling_app_ids
 from app.scheduler import sync_daily_rankings
 from app.config import settings
 from app.schemas import GameCreate, GameOut, GameUpdate, RankingTodayOut, MetricsOut, MetricsCoverage, AggregateLeaderboardOut
@@ -274,7 +275,11 @@ async def delete_game(app_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{app_id}/coverage", response_model=list[MetricsCoverage])
-async def get_game_metrics_coverage(app_id: str, db: AsyncSession = Depends(get_db)):
+async def get_game_metrics_coverage(
+    app_id: str,
+    merge_siblings: bool = Query(False, description="跨同款 iOS/Android 姐妹 app_id 合并市场列表"),
+    db: AsyncSession = Depends(get_db),
+):
     """该 app 在本地 game_rankings 里实际有数据的 (国家,平台) 组合。
 
     详情页图表曾死写 US/ios，但库里只按 SYNC_RANKING_COMBOS 累积，多数 app
@@ -282,7 +287,12 @@ async def get_game_metrics_coverage(app_id: str, db: AsyncSession = Depends(get_
     前端拿这个列表渲染国家/平台切换，默认选销量覆盖最全的组合。**零 ST 配额**
     （纯本地聚合，与发展历程同源）。返回按"销量天数多→少、再按 SYNC_RANKING_COMBOS
     偏好序"排，故 items[0] 即最佳默认。
+
+    `merge_siblings=true`：同款游戏的 iOS app_id 与 Android app_id 在表里独立累积；
+    开启后把姐妹 app_id 的覆盖一并算上，让详情页 chip 一次性看到 iOS+Android 所有
+    市场。识别规则见 [[sibling_match]]。
     """
+    app_ids = await find_sibling_app_ids(db, app_id) if merge_siblings else [app_id]
     res = await db.execute(
         select(
             GameRanking.country,
@@ -291,7 +301,7 @@ async def get_game_metrics_coverage(app_id: str, db: AsyncSession = Depends(get_
             func.count(GameRanking.revenue).label("sales_days"),
             func.count(GameRanking.rank).label("rank_days"),
         )
-        .where(GameRanking.app_id == app_id)
+        .where(GameRanking.app_id.in_(app_ids))
         .group_by(GameRanking.country, GameRanking.platform)
     )
     pref = {cp: i for i, cp in enumerate(settings.sync_combos_list)}
@@ -312,8 +322,14 @@ async def get_game_metrics(
     start_date: Optional[str] = Query(None, description="YYYY-MM-DD；与 end_date 同时提供时优先于 days"),
     end_date: Optional[str] = Query(None, description="YYYY-MM-DD"),
     aggregate: bool = Query(False, description="跨该 app 全部已监测市场按日合计下载/收入"),
+    merge_siblings: bool = Query(False, description="跨同款 iOS/Android 姐妹 app_id 合并数据"),
     db: AsyncSession = Depends(get_db),
 ):
+    # 与 coverage 同：开启 merge_siblings 则把姐妹 app_id 视为同款一起算。
+    # 单市场 (country,platform) 路径：sibling 列表里通常只有 1 个 app_id 真有该
+    # 组合的数据，IN 查询自然只命中那一个；不会因为 sibling 制造重复行。
+    app_ids = await find_sibling_app_ids(db, app_id) if merge_siblings else [app_id]
+
     if aggregate:
         # 单产品总计：把该 app 在 game_rankings 里所有 (国家,平台) 行按日
         # 求和 —— 纯本地、零 ST 配额、与发展历程同源。(app_id,date,country,
@@ -326,7 +342,7 @@ async def get_game_metrics(
                 func.sum(GameRanking.downloads),
                 func.sum(GameRanking.revenue),
             ).where(
-                GameRanking.app_id == app_id,
+                GameRanking.app_id.in_(app_ids),
                 GameRanking.date >= win[0],
                 GameRanking.date <= win[-1],
             ).group_by(GameRanking.date).order_by(GameRanking.date)
@@ -349,7 +365,7 @@ async def get_game_metrics(
     win = _resolve_window(days, start_date, end_date)
     res = await db.execute(
         select(GameRanking.date, GameRanking.rank, GameRanking.downloads, GameRanking.revenue).where(
-            GameRanking.app_id == app_id,
+            GameRanking.app_id.in_(app_ids),
             GameRanking.country == country,
             GameRanking.platform == platform,
             GameRanking.date >= win[0],

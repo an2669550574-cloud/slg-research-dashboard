@@ -360,10 +360,12 @@ export default function GameDetail() {
   // 选中市场：'all' = 跨已监测市场合计（默认，每款产品一致）；否则具体组合
   const [sel, setSel] = useState<'all' | { country: string; platform: string }>('all')
 
-  // 该 app 本地实际有数据的国家/平台组合（零 ST 配额，纯本地聚合）。
+  // 该 app + 同款姐妹 app_id（iOS+Android 同款）本地实际有数据的国家/平台组合。
+  // 永远开 merge_siblings——与仪表盘合计视图同口径，详情页才不会出现"只有 Android
+  // 市场 chip、找不到 iOS 数据"的违和感。零 ST 配额（纯本地聚合）。
   const { data: coverage } = useQuery({
-    queryKey: ['coverage', appId],
-    queryFn: () => gamesApi.coverage(appId!),
+    queryKey: ['coverage', appId, 'siblings'],
+    queryFn: () => gamesApi.coverage(appId!, { mergeSiblings: true }),
     enabled: !!appId,
   })
 
@@ -371,11 +373,11 @@ export default function GameDetail() {
     ? { days: range.days }
     : { start_date: range.start, end_date: range.end }
 
-  // 单产品总计：跨该 app 全部已监测市场按日合计。纯本地、零 ST 配额。
+  // 单产品总计：跨该 app + 姐妹 app_id 全部已监测市场按日合计。零 ST 配额。
   // 始终拉取——既驱动头部"合计"指标，也作合计视图的图表数据。
   const { data: aggMetrics, isLoading: aggLoading, isError: aggError, refetch: refetchAgg } = useQuery({
-    queryKey: ['metrics', appId, range, 'agg'],
-    queryFn: () => gamesApi.metrics(appId!, { ...baseRange, aggregate: true }),
+    queryKey: ['metrics', appId, range, 'agg', 'siblings'],
+    queryFn: () => gamesApi.metrics(appId!, { ...baseRange, aggregate: true, merge_siblings: true }),
     enabled: !!appId,
   })
 
@@ -383,9 +385,11 @@ export default function GameDetail() {
   const combo = isAll ? null : sel
 
   // 具体市场视图：单组合 rank/下载/收入（含排名走势）。仅选了具体市场才拉。
+  // merge_siblings=true 让用户落到 Android app_id URL 上但点 US·iOS chip 时，
+  // 后端能从同款 iOS app_id 兜出数据（否则该组合查空）。
   const { data: comboMetrics, isLoading: comboLoading, isError: comboError, refetch: refetchCombo } = useQuery({
-    queryKey: ['metrics', appId, range, combo?.country, combo?.platform],
-    queryFn: () => gamesApi.metrics(appId!, { ...baseRange, country: combo!.country, platform: combo!.platform }),
+    queryKey: ['metrics', appId, range, combo?.country, combo?.platform, 'siblings'],
+    queryFn: () => gamesApi.metrics(appId!, { ...baseRange, country: combo!.country, platform: combo!.platform, merge_siblings: true }),
     enabled: !!appId && !isAll,
   })
 
