@@ -3,7 +3,9 @@
 来源（零 ST 配额、无 Anthropic）：
 - iTunes 元信息：优先 tw 区（繁中本地化）取上线日 + 当前版本号 + 官方
   更新说明；tw 查不到回退 us（仅取日期，绝不往界面贴英文营销文案）。
-  仅 iOS 数字 app_id 命中；Android 包名查不到（iTunes 没安卓）。
+  仅 iOS 数字 app_id 命中；Android 包名 iTunes 没有 → **借同款 iOS 姐妹
+  app_id 的元信息**（与详情页跨平台合并同源），让 Android 详情页也能看到
+  上线日 + 当前版本。
 - 本地 game_rankings（每日调度累积）：首次纳入监测、上榜阈值突破、
   自监测起最高排名、单日收入峰值、多市场覆盖。文案只说「自监测起」，
   不谎称「史上」；阈值/峰值类随天数累积自动变厚。
@@ -11,12 +13,25 @@
 真营销事件（超级碗广告 / KOL 投放）无任何数据源 → 只能「手动添加」。
 """
 import logging
+from typing import Optional
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.game import GameRanking
 from app.services.appstore import fetch_app_info
+from app.services.sibling_match import find_sibling_app_ids
 
 logger = logging.getLogger(__name__)
+
+
+async def _resolve_itunes_info(app_id: str) -> tuple[Optional[dict], bool]:
+    """繁中优先取上线 + 当前版本 + 更新说明，查不到回退英文 us 区（仅取日期）。
+    返回 (info, has_chinese_text)。"""
+    info = await fetch_app_info(app_id, country="tw")
+    if info is not None:
+        return info, True
+    info = await fetch_app_info(app_id, country="us")
+    return info, False
 
 # 阈值由严到松；debut 即达标的不算「突破」（debut 事件已表述）
 _RANK_TIERS = ((1, "登顶畅销榜 #1"), (3, "进入畅销榜 Top 3"), (10, "进入畅销榜 Top 10"))
@@ -31,14 +46,28 @@ async def build_history(app_id: str, db: AsyncSession) -> list[dict]:
     events: list[dict] = []
 
     # iTunes：优先繁中（tw），查不到回退 us。zh_text=False 时不取其英文文案。
-    info = await fetch_app_info(app_id, country="tw")
-    zh_text = info is not None
+    info, zh_text = await _resolve_itunes_info(app_id)
+
+    # Android 包名 iTunes 查不到 → 找同款 iOS 姐妹（与详情页跨平台合并同款规则
+    # 对齐）。这样 Android 详情页也能看到「上线日 / 当前版本说明」，与 iOS 详情
+    # 页观感对齐。借来的事件文案仍以"App Store/iOS"措辞为准，明示其来源。
+    info_borrowed_from: Optional[str] = None
     if info is None:
-        info = await fetch_app_info(app_id, country="us")
+        for sib in await find_sibling_app_ids(db, app_id):
+            if sib == app_id:
+                continue
+            info, zh_text = await _resolve_itunes_info(sib)
+            if info is not None:
+                info_borrowed_from = sib
+                break
 
     if info:
         name = info.get("name") or app_id
         pub = info.get("publisher") or "未知发行商"
+        # 借姐妹时在标题里标 "iOS" 让用户知道这是 iOS 版的数据（站在 Android
+        # 详情页上时不致误读为 Android 自身版本）。本身就是 iOS app_id 时保持
+        # 原措辞不变。
+        ver_prefix = "iOS " if info_borrowed_from else ""
         if info.get("release_date"):
             events.append({
                 "event_date": info["release_date"],
@@ -51,7 +80,7 @@ async def build_history(app_id: str, db: AsyncSession) -> list[dict]:
             events.append({
                 "event_date": info["current_version_date"],
                 "event_type": "version",
-                "title": f"更新至 v{info['version']}",
+                "title": f"{ver_prefix}更新至 v{info['version']}",
                 "description": notes[:500] or "App Store 当前版本（暂无中文更新说明）。",
             })
 

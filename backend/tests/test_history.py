@@ -87,6 +87,59 @@ async def test_sync_no_sources_yields_empty_but_200(client):
     assert (await client.get("/api/history/com.unknown.pkg")).json() == []
 
 
+async def test_sync_android_borrows_itunes_from_ios_sibling(client):
+    """Android 包名 iTunes 直查 None → 借同款 iOS 姐妹 app_id 的 iTunes 元信息，
+    让 Android 详情页也能看到上线日 + 当前版本。借来的版本标题加 'iOS' 前缀以
+    明示来源。"""
+    from app.database import AsyncSessionLocal
+    from app.models.game import GameRanking
+
+    # 灌两条 game_rankings 建立姐妹关系（同 publisher + 同 normalized 名字）
+    async with AsyncSessionLocal() as db:
+        db.add(GameRanking(
+            app_id="6448786147", date="2026-05-17", rank=1, downloads=100,
+            revenue=10000.0, country="US", platform="ios",
+            name="Last War:Survival", publisher="FUNFLY PTE. LTD."))
+        db.add(GameRanking(
+            app_id="com.fun.lastwar.gp", date="2026-05-17", rank=1, downloads=80,
+            revenue=8000.0, country="US", platform="android",
+            name="Last War:Survival Game", publisher="FUNFLY PTE. LTD."))
+        await db.commit()
+
+    ios_itunes = {
+        "name": "Last War:Survival", "publisher": "FUNFLY PTE. LTD.",
+        "release_date": "2023-06-30",
+        "current_version_date": "2026-05-15",
+        "version": "1.0.230",
+        "release_notes": "新增春季祭活動",
+    }
+
+    # 关键：Android 包名首次查 → None；iOS 数字 id 才返数据
+    async def fake_fetch(app_id, country="us"):
+        if app_id == "6448786147":
+            return ios_itunes
+        return None
+
+    with patch("app.services.history_builder.fetch_app_info", new=AsyncMock(side_effect=fake_fetch)):
+        # 调 Android 变体的同步：应当从 iOS 姐妹借数据
+        r = await client.post("/api/history/sync/com.fun.lastwar.gp")
+        assert r.status_code == 200
+
+        events = (await client.get("/api/history/com.fun.lastwar.gp")).json()
+        titles = [e["title"] for e in events]
+        # 上线事件借自 iOS 姐妹
+        assert any("App Store 全球上线" in t for t in titles), titles
+        # 版本事件加了 "iOS" 前缀，明示数据来源
+        assert any("iOS 更新至 v1.0.230" in t for t in titles), titles
+
+        # 反例：iOS 详情页同步时不应有 iOS 前缀（原地就是 iOS 数据，无需标注）
+        r2 = await client.post("/api/history/sync/6448786147")
+        assert r2.status_code == 200
+        ios_titles = [e["title"] for e in (await client.get("/api/history/6448786147")).json()]
+        assert any("更新至 v1.0.230" in t for t in ios_titles)
+        assert not any("iOS 更新至" in t for t in ios_titles), ios_titles
+
+
 async def test_sync_preserves_manual_events(client):
     """重新同步只清 source!=manual，手动录入保留。"""
     await _seed_rankings("appZ")
