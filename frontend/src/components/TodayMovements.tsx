@@ -59,7 +59,10 @@ export function TodayMovements() {
       {events.length === 0 ? (
         <p className="text-xs text-muted py-2">{t.dashboard.movementsEmpty}</p>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+        // flex-wrap + flex-1 让末行卡片自动撑满剩余宽度（5 张就是 3+2 加宽，而
+        // 不是 3+2 加空缺）。min-w-[280px] 保证小屏自然换行。不用 grid 是因为
+        // grid 会硬切出空槽位，与"零伪造数据"的展示原则不符。
+        <div className="flex flex-wrap gap-2">
           {events.map((e, i) => (
             <MovementCard key={`${e.kind}-${e.app_id}-${e.country}-${e.platform}-${i}`}
               event={e} onClick={() => navigate(`/game/${e.app_id}`)} />
@@ -99,7 +102,7 @@ function MovementCard({ event, onClick }: { event: MovementEvent; onClick: () =>
   return (
     <button
       onClick={onClick}
-      className="group relative text-left rounded-lg border border-default bg-surface p-3 pl-3.5 transition-colors hover:border-strong hover:bg-elevated/40 overflow-hidden"
+      className="group relative flex-1 basis-0 min-w-[280px] text-left rounded-lg border border-default bg-surface p-3 pl-3.5 transition-colors hover:border-strong hover:bg-elevated/40 overflow-hidden"
     >
       {/* 类别色仅出现在左侧细条 + 图标/标签，卡片主体保持中性以降低视觉噪音 */}
       <span aria-hidden className={`absolute left-0 top-0 bottom-0 w-1 ${meta.rail}`} />
