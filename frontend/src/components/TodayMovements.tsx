@@ -13,11 +13,14 @@ import type { MovementEvent, MovementKind } from '../lib/types'
  * 设计：紧凑横向卡片列表，按重要性已在后端排好序。每张卡片含图标、游戏名、
  * 市场标签、变化描述；点击跳详情。空态/冷库态分别有提示。零 ST 配额。
  */
-const KIND_META: Record<MovementKind, { icon: typeof TrendingUp; cls: string; ring: string }> = {
-  new_entrant:    { icon: Sparkles,      cls: 'text-emerald-300', ring: 'border-emerald-900/60 bg-emerald-950/30' },
-  surge:          { icon: TrendingUp,    cls: 'text-emerald-300', ring: 'border-emerald-900/40 bg-emerald-950/20' },
-  drop:           { icon: TrendingDown,  cls: 'text-red-300',     ring: 'border-red-900/50 bg-red-950/30' },
-  revenue_spike:  { icon: DollarSign,    cls: 'text-yellow-300',  ring: 'border-yellow-900/50 bg-yellow-950/25' },
+// 卡片本体用中性 surface 背景（亮/暗双模式都干净），用左侧细色条 + 图标 + 标签
+// 文字传达类别色，避免把整块卡片染色——之前 bg-emerald-950/30 在亮色模式下是
+// 显眼的绿色块，与"情报终端"低噪音风格不符。
+const KIND_META: Record<MovementKind, { icon: typeof TrendingUp; tone: string; rail: string }> = {
+  new_entrant:    { icon: Sparkles,      tone: 'text-emerald-500 dark:text-emerald-300', rail: 'bg-emerald-500' },
+  surge:          { icon: TrendingUp,    tone: 'text-emerald-500 dark:text-emerald-300', rail: 'bg-emerald-500' },
+  drop:           { icon: TrendingDown,  tone: 'text-red-500 dark:text-red-300',         rail: 'bg-red-500' },
+  revenue_spike:  { icon: DollarSign,    tone: 'text-yellow-600 dark:text-yellow-300',   rail: 'bg-yellow-500' },
 }
 
 function marketLabel(country: string, platform: string): string {
@@ -96,14 +99,16 @@ function MovementCard({ event, onClick }: { event: MovementEvent; onClick: () =>
   return (
     <button
       onClick={onClick}
-      className={`group text-left rounded-lg border ${meta.ring} p-3 transition-colors hover:border-strong hover:bg-elevated/30`}
+      className="group relative text-left rounded-lg border border-default bg-surface p-3 pl-3.5 transition-colors hover:border-strong hover:bg-elevated/40 overflow-hidden"
     >
+      {/* 类别色仅出现在左侧细条 + 图标/标签，卡片主体保持中性以降低视觉噪音 */}
+      <span aria-hidden className={`absolute left-0 top-0 bottom-0 w-1 ${meta.rail}`} />
       <div className="flex items-start gap-2.5">
         <GameIcon src={event.icon_url} name={event.name} className="w-9 h-9 rounded-lg shrink-0" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
-            <Icon size={11} className={meta.cls} />
-            <span className={`text-[10px] font-semibold uppercase tracking-wide ${meta.cls}`}>{kindLabel}</span>
+            <Icon size={11} className={meta.tone} />
+            <span className={`text-[10px] font-semibold uppercase tracking-wide ${meta.tone}`}>{kindLabel}</span>
             <span className="text-[10px] text-muted ml-auto shrink-0">{marketLabel(event.country, event.platform)}</span>
           </div>
           <div className="mt-1 text-sm text-primary truncate font-medium">{event.name}</div>

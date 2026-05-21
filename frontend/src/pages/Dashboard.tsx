@@ -235,7 +235,12 @@ export default function Dashboard() {
         )}
       </PageHeader>
 
-      <QuotaBanner quota={quota} />
+      {/* QuotaBanner 仅在 normal 状态展示。low/reserved 时全站顶部警示条已说同样
+          的事（"公司池剩 N 次"），这里再挂一份大 Banner 会让仪表盘头部臃肿；
+          normal 时保留它，让用户随时能看到公司池/本项目用量明细。 */}
+      {quota?.account_state !== 'low' && quota?.account_state !== 'reserved' && (
+        <QuotaBanner quota={quota} />
+      )}
 
       {/* 视图切换 + 当前视图的副选项 */}
       <div className="flex flex-wrap items-center gap-3">
