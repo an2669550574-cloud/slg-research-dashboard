@@ -14,6 +14,7 @@ import { QueryError } from '../components/QueryError'
 import { PageHeader } from '../components/PageHeader'
 import { useLocalStorageState } from '../lib/hooks'
 import { COUNTRIES, PLATFORMS, platformLabel, type Country, type Platform } from '../lib/markets'
+import { mergeCrossPlatform, type AggRow } from '../lib/aggregateMerge'
 
 function StatCard({ icon: Icon, label, value, sub, color }: any) {
   return (
@@ -139,26 +140,23 @@ export default function Dashboard() {
   // 的天然顺序（且有 is_slg 过滤后的位次跳号），现在显式重排让两视图的 #1
   // 一律是"我们监测集合里收入最高的"，对得上下面排行的 #{i+1} 编号。
   // null 收入排到尾（视为 0）。
-  const boardRaw: Array<{
-    app_id: string
-    name: string | null
-    publisher: string | null
-    icon_url: string | null
-    downloads: number | null
-    revenue: number | null
-  }> = isTotal
-    ? (totalQ.data ?? [])
-    : (todayQ.data ?? []).filter(g => g.is_slg)
-  // 合计视图：用美区参考表覆盖 name/publisher/icon；单市场视图不覆盖（本身就是
-  // 选定市场的口径）。app_id 不在参考表里时保留原值（榜外/纯安卓且 US 未覆盖等）。
-  const board = [...boardRaw]
-    .sort((a, b) => (b.revenue ?? 0) - (a.revenue ?? 0))
-    .map(g => {
-      if (!isTotal) return g
+  // 合计视图：先用美区参考表覆盖 name/publisher/icon（同款不同市场观感统一），
+  // 再做跨平台合并（同款 iOS/Android 合成一行），最后按合并收入降序。
+  // 单市场视图：不覆盖名字（本身就是该市场口径），也不合并（同市场天然不会跨平台
+  // 重复），仅按收入降序排。useMemo 依赖 react-query 缓存数据的稳定引用。
+  const board = useMemo<AggRow[]>(() => {
+    const raw: AggRow[] = isTotal
+      ? (totalQ.data ?? [])
+      : (todayQ.data ?? []).filter(g => g.is_slg)
+    if (!isTotal) {
+      return [...raw].sort((a, b) => (b.revenue ?? 0) - (a.revenue ?? 0))
+    }
+    const normalized = raw.map(g => {
       const us = usNameMap.get(g.app_id)
-      if (!us) return g
-      return { ...g, name: us.name, publisher: us.publisher, icon_url: us.icon_url }
+      return us ? { ...g, name: us.name, publisher: us.publisher, icon_url: us.icon_url } : g
     })
+    return mergeCrossPlatform(normalized)
+  }, [isTotal, totalQ.data, todayQ.data, usNameMap])
 
   const totalDownloads = board.reduce((s, g) => s + (g.downloads || 0), 0)
   const totalRevenue = board.reduce((s, g) => s + (g.revenue || 0), 0)
