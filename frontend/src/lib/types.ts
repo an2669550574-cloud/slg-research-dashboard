@@ -197,6 +197,18 @@ export interface AccountOrgUsage {
  */
 export type AccountState = 'normal' | 'low' | 'reserved'
 
+/** GET /api/quota/history：近 N 天本项目每日调用次数,缺失天填 0。
+ *  仅本项目计数(api_quota_daily),不含公司池;前向记录(daily 表上线前的日子全 0)。 */
+export interface QuotaHistoryPoint {
+  date: string  // "YYYY-MM-DD"
+  count: number
+}
+
+export interface QuotaHistoryOut {
+  days: number
+  points: QuotaHistoryPoint[]
+}
+
 export interface QuotaInfo {
   year_month: string
   used: number

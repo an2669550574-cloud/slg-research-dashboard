@@ -9,6 +9,7 @@ import { TrendingUp, Download, DollarSign, Trophy, RefreshCw, Download as Downlo
 import { CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis } from 'recharts'
 import { useNavigate } from 'react-router-dom'
 import { QuotaBanner } from '../components/QuotaBanner'
+import { QuotaHistoryChart } from '../components/QuotaHistoryChart'
 import { TodayMovements } from '../components/TodayMovements'
 import { GameIcon } from '../components/GameIcon'
 import { QueryError } from '../components/QueryError'
@@ -294,6 +295,11 @@ export default function Dashboard() {
           </>
         )}
       </div>
+
+      {/* 配额历史曲线：近 7/14/30 天本项目每日 ST 调用次数。和 QuotaBanner 同主题,
+          但即便 low/reserved 隐藏了 Banner,这条曲线也始终在(那时反而更需要它评估
+          斜率)。零本身不消耗 ST 配额(本地 api_quota_daily 聚合)。 */}
+      <QuotaHistoryChart />
 
       {/* 今日大事：跨已配置 SYNC_RANKING_COMBOS 的 SLG 异动汇总（新进/窜升/跌出/收入异动）；
           独立于视图切换的 country/platform——这是"全市场情报"模块。零 ST 配额。 */}

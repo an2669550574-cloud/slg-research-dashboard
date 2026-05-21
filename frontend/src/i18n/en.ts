@@ -88,6 +88,12 @@ export const en: Translations = {
       `Only ${remaining} Sensor Tower calls left in the org pool — this page may not show the freshest data`,
     globalAlertReserved:
       'Org Sensor Tower quota exhausted — this project has stopped calling the API; all pages serve cached snapshots',
+    quotaHistoryTitle: 'Quota history',
+    quotaHistorySince: (date: string) => `Since ${date} · this project only`,
+    quotaHistoryEmpty: 'No records yet (daily table launched 5/21 — data accruing)',
+    quotaHistoryTotal: (n: number) => `${n} calls total`,
+    quotaHistoryPeak: (n: number) => `Peak ${n}/day`,
+    quotaHistoryCalls: 'Calls',
     movementsTitle: "Today's movers",
     movementsSubtitle: 'Today vs previous · SLG competitor movement',
     movementsEmpty: 'No significant movement today',

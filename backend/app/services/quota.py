@@ -29,8 +29,15 @@ def current_year_month() -> str:
     return utcnow_naive().strftime("%Y-%m")
 
 
+def current_date_utc() -> str:
+    return utcnow_naive().strftime("%Y-%m-%d")
+
+
 async def _consume_in(session: AsyncSession, ym: str, limit: int) -> bool:
-    """UPSERT count+1 并 RETURNING 新值；若超过 limit 则回滚自增并返回 False。"""
+    """UPSERT 月度 count+1 并 RETURNING 新值；超过 limit 则回滚自增返 False；
+    否则同事务再 UPSERT 当天 daily count+1 后提交。
+    daily 记录是仪表盘"配额历史曲线"的源,与月度严格同步——拒绝路径绝不动 daily,
+    成功路径两者同时 +1。"""
     result = await session.execute(
         text(
             "INSERT INTO api_quota_monthly (year_month, count, updated_at) "
@@ -50,6 +57,16 @@ async def _consume_in(session: AsyncSession, ym: str, limit: int) -> bool:
         )
         await session.commit()
         return False
+    # 月度成功后才记 daily,保持二者一致(被拒绝的不算)
+    today = current_date_utc()
+    await session.execute(
+        text(
+            "INSERT INTO api_quota_daily (date, count, updated_at) "
+            "VALUES (:d, 1, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(date) DO UPDATE SET "
+            "count = api_quota_daily.count + 1, updated_at = CURRENT_TIMESTAMP"
+        ).bindparams(d=today)
+    )
     await session.commit()
 
     # 边沿触发告警：count 单调 +1，每个阈值每月恰好被等值命中一次 → 不会刷屏。
@@ -129,8 +146,12 @@ async def try_consume() -> bool:
 async def refund() -> None:
     """退还一次配额：try_consume 已扣但实际请求失败时调用。
     配额是为"成功取到真实数据"付费，失败不该扣——否则一个坏端点能把
-    整月预算空烧光。`count > 0` 兜底，并发/误调也不会变负。"""
+    整月预算空烧光。`count > 0` 兜底，并发/误调也不会变负。
+
+    月度 + 当天 daily 同时扣回——refund 在 sensor_tower._cached_get 的 except
+    分支里紧跟 try_consume 调用,实际跨 UTC 日的概率可忽略。"""
     ym = current_year_month()
+    today = current_date_utc()
     async with AsyncSessionLocal() as session:
         await session.execute(
             text(
@@ -139,7 +160,44 @@ async def refund() -> None:
                 "WHERE year_month = :ym AND count > 0"
             ).bindparams(ym=ym)
         )
+        await session.execute(
+            text(
+                "UPDATE api_quota_daily SET count = count - 1, "
+                "updated_at = CURRENT_TIMESTAMP "
+                "WHERE date = :d AND count > 0"
+            ).bindparams(d=today)
+        )
         await session.commit()
+
+
+async def usage_history(days: int) -> list[dict]:
+    """近 N 个 UTC 日的本项目用量(api_quota_daily),缺失日填 0。
+    返回升序 [{date, count}],便于前端直接画线图。窗口 N 包含今天。"""
+    if days <= 0:
+        return []
+    from datetime import timedelta
+
+    today = utcnow_naive().date()
+    start = today - timedelta(days=days - 1)
+    start_str = start.strftime("%Y-%m-%d")
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            text(
+                "SELECT date, count FROM api_quota_daily "
+                "WHERE date >= :start ORDER BY date"
+            ).bindparams(start=start_str)
+        )
+        rows = {r[0]: r[1] for r in result.all()}
+
+    # 显式填零:即使该日无调用也要给一个点,折线才不会跳过"零调用日"
+    out: list[dict] = []
+    cursor = start
+    while cursor <= today:
+        d = cursor.strftime("%Y-%m-%d")
+        out.append({"date": d, "count": rows.get(d, 0)})
+        cursor += timedelta(days=1)
+    return out
 
 
 def _percent(used: int | None, limit: int | None) -> float:

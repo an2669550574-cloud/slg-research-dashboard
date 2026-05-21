@@ -17,6 +17,7 @@ import type {
   AggregateLeaderboardOut,
   MovementsOut,
   PagedResponse,
+  QuotaHistoryOut,
   QuotaInfo,
   RankingTodayOut,
   SeedResponse,
@@ -118,6 +119,8 @@ export const historyApi = {
 
 export const quotaApi = {
   get: (): Promise<QuotaInfo> => api.get('/quota/').then(r => r.data),
+  history: (days = 30): Promise<QuotaHistoryOut> =>
+    api.get('/quota/history', { params: { days } }).then(r => r.data),
 }
 
 export const movementsApi = {

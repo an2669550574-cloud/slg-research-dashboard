@@ -345,6 +345,120 @@ async def test_current_usage_exposes_org_block_when_account_available(client):
 
 
 @pytest.mark.asyncio
+async def test_try_consume_increments_daily_in_lockstep(client):
+    """成功 consume 同时增加 monthly + 当天 daily 计数(同事务原子)。"""
+    from app.services import quota
+    from app.database import AsyncSessionLocal
+    from sqlalchemy import text
+
+    for _ in range(3):
+        assert await quota.try_consume() is True
+
+    today = quota.current_date_utc()
+    async with AsyncSessionLocal() as s:
+        r = await s.execute(text("SELECT count FROM api_quota_daily WHERE date = :d").bindparams(d=today))
+        row = r.first()
+
+    assert row is not None and row[0] == 3
+    assert (await quota.current_usage())["used"] == 3
+
+
+@pytest.mark.asyncio
+async def test_rejected_consume_does_not_touch_daily(client):
+    """超过 limit 被拒的调用 monthly 已回滚,daily 也不应被记入。"""
+    from app.services import quota
+    from app.config import settings
+    from app.database import AsyncSessionLocal
+    from sqlalchemy import text
+
+    with patch.object(settings, "SENSOR_TOWER_MONTHLY_LIMIT", 2):
+        assert await quota.try_consume() is True
+        assert await quota.try_consume() is True
+        assert await quota.try_consume() is False  # 被拒
+
+    today = quota.current_date_utc()
+    async with AsyncSessionLocal() as s:
+        r = await s.execute(text("SELECT count FROM api_quota_daily WHERE date = :d").bindparams(d=today))
+        assert r.first()[0] == 2, "daily 计数应只反映成功的两次"
+
+
+@pytest.mark.asyncio
+async def test_refund_decrements_daily_too(client):
+    """refund() 既扣 monthly 也扣 daily,多退也不会变负。"""
+    from app.services import quota
+    from app.database import AsyncSessionLocal
+    from sqlalchemy import text
+
+    assert await quota.try_consume() is True
+    await quota.refund()
+
+    today = quota.current_date_utc()
+    async with AsyncSessionLocal() as s:
+        r = await s.execute(text("SELECT count FROM api_quota_daily WHERE date = :d").bindparams(d=today))
+        assert r.first()[0] == 0
+
+    await quota.refund()  # 已是 0
+    async with AsyncSessionLocal() as s:
+        r = await s.execute(text("SELECT count FROM api_quota_daily WHERE date = :d").bindparams(d=today))
+        assert r.first()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_usage_history_fills_zero_for_missing_days(client):
+    """没记录的日子也要出现在结果里(count=0),折线才不跳过空日。"""
+    from app.services import quota
+    from app.database import AsyncSessionLocal
+    from sqlalchemy import text
+
+    # 灌两个不连续的真实日
+    async with AsyncSessionLocal() as s:
+        await s.execute(text(
+            "INSERT INTO api_quota_daily (date, count, updated_at) VALUES "
+            "('2026-05-15', 7, CURRENT_TIMESTAMP), "
+            "('2026-05-18', 3, CURRENT_TIMESTAMP)"
+        ))
+        await s.commit()
+
+    # 当前 UTC 日是 2026-05-21 (test conftest 不冻时间,但 today 取 utcnow_naive)
+    # 我们覆盖 utcnow_naive 来锚定窗口
+    from datetime import datetime
+    import app.services.quota as q
+    real_utcnow = q.utcnow_naive
+    q.utcnow_naive = lambda: datetime(2026, 5, 21)
+    try:
+        points = await quota.usage_history(days=7)  # 5/15 .. 5/21
+    finally:
+        q.utcnow_naive = real_utcnow
+
+    assert [p["date"] for p in points] == [
+        "2026-05-15", "2026-05-16", "2026-05-17",
+        "2026-05-18", "2026-05-19", "2026-05-20", "2026-05-21",
+    ]
+    assert [p["count"] for p in points] == [7, 0, 0, 3, 0, 0, 0]
+
+
+@pytest.mark.asyncio
+async def test_history_endpoint_returns_shape(client):
+    """/api/quota/history 返回 {days, points}。"""
+    resp = await client.get("/api/quota/history?days=14")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["days"] == 14
+    assert isinstance(body["points"], list)
+    assert len(body["points"]) == 14
+    for p in body["points"]:
+        assert set(p.keys()) == {"date", "count"}
+        assert isinstance(p["count"], int)
+
+
+@pytest.mark.asyncio
+async def test_history_endpoint_validates_days_range(client):
+    """days 越界返 422(FastAPI 校验);0 或 999 都不接受。"""
+    assert (await client.get("/api/quota/history?days=0")).status_code == 422
+    assert (await client.get("/api/quota/history?days=999")).status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_month_boundary_separate_counters(client):
     """模拟跨月：不同的 year_month 字符串各自计数互不干扰。"""
     from app.services import quota

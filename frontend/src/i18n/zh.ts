@@ -90,6 +90,13 @@ export const zh = {
       `公司 Sensor Tower 配额仅剩 ${remaining} 次，本页面数据可能无法拉取到最新值`,
     globalAlertReserved:
       '公司 Sensor Tower 配额已耗尽，本项目暂停调用 API；所有页面数据均来自历史快照',
+    // 配额历史曲线（QuotaHistoryChart）—— 6/1 池重置定预算的数据依据
+    quotaHistoryTitle: '配额历史',
+    quotaHistorySince: (date: string) => `自 ${date} 起 · 仅本项目计数`,
+    quotaHistoryEmpty: '尚无记录(daily 表 5/21 上线,等数据积累)',
+    quotaHistoryTotal: (n: number) => `累计 ${n} 次`,
+    quotaHistoryPeak: (n: number) => `单日峰值 ${n} 次`,
+    quotaHistoryCalls: '调用次数',
     // 今日大事（TodayMovements）
     movementsTitle: '今日大事',
     movementsSubtitle: '今日 vs 上一可用日 · SLG 竞品异动',
