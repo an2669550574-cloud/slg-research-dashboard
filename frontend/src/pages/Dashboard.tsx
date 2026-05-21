@@ -9,6 +9,7 @@ import { TrendingUp, Download, DollarSign, Trophy, RefreshCw, Download as Downlo
 import { CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis } from 'recharts'
 import { useNavigate } from 'react-router-dom'
 import { QuotaBanner } from '../components/QuotaBanner'
+import { TodayMovements } from '../components/TodayMovements'
 import { GameIcon } from '../components/GameIcon'
 import { QueryError } from '../components/QueryError'
 import { PageHeader } from '../components/PageHeader'
@@ -288,6 +289,10 @@ export default function Dashboard() {
           </>
         )}
       </div>
+
+      {/* 今日大事：跨已配置 SYNC_RANKING_COMBOS 的 SLG 异动汇总（新进/窜升/跌出/收入异动）；
+          独立于视图切换的 country/platform——这是"全市场情报"模块。零 ST 配额。 */}
+      <TodayMovements />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard icon={Trophy} label={t.dashboard.statGames} value={trackedGames.length} sub={t.dashboard.statCategory} color="bg-brand-600" />

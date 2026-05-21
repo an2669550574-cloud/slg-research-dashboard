@@ -22,8 +22,11 @@ from app.services.slg_publishers import is_slg
 logger = logging.getLogger(__name__)
 
 
-async def detect_and_alert_movement(country: str, platform: str, today: str) -> dict:
-    """比对今日与上一可用日，检测 SLG 竞品异动并按需告警。返回结构化摘要（供测试）。"""
+async def detect_movement(country: str, platform: str, today: str) -> dict:
+    """**纯检测**——比对今日与上一可用日，返回结构化异动摘要。无任何副作用，
+    可被 API endpoint 任意频次调用（不会刷 Sentry）。
+    定时任务路径需要告警的话，调用 `detect_and_alert_movement` 走带 emit 的包装。
+    """
     summary = {
         "country": country, "platform": platform, "today": today,
         "prev_date": None, "new_entrants": [], "surges": [],
@@ -66,20 +69,29 @@ async def detect_and_alert_movement(country: str, platform: str, today: str) -> 
     def _label(r):
         return r.name or r.app_id
 
-    # 今日 TopN 内的 SLG：新进 / 窜升 / 收入异动
+    # 今日 TopN 内的 SLG：新进 / 窜升 / 收入异动。app_id/icon 一并带出供前端跳转和展示。
     for r in today_rows:
         if r.rank is None or r.rank > topn or not is_slg(r.app_id, r.publisher):
             continue
         p = prev.get(r.app_id)
         if p is None or p.rank is None or p.rank > topn:
-            summary["new_entrants"].append((_label(r), p.rank if p else None, r.rank))
+            summary["new_entrants"].append({
+                "app_id": r.app_id, "name": _label(r), "icon_url": r.icon_url,
+                "prev_rank": p.rank if p else None, "cur_rank": r.rank,
+            })
             continue
         if p.rank - r.rank >= jump:
-            summary["surges"].append((_label(r), p.rank, r.rank))
+            summary["surges"].append({
+                "app_id": r.app_id, "name": _label(r), "icon_url": r.icon_url,
+                "prev_rank": p.rank, "cur_rank": r.rank,
+            })
         if p.revenue and r.revenue is not None and p.revenue > 0:
             pct = (r.revenue - p.revenue) / p.revenue * 100
             if abs(pct) >= rev_pct:
-                summary["revenue_spikes"].append((_label(r), p.revenue, r.revenue, pct))
+                summary["revenue_spikes"].append({
+                    "app_id": r.app_id, "name": _label(r), "icon_url": r.icon_url,
+                    "prev_revenue": p.revenue, "cur_revenue": r.revenue, "pct": pct,
+                })
 
     # 上一日在 TopN 的 SLG：今日跌出 TopN / 彻底掉榜
     for p in prev_rows:
@@ -87,24 +99,33 @@ async def detect_and_alert_movement(country: str, platform: str, today: str) -> 
             continue
         c = cur.get(p.app_id)
         if c is None or c.rank is None or c.rank > topn:
-            summary["drops"].append((_label(p), p.rank, c.rank if c else None))
+            summary["drops"].append({
+                "app_id": p.app_id, "name": _label(p), "icon_url": p.icon_url,
+                "prev_rank": p.rank, "cur_rank": c.rank if c else None,
+            })
 
+    return summary
+
+
+async def detect_and_alert_movement(country: str, platform: str, today: str) -> dict:
+    """定时任务路径专用：检测 + 发 Sentry 告警。手动 refresh / API 拉取不应走这里。"""
+    summary = await detect_movement(country, platform, today)
     _emit(summary)
     return summary
 
 
 def _emit(s: dict) -> None:
     parts = []
-    for name, prev_r, cur_r in s["new_entrants"]:
-        frm = "榜外" if prev_r is None else f"#{prev_r}"
-        parts.append(f"[NEW] {name} 新进Top榜 ({frm}->#{cur_r})")
-    for name, prev_r, cur_r in s["surges"]:
-        parts.append(f"[UP] {name} #{prev_r}->#{cur_r} (升{prev_r - cur_r})")
-    for name, prev_r, cur_r in s["drops"]:
-        to = "榜外" if cur_r is None else f"#{cur_r}"
-        parts.append(f"[DOWN] {name} 跌出Top榜 (#{prev_r}->{to})")
-    for name, pv, cv, pct in s["revenue_spikes"]:
-        parts.append(f"[REV] {name} 收入{pct:+.0f}% (${pv:,.0f}->${cv:,.0f})")
+    for e in s["new_entrants"]:
+        frm = "榜外" if e["prev_rank"] is None else f"#{e['prev_rank']}"
+        parts.append(f"[NEW] {e['name']} 新进Top榜 ({frm}->#{e['cur_rank']})")
+    for e in s["surges"]:
+        parts.append(f"[UP] {e['name']} #{e['prev_rank']}->#{e['cur_rank']} (升{e['prev_rank'] - e['cur_rank']})")
+    for e in s["drops"]:
+        to = "榜外" if e["cur_rank"] is None else f"#{e['cur_rank']}"
+        parts.append(f"[DOWN] {e['name']} 跌出Top榜 (#{e['prev_rank']}->{to})")
+    for e in s["revenue_spikes"]:
+        parts.append(f"[REV] {e['name']} 收入{e['pct']:+.0f}% (${e['prev_revenue']:,.0f}->${e['cur_revenue']:,.0f})")
     if not parts:
         logger.info(
             "Competitor movement %s/%s %s vs %s: no significant SLG movement",

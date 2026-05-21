@@ -90,6 +90,18 @@ export const zh = {
       `公司 Sensor Tower 配额仅剩 ${remaining} 次，本页面数据可能无法拉取到最新值`,
     globalAlertReserved:
       '公司 Sensor Tower 配额已耗尽，本项目暂停调用 API；所有页面数据均来自历史快照',
+    // 今日大事（TodayMovements）
+    movementsTitle: '今日大事',
+    movementsSubtitle: '今日 vs 上一可用日 · SLG 竞品异动',
+    movementsEmpty: '今日暂无显著异动',
+    movementsNoBaseline: (combos: string) => `${combos} 还没有可比对的历史日（首次同步）`,
+    movementKindNewEntrant: '新进 Top',
+    movementKindSurge: '排名窜升',
+    movementKindDrop: '跌出 Top',
+    movementKindRevenueSpike: '收入异动',
+    movementRankFromTo: (from: number | null, to: number | null) =>
+      `${from == null ? '榜外' : `#${from}`} → ${to == null ? '榜外' : `#${to}`}`,
+    movementRevenuePct: (pct: number) => `${pct >= 0 ? '+' : ''}${pct.toFixed(0)}%`,
     dataSourceLabel: '数据来源',
     dataSource: (src: string) => ({ real_api: '实时 API', mock: 'Mock 数据', snapshot_stale: '历史快照' }[src] || src),
     dataUpdatedAt: '更新时间',

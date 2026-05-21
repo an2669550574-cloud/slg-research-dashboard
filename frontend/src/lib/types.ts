@@ -149,6 +149,32 @@ export interface MaterialTagCount {
   count: number
 }
 
+// ─── movements (今日大事) ────────────────────────────────────────────────
+
+export type MovementKind = 'new_entrant' | 'surge' | 'drop' | 'revenue_spike'
+
+export interface MovementEvent {
+  kind: MovementKind
+  country: string
+  platform: string
+  today: string
+  prev_date: string
+  app_id: string
+  name: string
+  icon_url: string | null
+  prev_rank: number | null
+  cur_rank: number | null
+  prev_revenue: number | null
+  cur_revenue: number | null
+  revenue_pct: number | null
+}
+
+export interface MovementsOut {
+  today: string
+  events: MovementEvent[]
+  combos_without_baseline: string[]
+}
+
 // ─── quota ───────────────────────────────────────────────────────────────
 
 export type DataSource = 'real_api' | 'mock' | 'snapshot_stale'

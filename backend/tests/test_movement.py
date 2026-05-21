@@ -38,7 +38,8 @@ async def test_new_entrant_fires_single_alert(client, caplog):
         s = await detect_and_alert_movement("US", "ios", "2026-05-16")
 
     assert s["prev_date"] == "2026-05-15"
-    assert [n for n, *_ in s["new_entrants"]] == ["newcomer"]
+    assert [e["name"] for e in s["new_entrants"]] == ["newcomer"]
+    assert s["new_entrants"][0]["cur_rank"] == 3
     assert len(_errors(caplog)) == 1, "多条异动也只发一条 Sentry 事件"
 
 
@@ -51,7 +52,9 @@ async def test_surge_within_topn(client, caplog):
     with caplog.at_level(logging.INFO, logger="app.services.movement"):
         s = await detect_and_alert_movement("US", "ios", "2026-05-16")
 
-    assert s["surges"] == [("a", 18, 3)]
+    assert len(s["surges"]) == 1
+    assert s["surges"][0]["name"] == "a"
+    assert s["surges"][0]["prev_rank"] == 18 and s["surges"][0]["cur_rank"] == 3
     assert not s["new_entrants"]
     assert len(_errors(caplog)) == 1
 
@@ -65,7 +68,9 @@ async def test_drop_out_of_topn(client, caplog):
     with caplog.at_level(logging.INFO, logger="app.services.movement"):
         s = await detect_and_alert_movement("US", "ios", "2026-05-16")
 
-    assert s["drops"] == [("a", 5, 40)]
+    assert len(s["drops"]) == 1
+    assert s["drops"][0]["name"] == "a"
+    assert s["drops"][0]["prev_rank"] == 5 and s["drops"][0]["cur_rank"] == 40
     assert len(_errors(caplog)) == 1
 
 
@@ -78,7 +83,8 @@ async def test_revenue_spike(client, caplog):
     with caplog.at_level(logging.INFO, logger="app.services.movement"):
         s = await detect_and_alert_movement("US", "ios", "2026-05-16")
 
-    assert len(s["revenue_spikes"]) == 1 and s["revenue_spikes"][0][0] == "a"
+    assert len(s["revenue_spikes"]) == 1 and s["revenue_spikes"][0]["name"] == "a"
+    assert s["revenue_spikes"][0]["pct"] == pytest.approx(150.0)
     assert not s["surges"], "名次没动，不该报窜升"
     assert len(_errors(caplog)) == 1
 

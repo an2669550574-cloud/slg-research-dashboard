@@ -88,6 +88,17 @@ export const en: Translations = {
       `Only ${remaining} Sensor Tower calls left in the org pool — this page may not show the freshest data`,
     globalAlertReserved:
       'Org Sensor Tower quota exhausted — this project has stopped calling the API; all pages serve cached snapshots',
+    movementsTitle: "Today's movers",
+    movementsSubtitle: 'Today vs previous · SLG competitor movement',
+    movementsEmpty: 'No significant movement today',
+    movementsNoBaseline: (combos: string) => `${combos} has no comparable history yet (cold start)`,
+    movementKindNewEntrant: 'New in Top',
+    movementKindSurge: 'Rank surge',
+    movementKindDrop: 'Dropped out',
+    movementKindRevenueSpike: 'Revenue shift',
+    movementRankFromTo: (from: number | null, to: number | null) =>
+      `${from == null ? 'off-chart' : `#${from}`} → ${to == null ? 'off-chart' : `#${to}`}`,
+    movementRevenuePct: (pct: number) => `${pct >= 0 ? '+' : ''}${pct.toFixed(0)}%`,
     dataSourceLabel: 'Data source',
     dataSource: (src: string) => ({ real_api: 'Live API', mock: 'Mock data', snapshot_stale: 'Cached snapshot' }[src] || src),
     dataUpdatedAt: 'Updated',

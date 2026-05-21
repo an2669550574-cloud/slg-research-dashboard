@@ -15,6 +15,7 @@ import type {
   MetricsOut,
   MetricsCoverage,
   AggregateLeaderboardOut,
+  MovementsOut,
   PagedResponse,
   QuotaInfo,
   RankingTodayOut,
@@ -117,6 +118,12 @@ export const historyApi = {
 
 export const quotaApi = {
   get: (): Promise<QuotaInfo> => api.get('/quota/').then(r => r.data),
+}
+
+export const movementsApi = {
+  /** 今日大事：可选传 country+platform 限定单组合，否则汇总全部 SYNC_RANKING_COMBOS */
+  get: (opts: { country?: string; platform?: string } = {}): Promise<MovementsOut> =>
+    api.get('/movements/', { params: opts }).then(r => r.data),
 }
 
 export interface MaterialListParams {
