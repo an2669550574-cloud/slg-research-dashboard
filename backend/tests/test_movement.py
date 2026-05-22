@@ -115,6 +115,51 @@ async def test_no_previous_day_no_alert(client, caplog):
 
 
 @pytest.mark.asyncio
+async def test_empty_today_marks_stale_no_drops(client, caplog):
+    """ST 配额耗尽场景:今日 game_rankings 为空时,不能把昨日 TopN SLG 全员
+    错报为"跌出 TOP"。返回 today_missing=True、drops 列表保持为空。"""
+    from app.services.movement import detect_movement
+    # 昨天有 5 个 SLG 在榜
+    await _seed("2026-05-15", [
+        ("a", 1, None, SLG_PUB), ("b", 2, None, SLG_PUB), ("c", 3, None, SLG_PUB),
+        ("d", 4, None, SLG_PUB), ("e", 5, None, SLG_PUB),
+    ])
+    # 今天什么都没同步进来
+    s = await detect_movement("US", "ios", "2026-05-16")
+
+    assert s["prev_date"] == "2026-05-15"
+    assert s["today_missing"] is True
+    assert s["drops"] == [], "今日缺数据时绝不报跌出"
+    assert s["new_entrants"] == [] and s["surges"] == [] and s["revenue_spikes"] == []
+
+
+@pytest.mark.asyncio
+async def test_sparse_today_marks_stale(client):
+    """今日行数远少于昨日(< 30% 且 < 10)时也判为不完整,跳过对比。"""
+    from app.services.movement import detect_movement
+    # 昨天 50 个
+    await _seed("2026-05-15", [(f"app{i}", i, None, SLG_PUB) for i in range(1, 51)])
+    # 今天只同步进来 3 个(同步中途失败)
+    await _seed("2026-05-16", [(f"app{i}", i, None, SLG_PUB) for i in range(1, 4)])
+
+    s = await detect_movement("US", "ios", "2026-05-16")
+    assert s["today_missing"] is True
+    assert s["drops"] == []
+
+
+@pytest.mark.asyncio
+async def test_full_today_does_not_mark_stale(client):
+    """今日数据完整时不应被误判为 stale。"""
+    from app.services.movement import detect_movement
+    await _seed("2026-05-15", [(f"app{i}", i, None, SLG_PUB) for i in range(1, 21)])
+    # 今日同样规模——一切正常,正常走对比逻辑(本例无异动,但 today_missing 必须 False)
+    await _seed("2026-05-16", [(f"app{i}", i, None, SLG_PUB) for i in range(1, 21)])
+
+    s = await detect_movement("US", "ios", "2026-05-16")
+    assert s["today_missing"] is False
+
+
+@pytest.mark.asyncio
 async def test_disabled_flag_short_circuits(client, caplog, monkeypatch):
     from app.services import movement
     await _seed("2026-05-15", [("a", 1, None, SLG_PUB)])

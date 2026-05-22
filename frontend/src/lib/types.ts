@@ -173,6 +173,9 @@ export interface MovementsOut {
   today: string
   events: MovementEvent[]
   combos_without_baseline: string[]
+  /** ST 配额耗尽 / 同步失败导致今日 game_rankings 缺失或不完整的 combo;
+   *  这些 combo 不参与异动对比(否则会满屏"跌出 TOP"),前端单独提示。 */
+  combos_with_stale_today: string[]
 }
 
 // ─── quota ───────────────────────────────────────────────────────────────

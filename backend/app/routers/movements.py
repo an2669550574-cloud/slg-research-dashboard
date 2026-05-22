@@ -49,6 +49,9 @@ class MovementsOut(BaseModel):
     events: list[MovementEvent]
     # 哪些 combo 没有可比对的历史日（首次同步或冷库）。前端可用此提示"还在累积数据"。
     combos_without_baseline: list[str] = []
+    # 哪些 combo 今日 game_rankings 数据缺失或严重不完整(同步失败 / ST 配额耗尽);
+    # 前端提示"今日数据缺失",这些 combo 不参与异动判断,避免错报全员"跌出 TOP"。
+    combos_with_stale_today: list[str] = []
 
 
 def _impact(e: MovementEvent) -> tuple:
@@ -118,12 +121,21 @@ async def get_today_movements(
 
     all_events: list[MovementEvent] = []
     no_baseline: list[str] = []
+    stale_today: list[str] = []
     for c, p in combos:
         summary = await detect_movement(c, p, today)
         if summary["prev_date"] is None:
             no_baseline.append(f"{c}/{p}")
             continue
+        if summary.get("today_missing"):
+            stale_today.append(f"{c}/{p}")
+            continue
         all_events.extend(_flatten(summary))
 
     all_events.sort(key=_impact)
-    return MovementsOut(today=today, events=all_events, combos_without_baseline=no_baseline)
+    return MovementsOut(
+        today=today,
+        events=all_events,
+        combos_without_baseline=no_baseline,
+        combos_with_stale_today=stale_today,
+    )

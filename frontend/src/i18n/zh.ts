@@ -102,6 +102,7 @@ export const zh = {
     movementsSubtitle: '今日 vs 上一可用日 · SLG 竞品异动',
     movementsEmpty: '今日暂无显著异动',
     movementsNoBaseline: (combos: string) => `${combos} 还没有可比对的历史日（首次同步）`,
+    movementsStaleToday: (combos: string) => `${combos} 今日数据缺失(同步失败或 ST 配额耗尽)，未参与异动比对`,
     movementKindNewEntrant: '新进 Top',
     movementKindSurge: '排名窜升',
     movementKindDrop: '跌出 Top',

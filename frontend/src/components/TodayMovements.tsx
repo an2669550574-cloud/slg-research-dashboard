@@ -71,6 +71,7 @@ export function TodayMovements() {
 
   const events = data.events
   const noBaseline = data.combos_without_baseline
+  const staleToday = data.combos_with_stale_today ?? []
 
   return (
     <div className="hud bg-surface border border-default rounded-xl p-5">
@@ -99,6 +100,13 @@ export function TodayMovements() {
       {noBaseline.length > 0 && (
         <p className="mt-3 text-[11px] text-muted">
           {t.dashboard.movementsNoBaseline(noBaseline.join('、'))}
+        </p>
+      )}
+      {staleToday.length > 0 && (
+        // 用 amber 而非 muted:这是"数据问题"而非"信息缺位",用户应该注意到
+        // (尤其在 ST 配额耗尽期,这条线是判断"为什么看到的异动这么少"的关键)
+        <p className="mt-2 text-[11px] text-amber-500 dark:text-amber-300">
+          {t.dashboard.movementsStaleToday(staleToday.join('、'))}
         </p>
       )}
     </div>

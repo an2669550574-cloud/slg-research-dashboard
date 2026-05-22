@@ -9,7 +9,7 @@ import * as apiModule from '../lib/api'
 
 function renderWith(data: MovementsOut | undefined) {
   vi.spyOn(apiModule.movementsApi, 'get').mockResolvedValue(
-    data ?? { today: '2026-05-21', events: [], combos_without_baseline: [] }
+    data ?? { today: '2026-05-21', events: [], combos_without_baseline: [], combos_with_stale_today: [] }
   )
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
@@ -28,7 +28,7 @@ describe('TodayMovements', () => {
   })
 
   it('renders empty state when no events', async () => {
-    renderWith({ today: '2026-05-21', events: [], combos_without_baseline: [] })
+    renderWith({ today: '2026-05-21', events: [], combos_without_baseline: [], combos_with_stale_today: [] })
     expect(await screen.findByText(/今日暂无显著异动/)).toBeInTheDocument()
   })
 
@@ -43,6 +43,7 @@ describe('TodayMovements', () => {
         prev_revenue: null, cur_revenue: null, revenue_pct: null,
       }],
       combos_without_baseline: [],
+      combos_with_stale_today: [],
     })
     expect(await screen.findByText('Test Game')).toBeInTheDocument()
     expect(screen.getByText(/新进\s*Top/i)).toBeInTheDocument()
@@ -61,9 +62,20 @@ describe('TodayMovements', () => {
         prev_revenue: 100_000, cur_revenue: 250_000, revenue_pct: 150,
       }],
       combos_without_baseline: [],
+      combos_with_stale_today: [],
     })
     expect(await screen.findByText('Money Game')).toBeInTheDocument()
     expect(screen.getByText('+150%')).toBeInTheDocument()
+  })
+
+  it('shows stale-today hint when combos missing today data', async () => {
+    renderWith({
+      today: '2026-05-21',
+      events: [],
+      combos_without_baseline: [],
+      combos_with_stale_today: ['JP/android', 'KR/android'],
+    })
+    expect(await screen.findByText(/JP\/android、KR\/android.*配额耗尽/)).toBeInTheDocument()
   })
 
   it('shows cold-start hint when combos lack baseline', async () => {
@@ -71,6 +83,7 @@ describe('TodayMovements', () => {
       today: '2026-05-21',
       events: [],
       combos_without_baseline: ['JP/android', 'KR/android'],
+      combos_with_stale_today: [],
     })
     expect(await screen.findByText(/JP\/android、KR\/android/)).toBeInTheDocument()
   })

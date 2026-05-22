@@ -98,6 +98,7 @@ export const en: Translations = {
     movementsSubtitle: 'Today vs previous · SLG competitor movement',
     movementsEmpty: 'No significant movement today',
     movementsNoBaseline: (combos: string) => `${combos} has no comparable history yet (cold start)`,
+    movementsStaleToday: (combos: string) => `${combos} missing today's data (sync failed or ST quota exhausted) — excluded from movement comparison`,
     movementKindNewEntrant: 'New in Top',
     movementKindSurge: 'Rank surge',
     movementKindDrop: 'Dropped out',

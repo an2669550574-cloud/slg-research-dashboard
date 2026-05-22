@@ -29,7 +29,12 @@ async def detect_movement(country: str, platform: str, today: str) -> dict:
     """
     summary = {
         "country": country, "platform": platform, "today": today,
-        "prev_date": None, "new_entrants": [], "surges": [],
+        "prev_date": None,
+        # ST 配额耗尽 / 同步失败导致今日 game_rankings 为空或严重不完整时,
+        # 必须跳过对比——否则前一日 TopN SLG 全员会被错报为"跌出 TOP"。
+        # 这是真实事故现场观察到的(2026-05-22 配额耗尽,UI 一次涌出 20+ 假跌出)。
+        "today_missing": False,
+        "new_entrants": [], "surges": [],
         "drops": [], "revenue_spikes": [],
     }
     if not settings.COMPETITOR_ALERT_ENABLED:
@@ -62,6 +67,14 @@ async def detect_movement(country: str, platform: str, today: str) -> dict:
 
         today_rows = await _rows(today)
         prev_rows = await _rows(prev_date)
+
+    # 缺数据闸门:今日为空 / 严重少于昨天 → 标记不参与对比,router 把这些 combo
+    # 单独放到 stale 列表里给前端展示"今日未同步",而不是错报满屏跌出。
+    # 纯相对阈值(不少于昨天的 30%):同步出问题时今日行数一般断崖式归零,30%
+    # 既能抓到这类典型场景,又不会误伤小榜或合成测试夹具。
+    if not today_rows or len(today_rows) < 0.3 * len(prev_rows):
+        summary["today_missing"] = True
+        return summary
 
     prev = {r.app_id: r for r in prev_rows}
     cur = {r.app_id: r for r in today_rows}

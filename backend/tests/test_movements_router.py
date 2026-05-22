@@ -101,6 +101,33 @@ async def test_movements_reports_combos_without_baseline(client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_movements_surfaces_combos_with_stale_today(client, monkeypatch):
+    """ST 配额耗尽 / 同步失败导致今日数据空时,该 combo 进 combos_with_stale_today,
+    不会错报满屏"跌出 TOP"。"""
+    from app.database import utcnow_naive
+    from app.config import settings
+    monkeypatch.setattr(settings, "SYNC_RANKING_COMBOS", "US:ios,JP:android")
+
+    today = utcnow_naive().strftime("%Y-%m-%d")
+    # US/ios 正常:昨日 + 今日都有数据
+    await _seed("2026-04-01", [(f"u{i}", i, None, SLG_PUB) for i in range(1, 21)],
+                country="US", platform="ios")
+    await _seed(today, [(f"u{i}", i, None, SLG_PUB) for i in range(1, 21)],
+                country="US", platform="ios")
+    # JP/android:昨日满榜,今日同步失败一行没有
+    await _seed("2026-04-01", [(f"j{i}", i, None, SLG_PUB) for i in range(1, 21)],
+                country="JP", platform="android")
+
+    r = await client.get("/api/movements/")
+    body = r.json()
+    assert "JP/android" in body["combos_with_stale_today"]
+    assert "US/ios" not in body["combos_with_stale_today"]
+    # 关键:不会有任何 JP/android 的事件冒出来
+    jp_events = [e for e in body["events"] if e["country"] == "JP"]
+    assert jp_events == [], "今日数据缺失的 combo 绝不该报异动"
+
+
+@pytest.mark.asyncio
 async def test_movements_empty_returns_200_with_empty_list(client, monkeypatch):
     """同步过但无 SLG 异动 → 空 events，仍 200，前端可展示"今日无显著异动"。"""
     from app.database import utcnow_naive
