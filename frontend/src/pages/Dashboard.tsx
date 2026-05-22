@@ -169,9 +169,21 @@ export default function Dashboard() {
 
   // 两个图各按自己的指标排 Top 8；[...board] 复制后再 sort —— 别原地排序 React
   // Query 缓存数组。
+  // 标签截断按"视觉宽度"算:CJK/全角字符算 2,Latin 算 1。10 字符截断在
+  // 纯中文标题下等于 ~20 等宽字符宽度,柱状图标签会挤压;统一上限 14。
   const chartLabel = (g: { name: string | null; app_id: string }) => {
     const s = g.name ?? g.app_id
-    return s.length > 10 ? s.slice(0, 10) + '…' : s
+    const MAX_W = 14
+    let w = 0
+    let out = ''
+    for (const c of s) {
+      // CJK 统一汉字 + 平假/片假/Hangul + 全角符号
+      const cw = /[　-鿿가-힯＀-￯]/.test(c) ? 2 : 1
+      if (w + cw > MAX_W) return out + '…'
+      out += c
+      w += cw
+    }
+    return out
   }
   const revenueChartData = [...board]
     .sort((a, b) => (b.revenue ?? 0) - (a.revenue ?? 0))

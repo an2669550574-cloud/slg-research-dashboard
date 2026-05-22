@@ -1,31 +1,54 @@
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { gamesApi } from '../lib/api'
 import { formatNumber, formatRevenue } from '../lib/utils'
 import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
-import { Search, Download as DownloadIcon } from 'lucide-react'
+import { Loader2, RefreshCw, Search, Download as DownloadIcon } from 'lucide-react'
 import { COUNTRIES, PLATFORMS, platformLabel, type Country, type Platform } from '../lib/markets'
 import { GameIcon } from '../components/GameIcon'
 import { QueryError } from '../components/QueryError'
 import { PageHeader } from '../components/PageHeader'
 import { useLocalStorageState } from '../lib/hooks'
 
+const REFRESH_COOLDOWN_SEC = 30
+
 export default function Rankings() {
   const navigate = useNavigate()
   const t = useT()
+  const qc = useQueryClient()
   const [country, setCountry] = useLocalStorageState<Country>('slg.country', 'US')
   const [platform, setPlatform] = useLocalStorageState<Platform>('slg.platform', 'ios')
   // 商店没有 SLG 子类，策略畅销榜混入非 SLG；默认只看 SLG 竞品，可切「全部策略」
   const [slgOnly, setSlgOnly] = useLocalStorageState<boolean>('slg.slgOnly', true)
   const [search, setSearch] = useState('')
+  const [cooldownLeft, setCooldownLeft] = useState(0)
+  const cooling = cooldownLeft > 0
 
   const { data: rankings = [], isLoading, isError, refetch } = useQuery({
     queryKey: ['rankings', country, platform],
     queryFn: () => gamesApi.rankings(country, platform),
   })
+
+  // 强制刷榜:绕过 L1+L2 缓存,会消耗一次 ST 配额。与 Dashboard 同款 cooldown
+  // (30s)防止误连点;queryKey 与 Dashboard/Compare 共享 ['rankings',c,p] 会自动
+  // 同步全站的"今日榜"数据。
+  const refreshMut = useMutation({
+    mutationFn: () => gamesApi.refreshRankings(country, platform),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['rankings', country, platform] })
+      qc.invalidateQueries({ queryKey: ['quota'] })
+      toast.success(t.common.refreshed)
+      setCooldownLeft(REFRESH_COOLDOWN_SEC)
+    },
+  })
+  useEffect(() => {
+    if (cooldownLeft <= 0) return
+    const id = setTimeout(() => setCooldownLeft(n => n - 1), 1000)
+    return () => clearTimeout(id)
+  }, [cooldownLeft])
 
   const board = slgOnly ? rankings.filter(g => g.is_slg) : rankings
   const filtered = board.filter(g =>
@@ -55,6 +78,14 @@ export default function Rankings() {
         >
           <DownloadIcon size={14} />
           <span className="hidden sm:inline">{t.common.export}</span>
+        </button>
+        <button
+          onClick={() => refreshMut.mutate()}
+          disabled={refreshMut.isPending || cooling}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold text-white bg-accent hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed glow-accent transition-all"
+        >
+          {refreshMut.isPending ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+          {cooling ? t.common.refreshCooldown(cooldownLeft) : t.common.refresh}
         </button>
       </PageHeader>
 

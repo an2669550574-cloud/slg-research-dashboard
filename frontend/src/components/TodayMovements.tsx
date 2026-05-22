@@ -38,7 +38,36 @@ export function TodayMovements() {
     refetchInterval: 5 * 60_000,
   })
 
-  if (isLoading || !data) return null
+  // 加载态用 skeleton 占位:之前 `return null` 让仪表盘进场会闪一截白,
+  // 然后突然"啪"地出现 3-6 张卡片,体感差。skeleton 保持容器和大致网格,
+  // 数据到了无视觉跳动地填进来。
+  if (isLoading || !data) {
+    return (
+      <div className="hud bg-surface border border-default rounded-xl p-5">
+        <div className="flex items-baseline justify-between mb-3 gap-3">
+          <div className="flex items-baseline gap-2">
+            <Activity size={14} className="text-accent translate-y-px" />
+            <h2 className="text-sm font-semibold text-primary">{t.dashboard.movementsTitle}</h2>
+            <span className="text-xs text-muted">{t.dashboard.movementsSubtitle}</span>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="rounded-lg border border-default bg-surface p-3 pl-3.5 animate-pulse">
+              <div className="flex items-start gap-2.5">
+                <div className="w-9 h-9 bg-elevated rounded-lg shrink-0" />
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <div className="h-2 w-16 bg-elevated rounded" />
+                  <div className="h-3 w-28 bg-elevated rounded" />
+                  <div className="h-2.5 w-20 bg-elevated rounded" />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
 
   const events = data.events
   const noBaseline = data.combos_without_baseline
