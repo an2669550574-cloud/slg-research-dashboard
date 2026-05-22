@@ -308,11 +308,6 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* 配额历史曲线：近 7/14/30 天本项目每日 ST 调用次数。和 QuotaBanner 同主题,
-          但即便 low/reserved 隐藏了 Banner,这条曲线也始终在(那时反而更需要它评估
-          斜率)。零本身不消耗 ST 配额(本地 api_quota_daily 聚合)。 */}
-      <QuotaHistoryChart />
-
       {/* 今日大事：跨已配置 SYNC_RANKING_COMBOS 的 SLG 异动汇总（新进/窜升/跌出/收入异动）；
           独立于视图切换的 country/platform——这是"全市场情报"模块。零 ST 配额。 */}
       <TodayMovements />
@@ -415,6 +410,11 @@ export default function Dashboard() {
           }
         </div>
       </div>
+
+      {/* 配额历史:诊断/规划工具(给 6/1 池重置评估预算用),放页底而非分页栏附近——
+          分页栏决定的是"下面这些主数据按啥口径展示",中间塞配额诊断会断视觉流。
+          默认折叠成 1 行摘要,需要时点开看曲线。零本身不消耗 ST 配额。 */}
+      <QuotaHistoryChart />
     </div>
   )
 }
