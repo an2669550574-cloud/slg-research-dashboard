@@ -1,8 +1,10 @@
 import { useQueries, useQuery } from '@tanstack/react-query'
+import toast from 'react-hot-toast'
 import { gamesApi, quotaApi } from '../lib/api'
 import { useT } from '../i18n'
 import { formatNumber, formatRevenue } from '../lib/utils'
-import { X, Plus } from 'lucide-react'
+import { downloadCsv, type CsvColumn } from '../lib/csv'
+import { Download as DownloadIcon, X, Plus } from 'lucide-react'
 import { CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, XAxis, YAxis, Legend } from 'recharts'
 import { GameIcon } from '../components/GameIcon'
 import { QueryError } from '../components/QueryError'
@@ -91,9 +93,42 @@ export default function Compare() {
   const canAddMore = selected.length < 3
   const availableGames = pickerGames.filter(g => !selected.includes(g.app_id))
 
+  // CSV 列动态生成:第一列日期,其余每选中游戏一列。metric/days/市场都写进文件名,
+  // 行内 unit 与 metric 一致(revenue=美元、downloads=次、rank=整数),不再二次注明。
+  // chartData 已经按日期 pivot 好,直接喂给 downloadCsv 即可。
+  type ChartRow = (typeof chartData)[number]
+  const handleExport = () => {
+    if (selected.length < 2 || chartData.length === 0) {
+      toast.error(t.common.noExportData)
+      return
+    }
+    const exportDate = new Date().toISOString().slice(0, 10)
+    const columns: CsvColumn<ChartRow>[] = [
+      { header: t.csv.date, get: r => r.date },
+      ...seriesNames.map(name => ({
+        header: name,
+        get: (r: ChartRow) => r[name],
+      })),
+    ]
+    downloadCsv(
+      `compare-${metric}-${days}d-${country}-${platform}-${exportDate}.csv`,
+      chartData,
+      columns,
+    )
+    toast.success(t.common.exported(chartData.length))
+  }
+
   return (
     <div className="px-4 sm:px-7 py-5 sm:py-7 max-w-[1500px] mx-auto space-y-5">
-      <PageHeader eyebrow="Diff Engine" title={t.compare.title} subtitle={t.compare.subtitle} />
+      <PageHeader eyebrow="Diff Engine" title={t.compare.title} subtitle={t.compare.subtitle}>
+        <button
+          onClick={handleExport}
+          className="flex items-center gap-2 px-3.5 py-2.5 rounded-lg font-data text-xs text-secondary border border-default hover:border-strong hover:text-primary bg-surface/60 transition-colors"
+        >
+          <DownloadIcon size={14} />
+          <span className="hidden sm:inline">{t.common.export}</span>
+        </button>
+      </PageHeader>
 
       {/* 配额详细 Banner 只放仪表盘；本页用顶部全局警示条 + 控件旁的 quotaCostHint 已足够 */}
 
