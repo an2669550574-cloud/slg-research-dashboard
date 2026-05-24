@@ -36,6 +36,8 @@ Thumbs.db
 
 # Claude Code local permissions (machine-specific)
 .claude/settings.local.json
+# Claude Code runtime lock files
+.claude/*.lock
 # MCP server config — contains absolute paths to local node install
 .mcp.json
 # Local Playwright MCP node install (machine-specific npm cache/global/modules)
