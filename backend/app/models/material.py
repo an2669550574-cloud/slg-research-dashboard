@@ -1,4 +1,4 @@
-from sqlalchemy import String, Integer, DateTime, Text, JSON, Float
+from sqlalchemy import String, Integer, DateTime, Text, JSON, Float, Boolean
 from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime
 from typing import Optional
@@ -38,3 +38,8 @@ class Material(Base):
     analysis_cost_usd: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     # 失败原因（用户决定是否重试）；不存堆栈，给中文/短英文摘要即可。
     analysis_error: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    # 抽帧元信息（migration 0007）：[{"ts": float}, ...]，数组下标 = 帧文件名
+    # frame_NN.jpg 的 N。具体路径走 services/video_analyze.frame_path 计算。
+    analysis_frames: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # 是否生成了联系单 jpg（5 列 × N 行的拼图，给前端抽屉顶部展示）
+    analysis_has_contact_sheet: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)

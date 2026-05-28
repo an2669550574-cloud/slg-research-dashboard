@@ -165,4 +165,8 @@ export const materialsApi = {
     api.post(`/materials/${id}/analyze`).then(r => r.data),
   adoptTags: (id: number): Promise<MaterialOut> =>
     api.post(`/materials/${id}/adopt-tags`).then(r => r.data),
+  adaptDirections: (id: number, ourProduct: string) =>
+    api.post(`/materials/${id}/adapt/directions`, { our_product: ourProduct }).then(r => r.data),
+  adaptScript: (id: number, ourProduct: string, direction: unknown) =>
+    api.post(`/materials/${id}/adapt/script`, { our_product: ourProduct, direction }).then(r => r.data),
 }

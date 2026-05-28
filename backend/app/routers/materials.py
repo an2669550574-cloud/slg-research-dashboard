@@ -8,7 +8,8 @@ from app.config import settings
 from app.database import get_db, utcnow_naive
 from app.models.material import Material
 from app.schemas import MaterialCreate, MaterialUpdate, MaterialOut, MaterialTagCount
-from app.services import media, video_analyze
+from pydantic import BaseModel, Field
+from app.services import creative_adapt, media, video_analyze
 
 router = APIRouter(prefix="/api/materials", tags=["materials"])
 # 站内播放/预览：<video>/<img> 的 src 带不了 X-API-Key 头，故此路由**不挂**全局
@@ -24,6 +25,16 @@ MATERIAL_SORT_FIELDS = {
 def _to_out(m: Material) -> MaterialOut:
     out = MaterialOut.model_validate(m)
     out.stream_url = media.stream_url(m)
+    # 抽帧 + 联系单：URL 走相同 HMAC 令牌（与 stream_url 一致：token=sign(material_id)）
+    if m.analysis_frames:
+        tok = media.sign(m.id)
+        out.analysis_frames = [
+            {"ts": f.get("ts"), "url": f"/api/materials/{m.id}/frame/{i}?token={tok}"}
+            for i, f in enumerate(m.analysis_frames)
+        ]
+    if m.analysis_has_contact_sheet:
+        tok = media.sign(m.id)
+        out.analysis_contact_sheet_url = f"/api/materials/{m.id}/contact-sheet?token={tok}"
     return out
 
 
@@ -226,6 +237,76 @@ async def adopt_analysis_tags(material_id: int, db: AsyncSession = Depends(get_d
     return _to_out(m)
 
 
+# ── 创意迁移（两段式：方向 → 脚本，人在中间筛）───────────────────────
+
+class AdaptDirectionsReq(BaseModel):
+    our_product: str = Field(..., min_length=1, max_length=4000,
+                             description="自家产品 brief，自由文本")
+
+
+class AdaptScriptReq(BaseModel):
+    our_product: str = Field(..., min_length=1, max_length=4000)
+    direction: dict = Field(..., description="阶段 1 输出的某个方向对象")
+
+
+@router.post("/{material_id}/adapt/directions")
+async def adapt_directions(
+    material_id: int,
+    req: AdaptDirectionsReq,
+    db: AsyncSession = Depends(get_db),
+):
+    """阶段 1：生成 3-5 个创意方向。要求素材已 analysis_status=done。
+
+    护栏：与 analyze 共享 LLM_DAILY_BUDGET_USD 日预算（同张账号下游开销都计）。
+    """
+    m = (await db.execute(select(Material).where(Material.id == material_id))).scalar_one_or_none()
+    if not m:
+        raise HTTPException(status_code=404, detail="素材不存在")
+    if m.analysis_status != "done":
+        raise HTTPException(status_code=400, detail="请先完成素材分析（点击 ✨ 分析）")
+    spent = await video_analyze.today_cost_usd(db)
+    if spent >= settings.LLM_DAILY_BUDGET_USD:
+        raise HTTPException(
+            status_code=429,
+            detail=f"今日 LLM 预算已用尽（${spent:.2f} / ${settings.LLM_DAILY_BUDGET_USD:.2f}），明日重试"
+        )
+    try:
+        result = await creative_adapt.generate_directions(m, req.our_product)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        # 网关/网络/解析失败：返回 4xx/5xx 让前端展示，不污染 analysis_* 字段
+        raise HTTPException(status_code=502, detail=f"方向生成失败：{type(e).__name__}: {str(e)[:200]}")
+    return {"data": result.data, "cost_usd": result.cost_usd, "model": result.model}
+
+
+@router.post("/{material_id}/adapt/script")
+async def adapt_script(
+    material_id: int,
+    req: AdaptScriptReq,
+    db: AsyncSession = Depends(get_db),
+):
+    """阶段 2：基于选中方向写详细分镜脚本。"""
+    m = (await db.execute(select(Material).where(Material.id == material_id))).scalar_one_or_none()
+    if not m:
+        raise HTTPException(status_code=404, detail="素材不存在")
+    if m.analysis_status != "done":
+        raise HTTPException(status_code=400, detail="请先完成素材分析")
+    spent = await video_analyze.today_cost_usd(db)
+    if spent >= settings.LLM_DAILY_BUDGET_USD:
+        raise HTTPException(
+            status_code=429,
+            detail=f"今日 LLM 预算已用尽（${spent:.2f} / ${settings.LLM_DAILY_BUDGET_USD:.2f}），明日重试"
+        )
+    try:
+        result = await creative_adapt.generate_script(m, req.our_product, req.direction)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"脚本生成失败：{type(e).__name__}: {str(e)[:200]}")
+    return {"data": result.data, "cost_usd": result.cost_usd, "model": result.model}
+
+
 @router.delete("/{material_id}")
 async def delete_material(material_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Material).where(Material.id == material_id))
@@ -317,3 +398,38 @@ async def serve_material_file(
         _file_iter(path, 0, size - 1), media_type=mime,
         headers={**common, "Content-Length": str(size)},
     )
+
+
+# ── 分析 artifact 静态文件（HMAC 令牌，与 /file 同一鉴权口径）─────────────
+
+def _serve_jpeg(path) -> StreamingResponse:
+    """简单 inline JPEG 流式响应。artifact 都是 ≤500KB 的小图，不做 Range。"""
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="artifact 不存在（请重新分析）")
+    size = path.stat().st_size
+    return StreamingResponse(
+        _file_iter(path, 0, size - 1),
+        media_type="image/jpeg",
+        headers={
+            "Content-Length": str(size),
+            "Cache-Control": "private, max-age=86400",  # 1 天；token 本身 TTL 决定上限
+        },
+    )
+
+
+@file_router.get("/{material_id}/contact-sheet")
+async def serve_contact_sheet(material_id: int, token: Optional[str] = Query(None)):
+    """联系单 JPG：5 列 N 行的关键帧拼图，由 video_analyze.build_contact_sheet 生成。"""
+    if not media.verify(material_id, token):
+        raise HTTPException(status_code=403, detail="无效或过期的访问令牌")
+    return _serve_jpeg(video_analyze.contact_sheet_path(material_id))
+
+
+@file_router.get("/{material_id}/frame/{n}")
+async def serve_frame(material_id: int, n: int, token: Optional[str] = Query(None)):
+    """单帧 JPG：frame_NN.jpg，n 是 0-indexed 帧索引。"""
+    if not media.verify(material_id, token):
+        raise HTTPException(status_code=403, detail="无效或过期的访问令牌")
+    if n < 0 or n > 99:  # 帧名格式 NN，最多两位
+        raise HTTPException(status_code=400, detail="frame index 越界")
+    return _serve_jpeg(video_analyze.frame_path(material_id, n))

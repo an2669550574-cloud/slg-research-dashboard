@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { X, Sparkles, AlertCircle, Loader2, RefreshCw, Tag as TagIcon, Plus } from 'lucide-react'
+import { X, Sparkles, AlertCircle, Loader2, RefreshCw, Tag as TagIcon, Plus, Wand2, ChevronRight, FileText } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { materialsApi } from '../lib/api'
-import type { MaterialOut } from '../lib/types'
+import type {
+  MaterialOut, CreativeDirection, CreativeDirectionsResult, CreativeScriptResult,
+} from '../lib/types'
 
 /** 抽屉：展示 / 触发某素材的 LLM 视频分析。
  *
@@ -155,20 +157,41 @@ export function MaterialAnalysisDrawer({
             </Section>
           )}
 
-          {/* ── 分镜 ── */}
+          {/* ── 联系单（所有关键帧拼图）── */}
+          {current.analysis_contact_sheet_url && (
+            <Section title="关键帧联系单">
+              <a href={current.analysis_contact_sheet_url} target="_blank" rel="noopener noreferrer"
+                title="点击查看大图">
+                <img src={current.analysis_contact_sheet_url} alt="关键帧联系单"
+                  className="w-full rounded-lg border border-default bg-black" loading="lazy" />
+              </a>
+            </Section>
+          )}
+
+          {/* ── 分镜（左侧时间戳 + 缩略图 + 描述）── */}
           {current.analysis_scenes && current.analysis_scenes.length > 0 && (
             <Section title="分镜">
-              <ul className="space-y-2">
-                {current.analysis_scenes.map((s, i) => (
-                  <li key={i} className="flex gap-3 text-sm">
-                    <button onClick={() => seekTo(s.ts)}
-                      className="font-data text-[11px] text-accent hover:underline shrink-0 w-12 text-right pt-0.5"
-                      title="跳转到该时间点">
-                      {formatTs(s.ts)}
-                    </button>
-                    <span className="text-secondary flex-1">{s.description}</span>
-                  </li>
-                ))}
+              <ul className="space-y-3">
+                {current.analysis_scenes.map((s, i) => {
+                  const frame = findClosestFrame(s.ts, current.analysis_frames)
+                  return (
+                    <li key={i} className="flex gap-3 text-sm">
+                      <button onClick={() => seekTo(s.ts)}
+                        className="font-data text-[11px] text-accent hover:underline shrink-0 w-12 text-right pt-0.5"
+                        title="跳转到该时间点">
+                        {formatTs(s.ts)}
+                      </button>
+                      {frame && (
+                        <button onClick={() => seekTo(s.ts)} title="跳转到该时间点"
+                          className="shrink-0 w-24 aspect-video rounded border border-default overflow-hidden bg-black hover:border-accent transition-colors">
+                          <img src={frame.url} alt="" loading="lazy"
+                            className="w-full h-full object-cover" />
+                        </button>
+                      )}
+                      <span className="text-secondary flex-1 pt-0.5">{s.description}</span>
+                    </li>
+                  )
+                })}
               </ul>
             </Section>
           )}
@@ -194,6 +217,9 @@ export function MaterialAnalysisDrawer({
               </ul>
             </Section>
           )}
+
+          {/* ── 创意迁移：参考片 + 自家产品 → 方向 → 脚本 ── */}
+          {status === 'done' && <AdaptBlock materialId={current.id} />}
         </div>
       </aside>
     </>
@@ -277,8 +303,210 @@ function StatusBlock({
   )
 }
 
+// ─── 创意迁移区块 ─────────────────────────────────────────────────────
+//
+// 参考公众号《开源买量素材skill》（作者：杰克 Ultra）方法论：
+//   先让 AI 给方向 → 人先挑方向 → 再让 AI 基于选中的方向写脚本
+// localStorage 记忆"自家产品 brief"，避免每次重新填。
+
+const LS_PRODUCT_KEY = 'slg.adaptOurProduct'
+
+function AdaptBlock({ materialId }: { materialId: number }) {
+  const [open, setOpen] = useState(false)
+  const [product, setProduct] = useState(() => localStorage.getItem(LS_PRODUCT_KEY) || '')
+  const [directions, setDirections] = useState<CreativeDirection[] | null>(null)
+  const [chosen, setChosen] = useState<CreativeDirection | null>(null)
+  const [script, setScript] = useState<CreativeScriptResult['data'] | null>(null)
+  const [totalCost, setTotalCost] = useState(0)
+
+  const dirMut = useMutation({
+    mutationFn: () => materialsApi.adaptDirections(materialId, product) as Promise<CreativeDirectionsResult>,
+    onSuccess: (r) => {
+      localStorage.setItem(LS_PRODUCT_KEY, product)
+      setDirections(r.data.directions ?? [])
+      setChosen(null); setScript(null)
+      setTotalCost(c => c + (r.cost_usd || 0))
+      toast.success(`生成 ${r.data.directions?.length ?? 0} 个方向（$${(r.cost_usd ?? 0).toFixed(4)}）`)
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || '方向生成失败'),
+  })
+
+  const scriptMut = useMutation({
+    mutationFn: (d: CreativeDirection) =>
+      materialsApi.adaptScript(materialId, product, d) as Promise<CreativeScriptResult>,
+    onSuccess: (r) => {
+      setScript(r.data)
+      setTotalCost(c => c + (r.cost_usd || 0))
+      toast.success(`脚本生成完成（$${(r.cost_usd ?? 0).toFixed(4)}）`)
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || '脚本生成失败'),
+  })
+
+  if (!open) {
+    return (
+      <section className="border-t border-default pt-5 -mx-5 px-5">
+        <button onClick={() => setOpen(true)}
+          className="w-full flex items-center justify-between gap-3 p-3 rounded-lg border border-accent/40 bg-accent/5 hover:bg-accent/10 transition-colors">
+          <div className="flex items-center gap-2 text-accent">
+            <Wand2 size={15} />
+            <span className="font-display font-semibold text-sm">迁移到自家产品 · 生成创意方向</span>
+          </div>
+          <ChevronRight size={16} className="text-accent" />
+        </button>
+      </section>
+    )
+  }
+
+  return (
+    <section className="border-t border-default pt-5 -mx-5 px-5 space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="eyebrow text-accent flex items-center gap-1.5">
+          <Wand2 size={12} /> 创意迁移
+        </h3>
+        <div className="flex items-center gap-2 text-[11px] text-muted font-data">
+          {totalCost > 0 && <span>累计 ${totalCost.toFixed(4)}</span>}
+          <button onClick={() => setOpen(false)} className="hover:text-primary">收起</button>
+        </div>
+      </div>
+
+      {/* ① 自家产品 brief（localStorage 记忆）*/}
+      <div>
+        <label className="block text-xs text-muted mb-1.5">自家产品 brief（题材 / 玩法 / 卖点 / 受众 / 差异化）</label>
+        <textarea
+          value={product}
+          onChange={e => setProduct(e.target.value)}
+          rows={4}
+          placeholder="例：《XX》现代都市丧尸题材 SLG，玩法核心：庇护所建造 + 队伍指挥；&#10;主打卖点：女性主角 + 故事化叙事；目标人群：30-45 岁女性玩家。"
+          className="w-full bg-elevated/60 border border-default rounded-lg px-3 py-2 text-sm text-primary placeholder:text-muted focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+        />
+        <div className="mt-2 flex items-center gap-2">
+          <button
+            onClick={() => dirMut.mutate()}
+            disabled={dirMut.isPending || !product.trim()}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-md bg-accent hover:brightness-110 disabled:opacity-50 text-sm font-semibold text-white">
+            {dirMut.isPending ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+            {dirMut.isPending ? '生成中…' : (directions ? '重新生成方向' : '生成 3-5 个方向')}
+          </button>
+          <span className="text-[11px] text-muted">~5-10s · ~$0.03</span>
+        </div>
+      </div>
+
+      {/* ② 方向卡片 */}
+      {directions && directions.length > 0 && (
+        <div className="space-y-2">
+          <div className="eyebrow text-muted">方向（点卡片选定再生成脚本）</div>
+          {directions.map((d, i) => {
+            const isChosen = chosen?.name === d.name
+            return (
+              <button key={i} onClick={() => { setChosen(d); setScript(null) }}
+                className={`block w-full text-left p-3 rounded-lg border transition-colors ${isChosen ? 'border-accent bg-accent/10' : 'border-default bg-elevated/40 hover:border-strong'}`}>
+                <div className="flex items-baseline justify-between gap-2 mb-1">
+                  <span className="font-display font-bold text-sm text-primary">{i + 1}. {d.name}</span>
+                  {isChosen && <span className="text-[10px] font-data text-accent">已选</span>}
+                </div>
+                <div className="text-xs text-secondary mb-2">{d.concept}</div>
+                <div className="space-y-1 text-[11px] text-muted">
+                  <div><b className="text-secondary">前 3 秒：</b>{d.opening_3sec}</div>
+                  <div><b className="text-secondary">借鉴：</b>{d.borrows_from_ref}</div>
+                  <div><b className="text-secondary">契合：</b>{d.fit_to_self_product}</div>
+                  <div><b className="text-secondary">结尾：</b>{d.ending_cta}</div>
+                  {d.risk_notes && <div className="text-red-300/80"><b>避坑：</b>{d.risk_notes}</div>}
+                </div>
+                {d.key_hooks && d.key_hooks.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {d.key_hooks.map((h, j) => (
+                      <span key={j} className="text-[10px] font-data px-1.5 py-0.5 rounded bg-accent/10 text-accent border border-accent/30">
+                        {h.ts_est} · {h.kind}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {/* ③ 脚本生成 */}
+      {chosen && (
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <div className="eyebrow text-muted">分镜脚本</div>
+            <button
+              onClick={() => scriptMut.mutate(chosen)}
+              disabled={scriptMut.isPending}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-accent hover:brightness-110 disabled:opacity-50 text-xs font-semibold text-white">
+              {scriptMut.isPending ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
+              {scriptMut.isPending ? '生成中…' : (script ? '重新生成脚本' : `为「${chosen.name}」写脚本`)}
+            </button>
+          </div>
+          {scriptMut.isPending && (
+            <div className="text-xs text-muted">~10-15s · ~$0.05</div>
+          )}
+          {script && <ScriptTable script={script} />}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function ScriptTable({ script }: { script: CreativeScriptResult['data'] }) {
+  return (
+    <div className="space-y-3">
+      <div className="font-data text-[11px] text-muted">
+        总时长：{script.total_duration_sec}s · 共 {script.shots?.length ?? 0} 个镜头
+      </div>
+      <ul className="space-y-2">
+        {script.shots?.map((s, i) => (
+          <li key={i} className="rounded border border-default bg-elevated/30 p-2.5">
+            <div className="flex items-baseline gap-2 mb-1">
+              <span className="font-data text-[11px] text-accent shrink-0">{s.ts}</span>
+              <span className="text-[10px] font-data px-1.5 rounded bg-base/60 text-muted border border-default">{s.shot_type}</span>
+            </div>
+            <div className="text-xs text-secondary">{s.visual}</div>
+            {s.audio_voiceover && s.audio_voiceover !== '无' && (
+              <div className="mt-1 text-[11px] text-muted"><b>口播/音效：</b>{s.audio_voiceover}</div>
+            )}
+            {s.production_notes && s.production_notes !== '无' && (
+              <div className="mt-0.5 text-[11px] text-muted"><b>制作：</b>{s.production_notes}</div>
+            )}
+          </li>
+        ))}
+      </ul>
+      {script.constraints_check && (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-[11px] text-muted hover:text-primary">五条硬约束自检</summary>
+          <ul className="mt-2 space-y-0.5 text-[11px] text-secondary">
+            <li>① 禁宏大叙事开场：{script.constraints_check.no_grand_opening}</li>
+            <li>② 禁 CG 宣传片：{script.constraints_check.no_cg_promo}</li>
+            <li>③ 一镜一事：{script.constraints_check.one_event_per_shot}</li>
+            <li>④ 0-1.5s 单动作：{script.constraints_check.one_action_in_first_1_5s}</li>
+            <li>⑤ 反馈单镜头：{script.constraints_check.feedback_separate_shot}</li>
+          </ul>
+        </details>
+      )}
+    </div>
+  )
+}
+
 function formatTs(sec: number): string {
   const m = Math.floor(sec / 60)
   const s = Math.floor(sec % 60)
   return `${m}:${String(s).padStart(2, '0')}`
+}
+
+/** 按 ts 找最近的帧。LLM 的 scenes ts 一般就近 extract_frames 的采样点，
+ * 但偶尔会偏移；近邻匹配比按 index 强（也容忍 scenes 数 ≠ frames 数）。*/
+function findClosestFrame(
+  ts: number,
+  frames: { ts: number; url: string }[] | null,
+): { ts: number; url: string } | null {
+  if (!frames || frames.length === 0) return null
+  let best = frames[0]
+  let bestDelta = Math.abs(best.ts - ts)
+  for (const f of frames) {
+    const d = Math.abs(f.ts - ts)
+    if (d < bestDelta) { best = f; bestDelta = d }
+  }
+  return best
 }

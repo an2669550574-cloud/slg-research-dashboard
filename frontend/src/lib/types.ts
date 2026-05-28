@@ -151,6 +151,61 @@ export interface MaterialOut {
   analysis_model: string | null
   analysis_cost_usd: number | null
   analysis_error: string | null
+  // 关键帧 + 联系单（migration 0007）：URL 含 HMAC 短时令牌
+  analysis_frames: { ts: number; url: string }[] | null
+  analysis_contact_sheet_url: string | null
+}
+
+// ─── 创意迁移（adapt）─────────────────────────────────────────────
+
+export interface CreativeKeyHook {
+  ts_est: string
+  kind: string
+  note: string
+}
+
+export interface CreativeDirection {
+  name: string
+  concept: string
+  borrows_from_ref: string
+  fit_to_self_product: string
+  opening_3sec: string
+  key_hooks: CreativeKeyHook[]
+  ending_cta: string
+  risk_notes: string
+}
+
+export interface CreativeConstraintsCheck {
+  no_grand_opening: string
+  no_cg_promo: string
+  one_event_per_shot: string
+  one_action_in_first_1_5s: string
+  feedback_separate_shot: string
+}
+
+export interface CreativeDirectionsResult {
+  data: { directions: CreativeDirection[]; constraints_check?: CreativeConstraintsCheck }
+  cost_usd: number
+  model: string
+}
+
+export interface CreativeShot {
+  ts: string
+  shot_type: string
+  visual: string
+  audio_voiceover: string
+  production_notes: string
+}
+
+export interface CreativeScriptResult {
+  data: {
+    direction_name: string
+    total_duration_sec: number
+    shots: CreativeShot[]
+    constraints_check?: CreativeConstraintsCheck
+  }
+  cost_usd: number
+  model: string
 }
 
 export interface MaterialCreate {

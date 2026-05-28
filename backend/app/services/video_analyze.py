@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import json
 import logging
 import shutil
@@ -30,6 +31,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
+from PIL import Image
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,6 +45,24 @@ logger = logging.getLogger(__name__)
 
 _FFMPEG = shutil.which("ffmpeg") or "ffmpeg"
 _FFPROBE = shutil.which("ffprobe") or "ffprobe"
+
+# 抽帧 / 联系单 文件落盘的子目录（在 MEDIA_ROOT 下）。
+# 文件名走 deterministic：frame_NN.jpg / contact_sheet.jpg；DB 不存路径。
+ANALYSIS_SUBDIR = "analysis"
+
+
+def analysis_dir(material_id: int) -> Path:
+    """data/materials/analysis/{material_id}/ 绝对路径。caller 自行 mkdir。"""
+    root = Path(settings.MEDIA_ROOT)
+    return root / ANALYSIS_SUBDIR / str(material_id)
+
+
+def frame_path(material_id: int, n: int) -> Path:
+    return analysis_dir(material_id) / f"frame_{n:02d}.jpg"
+
+
+def contact_sheet_path(material_id: int) -> Path:
+    return analysis_dir(material_id) / "contact_sheet.jpg"
 
 
 @dataclass
@@ -91,6 +111,54 @@ def _extract_one_frame(path: Path, ts_sec: float, max_dim: int) -> Optional[byte
     except Exception as e:
         logger.warning("ffmpeg subprocess error: %s", e)
         return None
+
+
+def build_contact_sheet(frames: list[FrameSample], dest: Path,
+                        cols: int = 5, cell_max: int = 360,
+                        gap: int = 4, bg: tuple = (10, 14, 22)) -> None:
+    """把 N 张帧拼成 cols 列网格 JPG。
+
+    单元格统一缩到 cell_max 最长边，保持宽高比；放在固定大小（max(w),max(h)）
+    的格子里居中——避免不同纵横比的帧让网格忽宽忽窄。bg=深色（与"情报终端"
+    设计系统 bg-base 接近），不喧宾夺主。
+    """
+    if not frames:
+        return
+    # 预解码 + 缩放
+    thumbs = []
+    for f in frames:
+        im = Image.open(io.BytesIO(f.jpeg_bytes)).convert("RGB")
+        im.thumbnail((cell_max, cell_max), Image.LANCZOS)
+        thumbs.append(im)
+    cell_w = max(im.width for im in thumbs)
+    cell_h = max(im.height for im in thumbs)
+    rows = (len(thumbs) + cols - 1) // cols
+    sheet_w = cols * cell_w + (cols + 1) * gap
+    sheet_h = rows * cell_h + (rows + 1) * gap
+    sheet = Image.new("RGB", (sheet_w, sheet_h), bg)
+    for i, im in enumerate(thumbs):
+        r, c = divmod(i, cols)
+        x = gap + c * (cell_w + gap) + (cell_w - im.width) // 2
+        y = gap + r * (cell_h + gap) + (cell_h - im.height) // 2
+        sheet.paste(im, (x, y))
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(dest, format="JPEG", quality=82, optimize=True)
+
+
+def save_frames_to_disk(frames: list[FrameSample], material_id: int) -> None:
+    """落盘每帧到 frame_NN.jpg。前端按帧索引访问，DB 不存路径只存 ts。"""
+    d = analysis_dir(material_id)
+    d.mkdir(parents=True, exist_ok=True)
+    for i, f in enumerate(frames):
+        with open(frame_path(material_id, i), "wb") as fp:
+            fp.write(f.jpeg_bytes)
+
+
+def clear_analysis_artifacts(material_id: int) -> None:
+    """重新分析时清理旧 artifacts，避免遗留旧帧。"""
+    d = analysis_dir(material_id)
+    if d.is_dir():
+        shutil.rmtree(d, ignore_errors=True)
 
 
 def extract_frames(file_path: Path, n_frames: int, max_dim: int) -> list[FrameSample]:
@@ -271,12 +339,25 @@ async def analyze_material(material_id: int) -> None:
                 await _mark_failed(db, m, "ffmpeg 抽帧失败（视频可能损坏）")
                 return
 
+            # 持久化帧 + 联系单：用户后续在抽屉里看图用。重新分析时先清旧的，
+            # 避免帧数变化（比如改了 MATERIAL_ANALYZE_FRAMES）导致 frame_10
+            # 残留。LLM 调用在前，IO 在后；调用失败就不浪费磁盘。
             parsed, cost, model = await _call_llm(_build_messages(frames, m.title))
+            await asyncio.to_thread(clear_analysis_artifacts, material_id)
+            await asyncio.to_thread(save_frames_to_disk, frames, material_id)
+            await asyncio.to_thread(
+                build_contact_sheet, frames, contact_sheet_path(material_id),
+            )
+
             m.analysis_status = "done"
             m.analysis_brief = str(parsed.get("brief", "")).strip() or None
             m.analysis_tags = _norm_tags(parsed.get("tags"))
             m.analysis_scenes = _norm_scenes(parsed.get("scenes"))
             m.analysis_hooks = _norm_hooks(parsed.get("hooks"))
+            # 帧元信息：[{ts}, ...]。文件名走 deterministic（frame_NN.jpg）
+            # 由 frame_path(id, i) 给出，i 是数组下标。
+            m.analysis_frames = [{"ts": f.timestamp_sec} for f in frames]
+            m.analysis_has_contact_sheet = True
             m.analyzed_at = utcnow_naive()
             m.analysis_model = model
             m.analysis_cost_usd = cost

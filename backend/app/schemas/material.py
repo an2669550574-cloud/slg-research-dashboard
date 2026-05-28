@@ -70,3 +70,6 @@ class MaterialOut(BaseModel):
     analysis_model: Optional[str] = None
     analysis_cost_usd: Optional[float] = None
     analysis_error: Optional[str] = None
+    # 抽帧 + 联系单：DB 只存元信息，URL 由 service 注入（含 HMAC 短时令牌）
+    analysis_frames: Optional[list[dict]] = None  # [{ts, url}]
+    analysis_contact_sheet_url: Optional[str] = None
