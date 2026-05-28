@@ -113,6 +113,19 @@ export interface HistoryCreate {
 
 // ─── materials ───────────────────────────────────────────────────────────
 
+export type MaterialAnalysisStatus = 'pending' | 'running' | 'done' | 'failed'
+
+export interface MaterialScene {
+  ts: number
+  description: string
+}
+
+export interface MaterialHook {
+  ts: number
+  kind: string
+  note: string
+}
+
 export interface MaterialOut {
   id: number
   app_id: string
@@ -128,6 +141,16 @@ export interface MaterialOut {
   tags: string[]
   notes: string | null
   created_at: IsoDateString
+  // LLM 视频分析（null/undefined 视同尚未分析）
+  analysis_status: MaterialAnalysisStatus | null
+  analysis_brief: string | null
+  analysis_tags: string[] | null
+  analysis_scenes: MaterialScene[] | null
+  analysis_hooks: MaterialHook[] | null
+  analyzed_at: IsoDateString | null
+  analysis_model: string | null
+  analysis_cost_usd: number | null
+  analysis_error: string | null
 }
 
 export interface MaterialCreate {

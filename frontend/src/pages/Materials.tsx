@@ -3,8 +3,9 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tansta
 import toast from 'react-hot-toast'
 import { materialsApi, gamesApi } from '../lib/api'
 import { PLATFORM_CONFIG } from '../lib/utils'
-import { ExternalLink, Trash2, Plus, Search, Download as DownloadIcon, Upload, Film as FilmIcon, Radio, Pencil, X, Check, AlertCircle, Loader2, Tag as TagIcon } from 'lucide-react'
+import { ExternalLink, Trash2, Plus, Search, Download as DownloadIcon, Upload, Film as FilmIcon, Radio, Pencil, X, Check, AlertCircle, Loader2, Tag as TagIcon, Sparkles } from 'lucide-react'
 import { MaterialPreview } from '../components/MaterialPreview'
+import { MaterialAnalysisDrawer } from '../components/MaterialAnalysisDrawer'
 import { Select } from '../components/Select'
 import { PageHeader } from '../components/PageHeader'
 import { useNavigate } from 'react-router-dom'
@@ -46,6 +47,7 @@ export default function Materials() {
   const [form, setForm] = useState(emptyForm)
   const [mode, setMode] = useState<'link' | 'upload'>('link')
   const [editing, setEditing] = useState<MaterialOut | null>(null)
+  const [analyzing, setAnalyzing] = useState<MaterialOut | null>(null)
   const [files, setFiles] = useState<File[]>([])
   const [queue, setQueue] = useState<QItem[]>([])
   const [busy, setBusy] = useState(false)
@@ -319,6 +321,13 @@ export default function Materials() {
           {m.platform ? platLabel(m.platform) : platCfg.label}
         </span>
         <div className="absolute top-3 right-3 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+          {/* AI 分析：仅 upload 视频可用（外链拿不到原文件抽帧） */}
+          {m.source === 'upload' && m.material_type === 'video' && (
+            <button onClick={() => setAnalyzing(m)} title="AI 分析"
+              className="p-1.5 rounded bg-base/75 backdrop-blur-sm text-secondary hover:text-accent">
+              <Sparkles size={14} />
+            </button>
+          )}
           <button onClick={() => openEdit(m)} title={t.materials.editMaterial}
             className="p-1.5 rounded bg-base/75 backdrop-blur-sm text-secondary hover:text-accent">
             <Pencil size={14} />
@@ -330,6 +339,18 @@ export default function Materials() {
             </a>
           )}
         </div>
+        {/* 分析状态徽标：常驻显示（与平台徽标同侧底部），让列表一眼看出已分析的素材 */}
+        {m.source === 'upload' && m.material_type === 'video' && m.analysis_status && m.analysis_status !== 'pending' && (
+          <span className={`absolute bottom-3 left-3 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-data backdrop-blur-sm border ${
+            m.analysis_status === 'done' ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+            : m.analysis_status === 'running' ? 'bg-accent/15 border-accent/40 text-accent'
+            : 'bg-red-500/15 border-red-500/40 text-red-300'
+          }`}>
+            {m.analysis_status === 'done' && <><Sparkles size={9} /> AI</>}
+            {m.analysis_status === 'running' && <><Loader2 size={9} className="animate-spin" /> 分析中</>}
+            {m.analysis_status === 'failed' && <><AlertCircle size={9} /> 失败</>}
+          </span>
+        )}
       </div>
     )
     const meta = (
@@ -657,6 +678,8 @@ export default function Materials() {
       <div className="reveal reveal-4 mt-7">
         <Pagination total={total} offset={offset} pageSize={PAGE_SIZE} onOffsetChange={setOffset} />
       </div>
+
+      <MaterialAnalysisDrawer material={analyzing} onClose={() => setAnalyzing(null)} />
     </div>
   )
 }

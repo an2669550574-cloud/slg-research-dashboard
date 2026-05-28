@@ -1,13 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, UploadFile, File, Form
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, text
 from typing import Optional, Literal
 from urllib.parse import quote
-from app.database import get_db
+from app.config import settings
+from app.database import get_db, utcnow_naive
 from app.models.material import Material
 from app.schemas import MaterialCreate, MaterialUpdate, MaterialOut, MaterialTagCount
-from app.services import media
+from app.services import media, video_analyze
 
 router = APIRouter(prefix="/api/materials", tags=["materials"])
 # 站内播放/预览：<video>/<img> 的 src 带不了 X-API-Key 头，故此路由**不挂**全局
@@ -145,6 +146,81 @@ async def update_material(material_id: int, data: MaterialUpdate, db: AsyncSessi
         raise HTTPException(status_code=404, detail="Material not found")
     for k, v in data.model_dump(exclude_none=True).items():
         setattr(m, k, v)
+    await db.commit()
+    await db.refresh(m)
+    return _to_out(m)
+
+
+@router.post("/{material_id}/analyze", response_model=MaterialOut)
+async def analyze_material_endpoint(
+    material_id: int,
+    background: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    """触发 LLM 视频分析（异步）。立刻返回 status=running 的素材状态。
+
+    护栏：
+    - 仅 upload 来源的视频可分析（外链拿不到原文件抽帧）
+    - 日成本超 LLM_DAILY_BUDGET_USD 拒新请求（避免失控烧钱）
+    - 同素材正在分析中（status=running）则拒绝重入；走 done/failed 都允许重分析
+
+    后台 task 会写回 done/failed 状态；前端 GET /{id} 轮询拉新状态。
+    """
+    m = (await db.execute(select(Material).where(Material.id == material_id))).scalar_one_or_none()
+    if not m:
+        raise HTTPException(status_code=404, detail="素材不存在")
+    if m.source != "upload" or not m.file_path:
+        raise HTTPException(status_code=400, detail="仅上传素材可分析；外链素材请下载后上传")
+    if m.material_type != "video":
+        raise HTTPException(status_code=400, detail=f"仅视频可分析（当前类型：{m.material_type}）")
+    if m.analysis_status == "running":
+        raise HTTPException(status_code=409, detail="分析进行中，请稍候")
+
+    spent = await video_analyze.today_cost_usd(db)
+    if spent >= settings.LLM_DAILY_BUDGET_USD:
+        raise HTTPException(
+            status_code=429,
+            detail=f"今日 LLM 预算已用尽（${spent:.2f} / ${settings.LLM_DAILY_BUDGET_USD:.2f}），明日重试"
+        )
+
+    m.analysis_status = "running"
+    m.analysis_error = None
+    await db.commit()
+    await db.refresh(m)
+
+    background.add_task(video_analyze.analyze_material, material_id)
+
+    return _to_out(m)
+
+
+@router.get("/{material_id}", response_model=MaterialOut)
+async def get_material(material_id: int, db: AsyncSession = Depends(get_db)):
+    """单素材详情；前端轮询分析状态用。"""
+    m = (await db.execute(select(Material).where(Material.id == material_id))).scalar_one_or_none()
+    if not m:
+        raise HTTPException(status_code=404, detail="素材不存在")
+    return _to_out(m)
+
+
+@router.post("/{material_id}/adopt-tags", response_model=MaterialOut)
+async def adopt_analysis_tags(material_id: int, db: AsyncSession = Depends(get_db)):
+    """把 LLM 提议的 analysis_tags 合并进人工 tags（去重保序）。
+
+    LLM 标签默认不污染人工 tags（避免误判进既有筛选体系）；用户审视后点
+    "采纳"才入库。再次分析覆盖 analysis_tags 不影响已采纳的人工 tags。
+    """
+    m = (await db.execute(select(Material).where(Material.id == material_id))).scalar_one_or_none()
+    if not m:
+        raise HTTPException(status_code=404, detail="素材不存在")
+    if not m.analysis_tags:
+        return _to_out(m)
+    existing = list(m.tags or [])
+    seen = set(existing)
+    for t in m.analysis_tags:
+        if t and t not in seen:
+            existing.append(t)
+            seen.add(t)
+    m.tags = existing
     await db.commit()
     await db.refresh(m)
     return _to_out(m)
