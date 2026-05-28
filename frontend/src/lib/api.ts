@@ -159,4 +159,10 @@ export const materialsApi = {
     api.put(`/materials/${id}`, data).then(r => r.data),
   delete: (id: number): Promise<DeleteResponse> =>
     api.delete(`/materials/${id}`).then(r => r.data),
+  get: (id: number): Promise<MaterialOut> =>
+    api.get(`/materials/${id}`).then(r => r.data),
+  analyze: (id: number): Promise<MaterialOut> =>
+    api.post(`/materials/${id}/analyze`).then(r => r.data),
+  adoptTags: (id: number): Promise<MaterialOut> =>
+    api.post(`/materials/${id}/adopt-tags`).then(r => r.data),
 }

@@ -100,6 +100,28 @@ class Settings(BaseSettings):
     # HMAC 短时令牌走 query string；列表每次刷新会重签，过期自然失效。
     MEDIA_URL_TTL_SECONDS: int = 6 * 3600
 
+    # ── 太石 LLM 网关 ────────────────────────────────────────────
+    # 公司统一大模型网关，OpenAI 兼容协议。审批通过后钉钉发 key。
+    # 不直连 Anthropic/OpenAI（合规）。文档：reference_taishi_gateway memory。
+    TAISHI_API_KEY: Optional[str] = None
+    TAISHI_BASE_URL: str = "https://relay.tuyoo.com/v1"
+    # 视频/图片分析用：视觉模型。Claude sonnet/opus 与 Gemini 系列支持图，
+    # GLM 系列只支持 text，不能用于素材帧分析。
+    TAISHI_VISION_MODEL: str = "claude-sonnet-4.5"
+    # 单次调用超时（秒）。视频分析单次 8-12 帧 + 长 prompt，宽点。
+    TAISHI_TIMEOUT_SECONDS: int = 120
+    # 日成本软上限（美元）。超过则 /analyze 端点拒绝新请求，防止失控烧钱。
+    # 太石账号本身有 $50/天/人硬上限，本项目护栏建议设低于此值。
+    LLM_DAILY_BUDGET_USD: float = 20.0
+
+    # ── 素材视频分析 ──────────────────────────────────────────────
+    # 单视频抽取多少关键帧送给模型。8~12 是 sonnet 视觉模型的甜区：太少
+    # 漏关键场景，太多 token 成本陡升且 LLM 注意力分散。
+    MATERIAL_ANALYZE_FRAMES: int = 10
+    # 每帧降采样最长边（像素）。Claude vision 推荐 ≤ 1568px；超过会被自动
+    # 缩放且不省钱。1280 兼顾清晰度和上传体积。
+    MATERIAL_ANALYZE_FRAME_MAX_DIM: int = 1280
+
     # Sentry：留空时不上报。生产环境填入 DSN 即开启
     SENTRY_DSN: Optional[str] = None
     SENTRY_ENVIRONMENT: str = "production"

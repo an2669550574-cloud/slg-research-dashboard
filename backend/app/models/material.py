@@ -1,6 +1,7 @@
-from sqlalchemy import String, Integer, DateTime, Text, JSON
+from sqlalchemy import String, Integer, DateTime, Text, JSON, Float
 from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime
+from typing import Optional
 from app.database import Base, utcnow_naive
 
 class Material(Base):
@@ -21,3 +22,19 @@ class Material(Base):
     tags: Mapped[list] = mapped_column(JSON, default=list)
     notes: Mapped[str] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+    # ── LLM 视频分析（migration 0006）─────────────────────────────
+    # pending(尚未分析) / running(后台任务跑中) / done / failed。None 视同 pending。
+    analysis_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    analysis_brief: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # LLM 提议的 tags；独立于人工 tags，前端可"采纳到人工 tags"。
+    analysis_tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # 分镜：[{ts: 秒, description: 中文场景描述}]
+    analysis_scenes: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # 卸负点/转化钩子：[{ts: 秒, kind: 卸负/CTA/反转/..., note: 中文说明}]
+    analysis_hooks: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    analyzed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    analysis_model: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    analysis_cost_usd: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # 失败原因（用户决定是否重试）；不存堆栈，给中文/短英文摘要即可。
+    analysis_error: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)

@@ -30,6 +30,17 @@ class MaterialTagCount(BaseModel):
     count: int
 
 
+class MaterialScene(BaseModel):
+    ts: float  # 秒（精度 0.1s 即可）
+    description: str
+
+
+class MaterialHook(BaseModel):
+    ts: float
+    kind: str  # 卸负 / CTA / 反转 / 情绪高潮 / 价值主张 …
+    note: str
+
+
 class MaterialOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -48,3 +59,14 @@ class MaterialOut(BaseModel):
     tags: list[str] = []
     notes: Optional[str] = None
     created_at: datetime
+
+    # LLM 视频分析结果（None 表示尚未分析或无）
+    analysis_status: Optional[str] = None  # pending/running/done/failed
+    analysis_brief: Optional[str] = None
+    analysis_tags: Optional[list[str]] = None
+    analysis_scenes: Optional[list[MaterialScene]] = None
+    analysis_hooks: Optional[list[MaterialHook]] = None
+    analyzed_at: Optional[datetime] = None
+    analysis_model: Optional[str] = None
+    analysis_cost_usd: Optional[float] = None
+    analysis_error: Optional[str] = None
