@@ -8,7 +8,8 @@ from app.config import settings
 from app.database import get_db, utcnow_naive
 from app.models.material import Material
 from app.schemas import MaterialCreate, MaterialUpdate, MaterialOut, MaterialTagCount
-from app.services import media, video_analyze
+from pydantic import BaseModel, Field
+from app.services import creative_adapt, media, video_analyze
 
 router = APIRouter(prefix="/api/materials", tags=["materials"])
 # 站内播放/预览：<video>/<img> 的 src 带不了 X-API-Key 头，故此路由**不挂**全局
@@ -234,6 +235,76 @@ async def adopt_analysis_tags(material_id: int, db: AsyncSession = Depends(get_d
     await db.commit()
     await db.refresh(m)
     return _to_out(m)
+
+
+# ── 创意迁移（两段式：方向 → 脚本，人在中间筛）───────────────────────
+
+class AdaptDirectionsReq(BaseModel):
+    our_product: str = Field(..., min_length=1, max_length=4000,
+                             description="自家产品 brief，自由文本")
+
+
+class AdaptScriptReq(BaseModel):
+    our_product: str = Field(..., min_length=1, max_length=4000)
+    direction: dict = Field(..., description="阶段 1 输出的某个方向对象")
+
+
+@router.post("/{material_id}/adapt/directions")
+async def adapt_directions(
+    material_id: int,
+    req: AdaptDirectionsReq,
+    db: AsyncSession = Depends(get_db),
+):
+    """阶段 1：生成 3-5 个创意方向。要求素材已 analysis_status=done。
+
+    护栏：与 analyze 共享 LLM_DAILY_BUDGET_USD 日预算（同张账号下游开销都计）。
+    """
+    m = (await db.execute(select(Material).where(Material.id == material_id))).scalar_one_or_none()
+    if not m:
+        raise HTTPException(status_code=404, detail="素材不存在")
+    if m.analysis_status != "done":
+        raise HTTPException(status_code=400, detail="请先完成素材分析（点击 ✨ 分析）")
+    spent = await video_analyze.today_cost_usd(db)
+    if spent >= settings.LLM_DAILY_BUDGET_USD:
+        raise HTTPException(
+            status_code=429,
+            detail=f"今日 LLM 预算已用尽（${spent:.2f} / ${settings.LLM_DAILY_BUDGET_USD:.2f}），明日重试"
+        )
+    try:
+        result = await creative_adapt.generate_directions(m, req.our_product)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        # 网关/网络/解析失败：返回 4xx/5xx 让前端展示，不污染 analysis_* 字段
+        raise HTTPException(status_code=502, detail=f"方向生成失败：{type(e).__name__}: {str(e)[:200]}")
+    return {"data": result.data, "cost_usd": result.cost_usd, "model": result.model}
+
+
+@router.post("/{material_id}/adapt/script")
+async def adapt_script(
+    material_id: int,
+    req: AdaptScriptReq,
+    db: AsyncSession = Depends(get_db),
+):
+    """阶段 2：基于选中方向写详细分镜脚本。"""
+    m = (await db.execute(select(Material).where(Material.id == material_id))).scalar_one_or_none()
+    if not m:
+        raise HTTPException(status_code=404, detail="素材不存在")
+    if m.analysis_status != "done":
+        raise HTTPException(status_code=400, detail="请先完成素材分析")
+    spent = await video_analyze.today_cost_usd(db)
+    if spent >= settings.LLM_DAILY_BUDGET_USD:
+        raise HTTPException(
+            status_code=429,
+            detail=f"今日 LLM 预算已用尽（${spent:.2f} / ${settings.LLM_DAILY_BUDGET_USD:.2f}），明日重试"
+        )
+    try:
+        result = await creative_adapt.generate_script(m, req.our_product, req.direction)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"脚本生成失败：{type(e).__name__}: {str(e)[:200]}")
+    return {"data": result.data, "cost_usd": result.cost_usd, "model": result.model}
 
 
 @router.delete("/{material_id}")
