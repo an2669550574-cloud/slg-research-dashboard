@@ -151,6 +151,9 @@ export interface MaterialOut {
   analysis_model: string | null
   analysis_cost_usd: number | null
   analysis_error: string | null
+  // 关键帧 + 联系单（migration 0007）：URL 含 HMAC 短时令牌
+  analysis_frames: { ts: number; url: string }[] | null
+  analysis_contact_sheet_url: string | null
 }
 
 export interface MaterialCreate {

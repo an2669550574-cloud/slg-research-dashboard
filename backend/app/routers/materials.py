@@ -24,6 +24,16 @@ MATERIAL_SORT_FIELDS = {
 def _to_out(m: Material) -> MaterialOut:
     out = MaterialOut.model_validate(m)
     out.stream_url = media.stream_url(m)
+    # 抽帧 + 联系单：URL 走相同 HMAC 令牌（与 stream_url 一致：token=sign(material_id)）
+    if m.analysis_frames:
+        tok = media.sign(m.id)
+        out.analysis_frames = [
+            {"ts": f.get("ts"), "url": f"/api/materials/{m.id}/frame/{i}?token={tok}"}
+            for i, f in enumerate(m.analysis_frames)
+        ]
+    if m.analysis_has_contact_sheet:
+        tok = media.sign(m.id)
+        out.analysis_contact_sheet_url = f"/api/materials/{m.id}/contact-sheet?token={tok}"
     return out
 
 
@@ -317,3 +327,38 @@ async def serve_material_file(
         _file_iter(path, 0, size - 1), media_type=mime,
         headers={**common, "Content-Length": str(size)},
     )
+
+
+# ── 分析 artifact 静态文件（HMAC 令牌，与 /file 同一鉴权口径）─────────────
+
+def _serve_jpeg(path) -> StreamingResponse:
+    """简单 inline JPEG 流式响应。artifact 都是 ≤500KB 的小图，不做 Range。"""
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="artifact 不存在（请重新分析）")
+    size = path.stat().st_size
+    return StreamingResponse(
+        _file_iter(path, 0, size - 1),
+        media_type="image/jpeg",
+        headers={
+            "Content-Length": str(size),
+            "Cache-Control": "private, max-age=86400",  # 1 天；token 本身 TTL 决定上限
+        },
+    )
+
+
+@file_router.get("/{material_id}/contact-sheet")
+async def serve_contact_sheet(material_id: int, token: Optional[str] = Query(None)):
+    """联系单 JPG：5 列 N 行的关键帧拼图，由 video_analyze.build_contact_sheet 生成。"""
+    if not media.verify(material_id, token):
+        raise HTTPException(status_code=403, detail="无效或过期的访问令牌")
+    return _serve_jpeg(video_analyze.contact_sheet_path(material_id))
+
+
+@file_router.get("/{material_id}/frame/{n}")
+async def serve_frame(material_id: int, n: int, token: Optional[str] = Query(None)):
+    """单帧 JPG：frame_NN.jpg，n 是 0-indexed 帧索引。"""
+    if not media.verify(material_id, token):
+        raise HTTPException(status_code=403, detail="无效或过期的访问令牌")
+    if n < 0 or n > 99:  # 帧名格式 NN，最多两位
+        raise HTTPException(status_code=400, detail="frame index 越界")
+    return _serve_jpeg(video_analyze.frame_path(material_id, n))

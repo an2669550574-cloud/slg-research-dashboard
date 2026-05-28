@@ -155,20 +155,41 @@ export function MaterialAnalysisDrawer({
             </Section>
           )}
 
-          {/* ── 分镜 ── */}
+          {/* ── 联系单（所有关键帧拼图）── */}
+          {current.analysis_contact_sheet_url && (
+            <Section title="关键帧联系单">
+              <a href={current.analysis_contact_sheet_url} target="_blank" rel="noopener noreferrer"
+                title="点击查看大图">
+                <img src={current.analysis_contact_sheet_url} alt="关键帧联系单"
+                  className="w-full rounded-lg border border-default bg-black" loading="lazy" />
+              </a>
+            </Section>
+          )}
+
+          {/* ── 分镜（左侧时间戳 + 缩略图 + 描述）── */}
           {current.analysis_scenes && current.analysis_scenes.length > 0 && (
             <Section title="分镜">
-              <ul className="space-y-2">
-                {current.analysis_scenes.map((s, i) => (
-                  <li key={i} className="flex gap-3 text-sm">
-                    <button onClick={() => seekTo(s.ts)}
-                      className="font-data text-[11px] text-accent hover:underline shrink-0 w-12 text-right pt-0.5"
-                      title="跳转到该时间点">
-                      {formatTs(s.ts)}
-                    </button>
-                    <span className="text-secondary flex-1">{s.description}</span>
-                  </li>
-                ))}
+              <ul className="space-y-3">
+                {current.analysis_scenes.map((s, i) => {
+                  const frame = findClosestFrame(s.ts, current.analysis_frames)
+                  return (
+                    <li key={i} className="flex gap-3 text-sm">
+                      <button onClick={() => seekTo(s.ts)}
+                        className="font-data text-[11px] text-accent hover:underline shrink-0 w-12 text-right pt-0.5"
+                        title="跳转到该时间点">
+                        {formatTs(s.ts)}
+                      </button>
+                      {frame && (
+                        <button onClick={() => seekTo(s.ts)} title="跳转到该时间点"
+                          className="shrink-0 w-24 aspect-video rounded border border-default overflow-hidden bg-black hover:border-accent transition-colors">
+                          <img src={frame.url} alt="" loading="lazy"
+                            className="w-full h-full object-cover" />
+                        </button>
+                      )}
+                      <span className="text-secondary flex-1 pt-0.5">{s.description}</span>
+                    </li>
+                  )
+                })}
               </ul>
             </Section>
           )}
@@ -281,4 +302,20 @@ function formatTs(sec: number): string {
   const m = Math.floor(sec / 60)
   const s = Math.floor(sec % 60)
   return `${m}:${String(s).padStart(2, '0')}`
+}
+
+/** 按 ts 找最近的帧。LLM 的 scenes ts 一般就近 extract_frames 的采样点，
+ * 但偶尔会偏移；近邻匹配比按 index 强（也容忍 scenes 数 ≠ frames 数）。*/
+function findClosestFrame(
+  ts: number,
+  frames: { ts: number; url: string }[] | null,
+): { ts: number; url: string } | null {
+  if (!frames || frames.length === 0) return null
+  let best = frames[0]
+  let bestDelta = Math.abs(best.ts - ts)
+  for (const f of frames) {
+    const d = Math.abs(f.ts - ts)
+    if (d < bestDelta) { best = f; bestDelta = d }
+  }
+  return best
 }
