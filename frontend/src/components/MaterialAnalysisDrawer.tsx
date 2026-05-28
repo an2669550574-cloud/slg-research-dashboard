@@ -66,10 +66,13 @@ export function MaterialAnalysisDrawer({
     return () => window.removeEventListener('keydown', h)
   }, [open, onClose])
 
+  // ⚠️ useRef 必须在条件 return 前调用，否则 open=false→true 时 hook 数量变化
+  // 触发 React "Rendered more hooks than during the previous render" 崩溃。
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+
   if (!open || !current) return null
 
   const status = current.analysis_status ?? 'pending'
-  const videoRef = useRef<HTMLVideoElement | null>(null)
   const seekTo = (ts: number) => {
     if (videoRef.current) {
       videoRef.current.currentTime = ts
