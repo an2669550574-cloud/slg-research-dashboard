@@ -1,6 +1,6 @@
 import { lazy, Suspense, useState } from 'react'
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
-import { LayoutDashboard, Trophy, Gamepad2, BookImage, Sun, Moon, Languages, Settings, GitCompareArrows, Menu, X } from 'lucide-react'
+import { LayoutDashboard, Trophy, Gamepad2, BookImage, Sun, Moon, Languages, Settings, GitCompareArrows, Sparkles, Menu, X } from 'lucide-react'
 import { cn } from './lib/utils'
 import { useTheme } from './lib/theme'
 import { useLocale, setLocale, useT } from './i18n'
@@ -11,6 +11,7 @@ const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Rankings = lazy(() => import('./pages/Rankings'))
 const GameDetail = lazy(() => import('./pages/GameDetail'))
 const Materials = lazy(() => import('./pages/Materials'))
+const MaterialAnalysis = lazy(() => import('./pages/MaterialAnalysis'))
 const GamesManage = lazy(() => import('./pages/GamesManage'))
 const Compare = lazy(() => import('./pages/Compare'))
 
@@ -29,6 +30,7 @@ function Sidebar({ open, onNavigate }: { open: boolean; onNavigate: () => void }
     { to: '/rankings', icon: Trophy, label: t.nav.rankings },
     { to: '/compare', icon: GitCompareArrows, label: t.nav.compare },
     { to: '/materials', icon: BookImage, label: t.nav.materials },
+    { to: '/materials/analysis', icon: Sparkles, label: t.nav.analysis },
     { to: '/games', icon: Settings, label: t.nav.games },
   ]
 
@@ -57,7 +59,7 @@ function Sidebar({ open, onNavigate }: { open: boolean; onNavigate: () => void }
           <NavLink
             key={to}
             to={to}
-            end={to === '/'}
+            end={to === '/' || to === '/materials'}
             onClick={onNavigate}
             className={({ isActive }) =>
               cn('relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors',
@@ -129,6 +131,7 @@ export default function App() {
                 <Route path="/rankings" element={<Rankings />} />
                 <Route path="/compare" element={<Compare />} />
                 <Route path="/materials" element={<Materials />} />
+                <Route path="/materials/analysis" element={<MaterialAnalysis />} />
                 <Route path="/games" element={<GamesManage />} />
                 <Route path="/game/:appId" element={<GameDetail />} />
               </Routes>

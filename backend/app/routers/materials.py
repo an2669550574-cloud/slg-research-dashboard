@@ -19,6 +19,8 @@ file_router = APIRouter(prefix="/api/materials", tags=["materials"])
 MATERIAL_SORT_FIELDS = {
     "created_at": Material.created_at,
     "title": Material.title,
+    "analyzed_at": Material.analyzed_at,
+    "analysis_cost_usd": Material.analysis_cost_usd,
 }
 
 
@@ -47,7 +49,10 @@ async def list_materials(
     material_type: Optional[str] = None,
     tag: Optional[str] = Query(None, description="精确匹配某个标签（素材 tags 含该标签）"),
     q: Optional[str] = Query(None, description="模糊匹配 title 或 notes"),
-    sort_by: Literal["created_at", "title"] = "created_at",
+    analysis_status: Optional[Literal["pending", "running", "done", "failed"]] = Query(
+        None, description="按 LLM 分析状态筛选；AI 分析报告页用 done 拉已分析素材"
+    ),
+    sort_by: Literal["created_at", "title", "analyzed_at", "analysis_cost_usd"] = "created_at",
     order: Literal["asc", "desc"] = "desc",
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -59,6 +64,8 @@ async def list_materials(
         base = base.where(Material.platform == platform)
     if material_type:
         base = base.where(Material.material_type == material_type)
+    if analysis_status:
+        base = base.where(Material.analysis_status == analysis_status)
     if tag:
         # tags 是 JSON 数组；用 SQLite JSON1 的 json_each 做"数组含某值"判定。
         # json_valid 兜空/脏数据，避免 json_each(NULL) 报错。

@@ -415,6 +415,11 @@ export default function Materials() {
           { label: 'PAGE', value: `${page} / ${pages}` },
         ]}
       >
+        <button onClick={() => navigate('/materials/analysis')}
+          className="flex items-center gap-2 px-3.5 py-2.5 rounded-lg font-data text-xs text-secondary border border-default hover:border-strong hover:text-primary bg-surface/60 transition-colors">
+          <Sparkles size={14} />
+          <span className="hidden sm:inline">{t.materials.viewAnalysis}</span>
+        </button>
         <button onClick={exportCsv}
           className="flex items-center gap-2 px-3.5 py-2.5 rounded-lg font-data text-xs text-secondary border border-default hover:border-strong hover:text-primary bg-surface/60 transition-colors">
           <DownloadIcon size={14} />

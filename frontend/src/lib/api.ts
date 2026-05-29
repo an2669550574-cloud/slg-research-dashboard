@@ -8,6 +8,7 @@ import type {
   GameUpdate,
   HistoryCreate,
   HistoryOut,
+  MaterialAnalysisStatus,
   MaterialCreate,
   MaterialOut,
   MaterialUpdate,
@@ -134,7 +135,8 @@ export interface MaterialListParams {
   material_type?: string
   tag?: string
   q?: string
-  sort_by?: 'created_at' | 'title'
+  analysis_status?: MaterialAnalysisStatus
+  sort_by?: 'created_at' | 'title' | 'analyzed_at' | 'analysis_cost_usd'
   order?: 'asc' | 'desc'
   limit?: number
   offset?: number
