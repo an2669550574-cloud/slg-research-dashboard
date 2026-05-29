@@ -12,6 +12,7 @@ const Rankings = lazy(() => import('./pages/Rankings'))
 const GameDetail = lazy(() => import('./pages/GameDetail'))
 const Materials = lazy(() => import('./pages/Materials'))
 const MaterialAnalysis = lazy(() => import('./pages/MaterialAnalysis'))
+const MaterialAnalysisDetail = lazy(() => import('./pages/MaterialAnalysisDetail'))
 const GamesManage = lazy(() => import('./pages/GamesManage'))
 const Compare = lazy(() => import('./pages/Compare'))
 
@@ -132,6 +133,7 @@ export default function App() {
                 <Route path="/compare" element={<Compare />} />
                 <Route path="/materials" element={<Materials />} />
                 <Route path="/materials/analysis" element={<MaterialAnalysis />} />
+                <Route path="/materials/:id/analysis" element={<MaterialAnalysisDetail />} />
                 <Route path="/games" element={<GamesManage />} />
                 <Route path="/game/:appId" element={<GameDetail />} />
               </Routes>
