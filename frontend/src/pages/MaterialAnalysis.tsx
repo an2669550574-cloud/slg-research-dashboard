@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { Sparkles, ChevronRight, Film as FilmIcon, Radio, Tag as TagIcon, ArrowLeft, Download as DownloadIcon, Search } from 'lucide-react'
+import { Sparkles, ChevronRight, Film as FilmIcon, Radio, Tag as TagIcon, ArrowLeft, Download as DownloadIcon, Search, Layers, X } from 'lucide-react'
 import { materialsApi, gamesApi } from '../lib/api'
 import type { MaterialListParams } from '../lib/api'
 import { PLATFORM_CONFIG } from '../lib/utils'
@@ -11,6 +11,7 @@ import { Select } from '../components/Select'
 import { Pagination } from '../components/Pagination'
 import { QueryError } from '../components/QueryError'
 import { MaterialAnalysisDrawer } from '../components/MaterialAnalysisDrawer'
+import { UnifiedDirectionsModal } from '../components/UnifiedDirectionsModal'
 import { downloadCsv } from '../lib/csv'
 import { useDebouncedValue } from '../lib/hooks'
 import { useT } from '../i18n'
@@ -34,7 +35,18 @@ export default function MaterialAnalysis() {
   const [sort, setSort] = useState('analyzed_at:desc')
   const [offset, setOffset] = useState(0)
   const [active, setActive] = useState<MaterialOut | null>(null)
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [unifiedOpen, setUnifiedOpen] = useState(false)
   const debouncedSearch = useDebouncedValue(search)
+
+  const MAX_UNIFIED = 15
+  const toggleSelect = (id: number) => setSelected(prev => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id)
+    else if (next.size < MAX_UNIFIED) next.add(id)
+    return next
+  })
+  const clearSelected = () => setSelected(new Set())
 
   const [sortBy, order] = sort.split(':') as [
     NonNullable<MaterialListParams['sort_by']>, 'asc' | 'desc',
@@ -61,6 +73,15 @@ export default function MaterialAnalysis() {
   const total = paged?.total ?? 0
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const page = Math.floor(offset / PAGE_SIZE) + 1
+
+  const pageIds = rows.map(m => m.id)
+  const allPageSelected = pageIds.length > 0 && pageIds.every(id => selected.has(id))
+  const toggleSelectAllPage = () => setSelected(prev => {
+    const next = new Set(prev)
+    if (allPageSelected) pageIds.forEach(id => next.delete(id))
+    else for (const id of pageIds) { if (next.size >= MAX_UNIFIED) break; next.add(id) }
+    return next
+  })
 
   const { data: allGames = [] } = useQuery({
     queryKey: ['games', 'tracked'],
@@ -193,6 +214,28 @@ export default function MaterialAnalysis() {
         </div>
       </div>
 
+      {/* ══ SELECTION ACTION BAR ══════════════════════════════ */}
+      {selected.size > 0 && (
+        <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-accent/40 bg-accent/10 px-4 py-3">
+          <span className="flex items-center gap-1.5 text-xs text-accent font-data">
+            <Sparkles size={13} /> {t.materialAnalysis.unified.selectedCount(selected.size)}
+          </span>
+          <span className="text-[11px] text-muted">
+            {selected.size < 2 ? t.materialAnalysis.unified.minHint : t.materialAnalysis.unified.maxHint(MAX_UNIFIED)}
+          </span>
+          <div className="flex items-center gap-2 ml-auto">
+            <button onClick={clearSelected}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs text-secondary border border-default hover:border-strong hover:text-primary transition-colors">
+              <X size={12} /> {t.materialAnalysis.unified.clear}
+            </button>
+            <button onClick={() => setUnifiedOpen(true)} disabled={selected.size < 2}
+              className="flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-data bg-accent/20 border border-accent/50 text-accent hover:bg-accent/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+              <Layers size={13} /> {t.materialAnalysis.unified.action}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ══ REPORT TABLE ══════════════════════════════════════ */}
       <div className="reveal reveal-3 mt-6">
         {isError ? (
@@ -217,7 +260,12 @@ export default function MaterialAnalysis() {
         ) : (
           <div className="overflow-hidden rounded-xl border border-default bg-surface/60">
             {/* header row */}
-            <div className="hidden md:grid grid-cols-[3rem_11rem_9rem_1fr] gap-4 px-4 py-2.5 border-b border-default eyebrow text-muted">
+            <div className="hidden md:grid grid-cols-[2rem_3rem_11rem_9rem_1fr] gap-4 px-4 py-2.5 border-b border-default eyebrow text-muted">
+              <span className="flex items-center">
+                <input type="checkbox" checked={allPageSelected} onChange={toggleSelectAllPage}
+                  aria-label={t.materialAnalysis.unified.selectAll}
+                  className="w-4 h-4 accent-[var(--accent)] cursor-pointer" />
+              </span>
               <span>{t.materialAnalysis.colNo}</span>
               <span>{t.materialAnalysis.colApp}</span>
               <span>{t.materialAnalysis.colMaterial}</span>
@@ -226,8 +274,16 @@ export default function MaterialAnalysis() {
             {rows.map((m, i) => {
               const game = gameMap[m.app_id]
               return (
-                <button key={m.id} onClick={() => setActive(m)}
-                  className="group w-full text-left grid grid-cols-1 md:grid-cols-[3rem_11rem_9rem_1fr] gap-3 md:gap-4 px-4 py-4 border-b border-default last:border-0 hover:bg-elevated/40 transition-colors">
+                <div key={m.id}
+                  className={`group grid grid-cols-1 md:grid-cols-[2rem_3rem_11rem_9rem_1fr] gap-3 md:gap-4 px-4 py-4 border-b border-default last:border-0 transition-colors ${selected.has(m.id) ? 'bg-accent/[0.06]' : 'hover:bg-elevated/40'}`}>
+                  {/* checkbox */}
+                  <div className="flex items-start md:items-center">
+                    <input type="checkbox" checked={selected.has(m.id)} onChange={() => toggleSelect(m.id)}
+                      aria-label={t.materialAnalysis.unified.selectRow}
+                      className="w-4 h-4 accent-[var(--accent)] cursor-pointer" />
+                  </div>
+                  {/* open button spans the remaining columns (display:contents) */}
+                  <button onClick={() => setActive(m)} className="contents text-left">
                   {/* No. */}
                   <div className="hidden md:block font-data text-accent text-sm pt-1">
                     {String(offset + i + 1).padStart(2, '0')}
@@ -279,7 +335,8 @@ export default function MaterialAnalysis() {
                       {t.materialAnalysis.open} <ChevronRight size={13} />
                     </span>
                   </div>
-                </button>
+                  </button>
+                </div>
               )
             })}
           </div>
@@ -291,6 +348,8 @@ export default function MaterialAnalysis() {
       </div>
 
       <MaterialAnalysisDrawer material={active} onClose={() => setActive(null)} />
+      <UnifiedDirectionsModal open={unifiedOpen} materialIds={[...selected]}
+        onClose={() => setUnifiedOpen(false)} />
     </div>
   )
 }

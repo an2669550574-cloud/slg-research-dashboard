@@ -171,4 +171,25 @@ export const materialsApi = {
     api.post(`/materials/${id}/adapt/directions`, { our_product: ourProduct }).then(r => r.data),
   adaptScript: (id: number, ourProduct: string, direction: unknown) =>
     api.post(`/materials/${id}/adapt/script`, { our_product: ourProduct, direction }).then(r => r.data),
+  // 跨素材统一方向：估算成本（干跑，不烧配额）
+  unifiedDirectionsEstimate: (
+    materialIds: number[], ourProduct: string, model: AdaptModel,
+  ): Promise<UnifiedCostEstimate> =>
+    api.post('/materials/adapt/unified-directions', { material_ids: materialIds, our_product: ourProduct, model },
+      { params: { estimate_only: true } }).then(r => r.data),
+  // 跨素材统一方向：真实生成
+  unifiedDirections: (
+    materialIds: number[], ourProduct: string, model: AdaptModel,
+  ): Promise<{ data: unknown; cost_usd: number; model: string }> =>
+    api.post('/materials/adapt/unified-directions', { material_ids: materialIds, our_product: ourProduct, model }).then(r => r.data),
+}
+
+export type AdaptModel = 'claude-sonnet-4.5' | 'claude-opus-4.7'
+
+export interface UnifiedCostEstimate {
+  estimated_cost_usd: number
+  model: string
+  input_tokens_est: number
+  output_tokens_est: number
+  material_count: number
 }

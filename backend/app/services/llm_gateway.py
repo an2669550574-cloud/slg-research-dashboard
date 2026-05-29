@@ -92,6 +92,20 @@ def estimate_cost(model: str, usage: dict) -> CallCost:
     )
 
 
+def rough_token_count(text: str) -> int:
+    """无 tiktoken 的粗略 token 估算，仅供「干跑成本预估」用（不参与真实计费）。
+
+    经验值：CJK 字 ~1.3 token/字，其余（ASCII/标点/空白）~4 字/token。
+    宁高勿低——预估偏高让用户看到的金额不低于实际，避免"说好便宜结果更贵"。
+    真实账以网关回传 usage 经 estimate_cost 计算为准。
+    """
+    if not text:
+        return 0
+    cjk = sum(1 for ch in text if "一" <= ch <= "鿿")
+    other = len(text) - cjk
+    return int(cjk * 1.3 + other / 4 + 0.5)
+
+
 def usage_to_dict(usage_obj) -> dict:
     """OpenAI SDK 的 usage 可能是 Pydantic model 或 dict（网关回传形式不稳定）。
     统一转 dict 喂给 estimate_cost。"""
