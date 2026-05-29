@@ -76,10 +76,11 @@ export function MaterialAnalysisDrawer({
 
   const status = current.analysis_status ?? 'pending'
   const seekTo = (ts: number) => {
-    if (videoRef.current) {
-      videoRef.current.currentTime = ts
-      videoRef.current.play().catch(() => {})
-    }
+    const v = videoRef.current
+    if (!v) return
+    v.currentTime = ts
+    v.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    v.play().catch(() => {})
   }
 
   return (
