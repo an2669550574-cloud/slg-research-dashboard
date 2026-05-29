@@ -314,6 +314,64 @@ async def adapt_script(
     return {"data": result.data, "cost_usd": result.cost_usd, "model": result.model}
 
 
+# ── 跨素材统一方向（选项 C：勾选 N 支 done 素材 → 归纳共性 → 统一方向）──
+
+class UnifiedDirectionsReq(BaseModel):
+    material_ids: list[int] = Field(..., min_length=2, max_length=15,
+                                    description="勾选的已分析素材 id（2-15 支）")
+    our_product: str = Field(..., min_length=1, max_length=4000)
+    model: str = Field("claude-sonnet-4.5",
+                       description="claude-sonnet-4.5（默认）/ claude-opus-4.7")
+
+
+async def _load_unified_materials(material_ids: list[int], db: AsyncSession) -> list[Material]:
+    """按请求顺序加载素材；缺任何一个直接 404（避免静默少算）。"""
+    ids = list(dict.fromkeys(material_ids))  # 去重保序
+    rows = (await db.execute(select(Material).where(Material.id.in_(ids)))).scalars().all()
+    by_id = {m.id: m for m in rows}
+    missing = [i for i in ids if i not in by_id]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"素材不存在：{missing}")
+    return [by_id[i] for i in ids]
+
+
+@router.post("/adapt/unified-directions")
+async def adapt_unified_directions(
+    req: UnifiedDirectionsReq,
+    estimate_only: bool = Query(False, description="true 则只返回预估成本，不调 LLM"),
+    db: AsyncSession = Depends(get_db),
+):
+    """选项 C：归纳 N 支已分析素材的共性 → 统一创意方向。
+
+    - estimate_only=true：干跑，只数 token 返回预估成本，不烧配额、不查日预算。
+    - 否则：与 analyze/adapt 共享 LLM_DAILY_BUDGET_USD 日预算护栏。
+    模型白名单 + 数量/分析状态校验在 service 层兜底，这里把 ValueError 转 400。
+    """
+    materials = await _load_unified_materials(req.material_ids, db)
+
+    if estimate_only:
+        try:
+            return creative_adapt.estimate_unified_cost(materials, req.our_product, req.model)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    spent = await video_analyze.today_cost_usd(db)
+    if spent >= settings.LLM_DAILY_BUDGET_USD:
+        raise HTTPException(
+            status_code=429,
+            detail=f"今日 LLM 预算已用尽（${spent:.2f} / ${settings.LLM_DAILY_BUDGET_USD:.2f}），明日重试"
+        )
+    try:
+        result = await creative_adapt.generate_unified_directions(
+            materials, req.our_product, req.model
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"统一方向生成失败：{type(e).__name__}: {str(e)[:200]}")
+    return {"data": result.data, "cost_usd": result.cost_usd, "model": result.model}
+
+
 @router.delete("/{material_id}")
 async def delete_material(material_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Material).where(Material.id == material_id))
