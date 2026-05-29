@@ -158,14 +158,23 @@ export function MaterialAnalysisDrawer({
             </Section>
           )}
 
-          {/* ── 联系单（所有关键帧拼图）── */}
-          {current.analysis_contact_sheet_url && (
-            <Section title="关键帧联系单">
-              <a href={current.analysis_contact_sheet_url} target="_blank" rel="noopener noreferrer"
-                title="点击查看大图">
-                <img src={current.analysis_contact_sheet_url} alt="关键帧联系单"
-                  className="w-full rounded-lg border border-default bg-black" loading="lazy" />
-              </a>
+          {/* ── 关键帧总览（逐帧高清图，点击跳转到该时间点）──
+              注：旧版用后端拼好的 contact_sheet.jpg（单元格压到 360px → 糊）。
+              改用已落盘的逐帧 1280px 原图，清晰且可点。 */}
+          {current.analysis_frames && current.analysis_frames.length > 0 && (
+            <Section title="关键帧总览">
+              <div className="grid grid-cols-5 gap-1.5">
+                {current.analysis_frames.map((f, i) => (
+                  <button key={i} onClick={() => seekTo(f.ts)} title={`跳转到 ${formatTs(f.ts)}`}
+                    className="group relative aspect-[9/16] rounded-md border border-default overflow-hidden bg-black hover:border-accent transition-colors">
+                    <img src={f.url} alt="" loading="lazy"
+                      className="w-full h-full object-cover" />
+                    <span className="absolute bottom-0.5 left-0.5 px-1 rounded bg-black/60 font-data text-[9px] text-accent opacity-0 group-hover:opacity-100 transition-opacity">
+                      {formatTs(f.ts)}
+                    </span>
+                  </button>
+                ))}
+              </div>
             </Section>
           )}
 
