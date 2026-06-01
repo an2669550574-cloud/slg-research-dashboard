@@ -132,16 +132,18 @@ async def _scheduled_sync(country: str = "US", platform: str = "ios") -> None:
     异常走 logger.exception（ERROR→Sentry，让坏掉的检测器自己可见）。
     mock 模式数据是随机噪声，告警无意义 → 跳过。
 
-    配额分级：次市场 combo 非到点日整轮跳过（零配额）；销量非抓取日传
-    with_sales=False（省 top-N 批量销量那 1 次配额，榜行 dl/rev 留 NULL，
-    日榜读路径用上次已知值兜底）。手动路径不经这里，永远全量。
+    配额分级：次市场 combo 非到点日整轮跳过（零配额）；销量只对**主市场**抓——
+    次市场永远 with_sales=False（JP/KR 销量改走详情页按需取），主市场再叠加
+    SALES_FETCH_INTERVAL_DAYS 的非抓取日 False（省 top-N 批量销量那 1 次配额，
+    榜行 dl/rev 留 NULL，日榜读路径用上次已知值兜底）。手动路径不经这里，永远全量。
     """
     today = utcnow_naive().date()
     if not _combo_due_today(country, platform, today):
         logger.info("Skipping %s/%s today: secondary market, not due (interval=%d days)",
                     country, platform, settings.SYNC_SECONDARY_INTERVAL_DAYS)
         return
-    with_sales = _sales_due_today(today)
+    is_primary = (country, platform) in settings.sync_primary_combos_set
+    with_sales = is_primary and _sales_due_today(today)
     written = await sync_daily_rankings(country=country, platform=platform, with_sales=with_sales)
     if not written or settings.USE_MOCK_DATA:
         return
