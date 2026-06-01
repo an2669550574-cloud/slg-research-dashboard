@@ -61,11 +61,26 @@ class Settings(BaseSettings):
     # ORG_RESERVE 高一档：给操作者预警窗口，"快没了"≠"已主动停"。
     SENSOR_TOWER_ORG_LOW_THRESHOLD: int = 100
 
-    # 每日 scheduler 同步的 (country, platform) 组合。逗号分隔 "country:platform"。
-    # 每组每天约 2 次月度配额(1 拉榜 + 1 批量销量)，注意 500/月 硬上限。
-    # 6 组 ≈ 360/月核心同步；安卓也覆盖 US/JP/KR，与 iOS 对称（详情页两端
-    # 都能切国家）。代价：配额吃紧，历史回填会更常被护栏跳过（设计内）。
+    # 需要同步的 (country, platform) 组合全集。逗号分隔 "country:platform"。
+    # 安卓也覆盖 US/JP/KR，与 iOS 对称（详情页两端都能切国家）。
+    # 实际月配额由下方"配额分级"压低：主市场每日全量、次市场隔日、销量周级解耦
+    # → 6 组从约 360/月降到约 140/月（详见 SYNC_RANKING_COMBOS_PRIMARY 等）。
     SYNC_RANKING_COMBOS: str = "US:ios,US:android,JP:ios,KR:ios,JP:android,KR:android"
+
+    # ── 配额分级（主/次市场 + 销量解耦）────────────────────────────
+    # 主市场 combo：每日全量同步（拉榜 + 销量），与改动前一致。其余在
+    # SYNC_RANKING_COMBOS 内但不在此列的 combo 视为次市场，按
+    # SYNC_SECONDARY_INTERVAL_DAYS 间隔同步以省配额（rank 趋势走本地库，
+    # 次市场少几天不影响主流程）。空串 = 全部 combo 都按主市场每日同步。
+    SYNC_RANKING_COMBOS_PRIMARY: str = "US:ios,US:android"
+    # 次市场同步间隔（天）。1 = 每天（等于不分级）；2 = 隔日；7 = 每周。
+    # 按 UTC 日序号取模判定，跨重启稳定、无需持久化游标。
+    SYNC_SECONDARY_INTERVAL_DAYS: int = 2
+    # 日榜销量(下载/收入)抓取间隔（天）。ST 销量估算本身 T-1/T-2、日间波动小，
+    # 周级刷新对竞品研究足够。非抓取日榜行 dl/rev 落 NULL（库内诚实），日榜
+    # 读路径用该 app 上次已知值兜底显示，详情页趋势自然退化成周级数据点。
+    # 1 = 每天抓（等于不解耦）。
+    SALES_FETCH_INTERVAL_DAYS: int = 7
 
     # ── 历史排名回填 ─────────────────────────────────────────────
     # ST 无"某 app 排名历史"接口；只能逐 (combo, 日期) 拉整张品类榜
@@ -133,18 +148,18 @@ class Settings(BaseSettings):
             return ["*"]
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
 
-    @property
-    def sync_combos_list(self) -> list[tuple[str, str]]:
-        """解析 SYNC_RANKING_COMBOS 成 [(country, platform), ...]。
+    @staticmethod
+    def _parse_combos(raw_str: str) -> list[tuple[str, str]]:
+        """解析逗号分隔的 "country:platform" 串成 [(country, platform), ...]。
 
-        坏数据（漏冒号、空 country）跳过并记日志，不要因为一个组合的拼写
-        错误把整个 scheduler 拉垮。
+        坏数据（漏冒号、空 country、非法平台）跳过并记日志，不要因为一个
+        组合的拼写错误把整个 scheduler 拉垮。结果去重、保序。
         """
         import logging
         logger = logging.getLogger(__name__)
         out: list[tuple[str, str]] = []
         seen: set[tuple[str, str]] = set()
-        for raw in (self.SYNC_RANKING_COMBOS or "").split(","):
+        for raw in (raw_str or "").split(","):
             raw = raw.strip()
             if not raw:
                 continue
@@ -163,6 +178,18 @@ class Settings(BaseSettings):
             seen.add(key)
             out.append(key)
         return out
+
+    @property
+    def sync_combos_list(self) -> list[tuple[str, str]]:
+        """解析 SYNC_RANKING_COMBOS 成 [(country, platform), ...]（全部需同步的 combo）。"""
+        return self._parse_combos(self.SYNC_RANKING_COMBOS)
+
+    @property
+    def sync_primary_combos_set(self) -> set[tuple[str, str]]:
+        """主市场 combo 集合（每日全量同步）。SYNC_RANKING_COMBOS_PRIMARY 解析而来。
+        只取与 SYNC_RANKING_COMBOS 的交集——主市场配错也不会凭空多同步一个 combo。"""
+        primary = set(self._parse_combos(self.SYNC_RANKING_COMBOS_PRIMARY))
+        return primary & set(self.sync_combos_list)
 
     class Config:
         env_file = ".env"

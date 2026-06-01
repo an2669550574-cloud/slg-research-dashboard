@@ -1,4 +1,5 @@
 import logging
+from datetime import date
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select, delete
@@ -13,12 +14,35 @@ logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
 
 # 每个 combo 间隔 N 分钟避免 Sensor Tower 端的突发限流；02:30 起步留够
-# UTC 早上的低峰窗口。16 个 combo × 2min = 32min → 03:02 结束，仍在窗口内。
+# UTC 早上的低峰窗口。6 个 combo × 2min = 12min → 02:42 结束，仍在窗口内。
 _SCHEDULE_START_MINUTE = 30
 _SCHEDULE_STEP_MINUTES = 2
 
 
-async def sync_daily_rankings(country: str = "US", platform: str = "ios") -> int:
+def _due_by_interval(today: date, interval_days: int) -> bool:
+    """按 UTC 日序号取模判定"今天是否到点"。interval<=1 → 永远到点（每天）。
+
+    纯函数、无状态：用 date.toordinal() % interval 而非持久化游标，
+    跨进程重启/多副本判定一致，无需协调。interval=2 → 隔日；7 → 每 7 天。
+    """
+    if interval_days <= 1:
+        return True
+    return today.toordinal() % interval_days == 0
+
+
+def _combo_due_today(country: str, platform: str, today: date) -> bool:
+    """该 combo 今天是否应同步：主市场每天；次市场按 SYNC_SECONDARY_INTERVAL_DAYS。"""
+    if (country, platform) in settings.sync_primary_combos_set:
+        return True
+    return _due_by_interval(today, settings.SYNC_SECONDARY_INTERVAL_DAYS)
+
+
+def _sales_due_today(today: date) -> bool:
+    """今天是否抓销量：按 SALES_FETCH_INTERVAL_DAYS。非抓取日榜行 dl/rev 留 NULL。"""
+    return _due_by_interval(today, settings.SALES_FETCH_INTERVAL_DAYS)
+
+
+async def sync_daily_rankings(country: str = "US", platform: str = "ios", with_sales: bool = True) -> int:
     """每日抓取榜单数据并入库 game_rankings。返回写入条数。
 
     幂等：先 DELETE 同 (date, country, platform) 的行，再 INSERT。
@@ -32,7 +56,8 @@ async def sync_daily_rankings(country: str = "US", platform: str = "ios") -> int
     """
     today = utcnow_naive().strftime("%Y-%m-%d")
     try:
-        rankings = await sensor_tower_service.get_all_rankings_today(country=country, platform=platform)
+        rankings = await sensor_tower_service.get_all_rankings_today(
+            country=country, platform=platform, with_sales=with_sales)
     except Exception as e:
         logger.error(
             "Daily rankings sync FAILED to fetch %s/%s on %s — existing rows kept untouched: %s",
@@ -105,8 +130,18 @@ async def _scheduled_sync(country: str = "US", platform: str = "ios") -> None:
     手动刷新都触发告警刷屏。检测失败不能拖垮 sync —— 单独 try 兜住，
     异常走 logger.exception（ERROR→Sentry，让坏掉的检测器自己可见）。
     mock 模式数据是随机噪声，告警无意义 → 跳过。
+
+    配额分级：次市场 combo 非到点日整轮跳过（零配额）；销量非抓取日传
+    with_sales=False（省 top-N 批量销量那 1 次配额，榜行 dl/rev 留 NULL，
+    日榜读路径用上次已知值兜底）。手动路径不经这里，永远全量。
     """
-    written = await sync_daily_rankings(country=country, platform=platform)
+    today = utcnow_naive().date()
+    if not _combo_due_today(country, platform, today):
+        logger.info("Skipping %s/%s today: secondary market, not due (interval=%d days)",
+                    country, platform, settings.SYNC_SECONDARY_INTERVAL_DAYS)
+        return
+    with_sales = _sales_due_today(today)
+    written = await sync_daily_rankings(country=country, platform=platform, with_sales=with_sales)
     if not written or settings.USE_MOCK_DATA:
         return
     from app.services.movement import detect_and_alert_movement

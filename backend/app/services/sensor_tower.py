@@ -314,7 +314,10 @@ class SensorTowerService:
             chart_type = settings.SENSOR_TOWER_RANKING_CHART_TYPE_IOS
         return f"today:{platform}:{country}:{chart_type}:{category}", chart_type, category
 
-    async def get_all_rankings_today(self, country: str = "US", platform: str = "ios") -> list[dict]:
+    async def get_all_rankings_today(self, country: str = "US", platform: str = "ios", with_sales: bool = True) -> list[dict]:
+        """今日榜单。with_sales=False 时跳过 top-N 批量销量调用（省 1 次配额/市场），
+        榜行 dl/rev 留 None——用于销量周级解耦的非抓取日。rank/名字/图标照常补全。
+        手动刷新、详情页兜底等路径默认 with_sales=True，行为不变。"""
         if self.use_mock:
             return _mock_today_rankings()
         today = datetime.utcnow().strftime("%Y-%m-%d")
@@ -355,9 +358,10 @@ class SensorTowerService:
                     r["name"], r["publisher"], r["icon_url"] = m["name"], m["publisher"], m["icon_url"]
                 r["is_slg"] = is_slg(r["app_id"], r["publisher"])
             # 前 N 名补真实下载/收入（一次批量调用，+1 配额）。榜尾保持 None
-            # → 前端显示"—"，区分"无数据"与真实 0。
+            # → 前端显示"—"，区分"无数据"与真实 0。with_sales=False（销量周级
+            # 解耦的非抓取日）整段跳过，全行 dl/rev 留 None，省这 1 次配额。
             topn = settings.SENSOR_TOWER_RANKING_SALES_TOPN
-            if topn > 0:
+            if with_sales and topn > 0:
                 top_ids = [r["app_id"] for r in rows[:topn]]
                 sales = await self.get_sales_batch(top_ids, country, platform)
                 for r in rows:
