@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Sparkles, AlertCircle, Loader2, RefreshCw, Tag as TagIcon, Plus, Wand2, ChevronRight, FileText } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { materialsApi } from '../lib/api'
+import { OwnProductPicker } from './OwnProductPicker'
 import type {
   MaterialOut, CreativeDirection, CreativeDirectionsResult, CreativeScriptResult,
 } from '../lib/types'
@@ -288,6 +289,7 @@ const LS_PRODUCT_KEY = 'slg.adaptOurProduct'
 function AdaptBlock({ materialId }: { materialId: number }) {
   const [open, setOpen] = useState(false)
   const [product, setProduct] = useState(() => localStorage.getItem(LS_PRODUCT_KEY) || '')
+  const [productId, setProductId] = useState<number | null>(null)
   const [directions, setDirections] = useState<CreativeDirection[] | null>(null)
   const [chosen, setChosen] = useState<CreativeDirection | null>(null)
   const [script, setScript] = useState<CreativeScriptResult['data'] | null>(null)
@@ -343,12 +345,17 @@ function AdaptBlock({ materialId }: { materialId: number }) {
         </div>
       </div>
 
-      {/* ① 自家产品 brief（localStorage 记忆）*/}
+      {/* ① 自家产品：从已存档案选一条带入，或手动输入（localStorage 记忆手输值）*/}
+      <OwnProductPicker
+        selectedId={productId}
+        onPick={(id, brief) => { setProductId(id); if (brief !== null) setProduct(brief) }}
+        autoSelectDefault
+      />
       <div>
         <label className="block text-xs text-muted mb-1.5">自家产品 brief（题材 / 玩法 / 卖点 / 受众 / 差异化）</label>
         <textarea
           value={product}
-          onChange={e => setProduct(e.target.value)}
+          onChange={e => { setProduct(e.target.value); setProductId(null) }}
           rows={4}
           placeholder="例：《XX》现代都市丧尸题材 SLG，玩法核心：庇护所建造 + 队伍指挥；&#10;主打卖点：女性主角 + 故事化叙事；目标人群：30-45 岁女性玩家。"
           className="w-full bg-elevated/60 border border-default rounded-lg px-3 py-2 text-sm text-primary placeholder:text-muted focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"

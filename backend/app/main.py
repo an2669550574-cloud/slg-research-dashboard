@@ -10,7 +10,7 @@ from app.scheduler import start_scheduler, shutdown_scheduler, sync_seed_games_i
 from app.logging_setup import configure_logging, RequestLoggingMiddleware
 from app.rate_limit import limiter
 from app.observability import init_sentry, deep_health
-from app.routers import games, history, materials, movements, quota
+from app.routers import games, history, materials, movements, product, quota
 
 configure_logging(settings.LOG_LEVEL)
 init_sentry()
@@ -67,6 +67,7 @@ app.include_router(materials.router, dependencies=_protected)
 app.include_router(materials.file_router)
 app.include_router(quota.router, dependencies=_protected)
 app.include_router(movements.router, dependencies=_protected)
+app.include_router(product.router, dependencies=_protected)
 
 
 @app.get("/api/health")

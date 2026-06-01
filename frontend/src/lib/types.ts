@@ -333,7 +333,25 @@ export interface PagedResponse<T> {
 export interface DeleteResponse {
   message: string
   app_id?: string
+  id?: number
 }
+
+export interface OwnProduct {
+  id: number
+  name: string
+  brief: string
+  is_default: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface OwnProductCreate {
+  name: string
+  brief: string
+  is_default?: boolean
+}
+
+export type OwnProductUpdate = Partial<OwnProductCreate>
 
 export interface SyncRankingsResponse {
   message: string

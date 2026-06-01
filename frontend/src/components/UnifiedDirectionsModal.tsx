@@ -5,6 +5,7 @@ import { X, Sparkles, Layers, RefreshCw, Loader2 } from 'lucide-react'
 import { materialsApi } from '../lib/api'
 import type { AdaptModel } from '../lib/api'
 import { Select } from './Select'
+import { OwnProductPicker } from './OwnProductPicker'
 import { useT } from '../i18n'
 
 interface Props {
@@ -41,6 +42,7 @@ export function UnifiedDirectionsModal({ open, materialIds, onClose }: Props) {
   const tu = t.materialAnalysis.unified
   // ⚠️ 所有 hooks 必须在 early return 之前（drawer 同款约束，见 feedback-react-hooks-early-return）
   const [ourProduct, setOurProduct] = useState('')
+  const [productId, setProductId] = useState<number | null>(null)
   const [model, setModel] = useState<AdaptModel>('claude-sonnet-4.5')
   const [result, setResult] = useState<UnifiedData | null>(null)
   const [resultMeta, setResultMeta] = useState<{ cost: number; model: string } | null>(null)
@@ -112,10 +114,15 @@ export function UnifiedDirectionsModal({ open, materialIds, onClose }: Props) {
 
             {!result ? (
               <>
-                {/* product brief */}
+                {/* product picker + brief */}
+                <OwnProductPicker
+                  selectedId={productId}
+                  onPick={(id, brief) => { setProductId(id); if (brief !== null) setOurProduct(brief) }}
+                  autoSelectDefault
+                />
                 <div>
                   <label className="block text-xs text-muted mb-1.5">{tu.productLabel}</label>
-                  <textarea value={ourProduct} onChange={e => setOurProduct(e.target.value)}
+                  <textarea value={ourProduct} onChange={e => { setOurProduct(e.target.value); setProductId(null) }}
                     placeholder={tu.productPlaceholder} rows={4}
                     className="w-full rounded-lg border border-default bg-base/40 px-3 py-2 text-sm text-primary placeholder:text-muted focus:outline-none focus:border-accent transition-colors resize-y" />
                 </div>
