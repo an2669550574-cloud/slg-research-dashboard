@@ -6,12 +6,14 @@ from unittest.mock import patch
 
 @pytest.mark.asyncio
 async def test_quota_starts_at_zero(client):
+    from app.config import settings
+    limit = settings.SENSOR_TOWER_MONTHLY_LIMIT
     resp = await client.get("/api/quota/")
     assert resp.status_code == 200
     body = resp.json()
     assert body["used"] == 0
-    assert body["limit"] == 500
-    assert body["remaining"] == 500
+    assert body["limit"] == limit
+    assert body["remaining"] == limit
     assert body["exhausted"] is False
     assert len(body["year_month"]) == 7  # "YYYY-MM"
 
@@ -304,7 +306,7 @@ async def test_get_account_usage_falls_back_to_stale_snapshot_on_failure(client)
     async with AsyncSessionLocal() as s:
         await s.execute(
             text(
-                "UPDATE sensor_tower_snapshots SET updated_at = datetime('now', '-12 hours') "
+                "UPDATE sensor_tower_snapshots SET updated_at = datetime('now', '-30 days') "
                 "WHERE cache_key = :k"
             ).bindparams(k=quota.ACCOUNT_USAGE_KEY)
         )

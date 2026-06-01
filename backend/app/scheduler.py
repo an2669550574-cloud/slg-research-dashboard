@@ -31,9 +31,10 @@ def _due_by_interval(today: date, interval_days: int) -> bool:
 
 
 def _combo_due_today(country: str, platform: str, today: date) -> bool:
-    """该 combo 今天是否应同步：主市场每天；次市场按 SYNC_SECONDARY_INTERVAL_DAYS。"""
+    """该 combo 今天是否应同步：主市场按 SYNC_PRIMARY_INTERVAL_DAYS，
+    次市场按 SYNC_SECONDARY_INTERVAL_DAYS。默认都按周。"""
     if (country, platform) in settings.sync_primary_combos_set:
-        return True
+        return _due_by_interval(today, settings.SYNC_PRIMARY_INTERVAL_DAYS)
     return _due_by_interval(today, settings.SYNC_SECONDARY_INTERVAL_DAYS)
 
 

@@ -64,22 +64,32 @@ async def get_rankings(
     platform: str = "ios",
     db: AsyncSession = Depends(get_db),
 ):
-    """今日榜单。优先读 game_rankings 表（scheduler 02:30 UTC 写入），
-    缺当日数据时才回退 Sensor Tower（消耗配额）。
+    """榜单。读 game_rankings 表里该 combo **最近一次已同步**的那天（不强求等于
+    今天）——同步降到周级后多数天没有"今日"行，但展示最近一次同步的榜即可，零配额。
+    仅当该 combo 库内完全无数据（冷启动）才回退 Sensor Tower（消耗配额）。
 
-    Dashboard 每次打开调这里——走 DB 路径意味着 0 配额。
+    这是配额能真正随同步频率下降的前提：否则非同步日每次打开仪表盘都会因
+    "查不到今日行"而回退实时 ST 调用，把省下的配额又漏掉。row.date 带回真实
+    同步日期，前端据此显示"数据截至 X"。
     """
     today = utcnow_naive().strftime("%Y-%m-%d")
+    latest_date = (await db.execute(
+        select(func.max(GameRanking.date)).where(
+            GameRanking.country == country,
+            GameRanking.platform == platform,
+            GameRanking.date <= today,
+        )
+    )).scalar()
     result = await db.execute(
         select(GameRanking)
         .where(
-            GameRanking.date == today,
+            GameRanking.date == latest_date,
             GameRanking.country == country,
             GameRanking.platform == platform,
         )
         .order_by(GameRanking.rank.asc().nulls_last())
-    )
-    rows = result.scalars().all()
+    ) if latest_date else None
+    rows = result.scalars().all() if result is not None else []
     if rows:
         # 销量周级解耦：非抓取日榜行 dl/rev 为 NULL。为日榜展示不空窗，用该 app
         # 最近一次已知 dl/rev 兜底（仅展示，不回写库——详情页趋势仍读真实 NULL 行，

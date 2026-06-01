@@ -126,6 +126,7 @@ export const zh = {
     game: '游戏',
     todayRevenue: '今日收入',
     todayDownloads: '今日下载',
+    asOf: (date: string) => `数据截至 ${date}`,
   },
   materials: {
     title: '素材库',
