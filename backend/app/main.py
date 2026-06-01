@@ -68,6 +68,8 @@ app.include_router(materials.file_router)
 app.include_router(quota.router, dependencies=_protected)
 app.include_router(movements.router, dependencies=_protected)
 app.include_router(product.router, dependencies=_protected)
+# 自有产品素材文件流：同 materials.file_router，HMAC 令牌鉴权，不挂 _protected
+app.include_router(product.file_router)
 
 
 @app.get("/api/health")

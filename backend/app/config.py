@@ -149,6 +149,13 @@ class Settings(BaseSettings):
     # 缩放且不省钱。1280 兼顾清晰度和上传体积。
     MATERIAL_ANALYZE_FRAME_MAX_DIM: int = 1280
 
+    # ── 自有产品画像分析（我方产品 → AI 反推 brief）────────────────
+    # 产品画像不需要逐秒看片，每个视频抽几帧看清题材/画风/玩法即可。
+    PRODUCT_ANALYZE_FRAMES_PER_VIDEO: int = 6
+    # 单次产品解析送给模型的图片总数上限（视频帧 + 图片素材合计）。
+    # Claude vision 单次 ≤20 图，留点余量。
+    PRODUCT_ANALYZE_MAX_IMAGES: int = 18
+
     # Sentry：留空时不上报。生产环境填入 DSN 即开启
     SENTRY_DSN: Optional[str] = None
     SENTRY_ENVIRONMENT: str = "production"

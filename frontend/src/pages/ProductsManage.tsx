@@ -6,6 +6,7 @@ import { productsApi } from '../lib/api'
 import { useT } from '../i18n'
 import { PageHeader } from '../components/PageHeader'
 import { QueryError } from '../components/QueryError'
+import { ProductMaterials } from '../components/ProductMaterials'
 import type { OwnProduct } from '../lib/types'
 
 type FormState = { name: string; brief: string; is_default: boolean }
@@ -110,6 +111,16 @@ export default function ProductsManage() {
             />
             {tp.setDefault}
           </label>
+
+          {mode.kind === 'edit' ? (
+            <ProductMaterials
+              productId={mode.id}
+              onBriefDraft={brief => setForm(f => ({ ...f, brief }))}
+            />
+          ) : (
+            <p className="border-t border-default pt-4 text-xs text-muted">{tp.materialsSaveFirst}</p>
+          )}
+
           <div className="flex justify-end gap-2">
             <button type="button" onClick={closeForm}
               className="px-3 py-1.5 text-sm text-secondary hover:text-primary">{t.common.cancel}</button>

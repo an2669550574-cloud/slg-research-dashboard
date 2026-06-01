@@ -16,6 +16,8 @@ import type {
   OwnProduct,
   OwnProductCreate,
   OwnProductUpdate,
+  OwnProductMaterial,
+  OwnProductAnalyzeResult,
   MetricsOut,
   MetricsCoverage,
   AggregateLeaderboardOut,
@@ -195,6 +197,21 @@ export const productsApi = {
     api.put(`/products/${id}`, data).then(r => r.data),
   delete: (id: number): Promise<DeleteResponse> =>
     api.delete(`/products/${id}`).then(r => r.data),
+  // ── 自有产品素材（AI 反推产品 brief 用）──
+  materials: (productId: number): Promise<OwnProductMaterial[]> =>
+    api.get(`/products/${productId}/materials`).then(r => r.data),
+  uploadMaterial: (productId: number, form: FormData, onProgress?: (pct: number) => void): Promise<OwnProductMaterial> =>
+    api.post(`/products/${productId}/materials/upload`, form, {
+      onUploadProgress: e => {
+        if (onProgress && e.total) onProgress(Math.round((e.loaded / e.total) * 100))
+      },
+    }).then(r => r.data),
+  addTextMaterial: (productId: number, data: { title?: string; text_content: string }): Promise<OwnProductMaterial> =>
+    api.post(`/products/${productId}/materials/text`, data).then(r => r.data),
+  deleteMaterial: (productId: number, materialId: number): Promise<DeleteResponse> =>
+    api.delete(`/products/${productId}/materials/${materialId}`).then(r => r.data),
+  analyze: (productId: number): Promise<OwnProductAnalyzeResult> =>
+    api.post(`/products/${productId}/analyze`).then(r => r.data),
 }
 
 export type AdaptModel = 'claude-sonnet-4.5' | 'claude-opus-4.7'
