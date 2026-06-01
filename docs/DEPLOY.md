@@ -62,11 +62,14 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 ## 六、回滚
 
+纯代码回滚（绝大多数情况）：
+
 ```bash
 git checkout <prev-tag>
-docker compose -f docker-compose.prod.yml up -d --build
-# 如果迁移不可向前兼容，需要先 alembic downgrade（见 ROLLBACK.md）
+docker compose -f docker-compose.prod.yml --env-file .env up -d --build
 ```
+
+如果新版本带了**不向前兼容**的迁移，需要先 `alembic downgrade` 再退代码——完整步骤、验证与备份兜底见 [`docs/ROLLBACK.md`](ROLLBACK.md)。
 
 ## 七、备份
 
