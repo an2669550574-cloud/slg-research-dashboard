@@ -353,6 +353,31 @@ export interface OwnProductCreate {
 
 export type OwnProductUpdate = Partial<OwnProductCreate>
 
+export interface OwnProductMaterial {
+  id: number
+  own_product_id: number
+  asset_type: 'video' | 'image' | 'text'
+  title: string | null
+  file_name: string | null
+  file_size: number | null
+  mime_type: string | null
+  text_content: string | null
+  created_at: string
+  preview_url: string | null
+}
+
+export interface OwnProductAnalyzeResult {
+  brief: string
+  theme: string | null
+  gameplay: string | null
+  selling_points: string[] | null
+  audience: string | null
+  differentiation: string | null
+  cost_usd: number
+  model: string
+  material_count: number
+}
+
 export interface SyncRankingsResponse {
   message: string
   country: string

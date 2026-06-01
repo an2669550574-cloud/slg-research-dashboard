@@ -36,7 +36,7 @@ async def app(tmp_db_url, monkeypatch):
 
     # 用 SQLAlchemy 直接建表（更轻量；alembic 已在另外的迁移单测覆盖）
     async with database.engine.begin() as conn:
-        from app.models import game, history, material, quota  # noqa: F401
+        from app.models import game, history, material, product, quota  # noqa: F401
         await conn.run_sync(database.Base.metadata.create_all)
 
     # 屏蔽 lifespan 中的 alembic 调用与 scheduler 启动。
