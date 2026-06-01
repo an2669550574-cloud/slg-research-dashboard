@@ -13,6 +13,9 @@ import type {
   MaterialOut,
   MaterialUpdate,
   MaterialTagCount,
+  OwnProduct,
+  OwnProductCreate,
+  OwnProductUpdate,
   MetricsOut,
   MetricsCoverage,
   AggregateLeaderboardOut,
@@ -182,6 +185,16 @@ export const materialsApi = {
     materialIds: number[], ourProduct: string, model: AdaptModel,
   ): Promise<{ data: unknown; cost_usd: number; model: string }> =>
     api.post('/materials/adapt/unified-directions', { material_ids: materialIds, our_product: ourProduct, model }).then(r => r.data),
+}
+
+export const productsApi = {
+  list: (): Promise<OwnProduct[]> => api.get('/products/').then(r => r.data),
+  create: (data: OwnProductCreate): Promise<OwnProduct> =>
+    api.post('/products/', data).then(r => r.data),
+  update: (id: number, data: OwnProductUpdate): Promise<OwnProduct> =>
+    api.put(`/products/${id}`, data).then(r => r.data),
+  delete: (id: number): Promise<DeleteResponse> =>
+    api.delete(`/products/${id}`).then(r => r.data),
 }
 
 export type AdaptModel = 'claude-sonnet-4.5' | 'claude-opus-4.7'
