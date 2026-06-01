@@ -90,6 +90,8 @@ export const en: Translations = {
       `Only ${remaining} Sensor Tower calls left in the org pool — this page may not show the freshest data`,
     globalAlertReserved:
       'Org Sensor Tower quota exhausted — this project has stopped calling the API; all pages serve cached snapshots',
+    staleDataAlert: (date: string, days: number) =>
+      `Sensor Tower data hasn't updated in ${days} days (latest ${date}) — sync may be paused; showing cached snapshots`,
     quotaHistoryTitle: 'Quota history',
     quotaHistorySince: (date: string) => `Since ${date} · this project only`,
     quotaHistoryEmpty: 'No records yet (daily table launched 5/21 — data accruing)',
@@ -188,6 +190,12 @@ export const en: Translations = {
     sortTitleZa: 'Title Z→A',
     // AI analysis report entry
     viewAnalysis: 'AI analysis report',
+    // analysis status badge / background completion toast / failed retry
+    analyzeRunningBadge: 'Analyzing',
+    analyzeFailedBadge: 'Failed',
+    analyzeRetry: 'Analysis failed — click to retry',
+    analyzeDone: (n: number) => n === 1 ? '1 material analyzed' : `${n} materials analyzed`,
+    analyzeFailed: (n: number) => n === 1 ? '1 material failed to analyze' : `${n} materials failed to analyze`,
   },
   materialAnalysis: {
     title: 'AI Creative Analysis',
@@ -244,6 +252,10 @@ export const en: Translations = {
       notableVariations: 'Variations',
       directions: 'Directions',
       regenerate: 'Regenerate',
+      copyMd: 'Copy Markdown',
+      downloadMd: 'Download .md',
+      copied: 'Markdown copied to clipboard',
+      copyFailed: 'Copy failed — try downloading instead',
       failed: 'Generation failed, please retry',
     },
   },

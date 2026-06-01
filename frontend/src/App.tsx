@@ -5,6 +5,7 @@ import { cn } from './lib/utils'
 import { useTheme } from './lib/theme'
 import { useLocale, setLocale, useT } from './i18n'
 import { GlobalQuotaAlert } from './components/GlobalQuotaAlert'
+import { StaleDataAlert } from './components/StaleDataAlert'
 
 // 路由级拆包：每页（含 recharts 等重依赖）单独 chunk，首屏只下当前页。
 const Dashboard = lazy(() => import('./pages/Dashboard'))
@@ -127,6 +128,8 @@ export default function App() {
           <MobileTopBar onMenu={() => setMenuOpen(true)} />
           {/* 全站警示条：公司 ST 池处于 low/reserved 时出现；shrink-0 不被 main 滚动吞掉 */}
           <GlobalQuotaAlert />
+          {/* 数据停更提示：ST 榜单长期未更新（同步暂停 / 配额禁用）时出现 */}
+          <StaleDataAlert />
           <main className="flex-1 overflow-y-auto">
             <Suspense fallback={<PageFallback />}>
               <Routes>
