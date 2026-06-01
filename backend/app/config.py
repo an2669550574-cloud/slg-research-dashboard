@@ -24,7 +24,8 @@ class Settings(BaseSettings):
     # 缓存比源头还短就纯属浪费配额。默认 24 小时。
     SENSOR_TOWER_CACHE_TTL: int = 86400
     # 每月最多调用 Sensor Tower 真实 API 的次数（硬上限）。公司账号 3000/月共享。
-    # 配额分级后稳态自动同步 ≈ 39/月，留余量给手动刷新/详情页按需取 → 设 50 封顶。
+    # 配额分级后稳态自动同步 ≈ 19/月（US 周级 + JP/KR 月级 + 销量仅主市场双周），
+    # 留余量给手动刷新/详情页按需取 → 设 50 封顶。
     # 超额后自动降级到 sensor_tower_snapshots 表里的最后一次成功响应（不报错、不断站）。
     # 注意：此值低于 RANK_BACKFILL_QUOTA_FLOOR(150) → 历史回填默认被该上限挡停
     #（设计内：回填是一次性活，补完即可停；要补未完的历史临时把本值调高再跑）。
@@ -56,8 +57,8 @@ class Settings(BaseSettings):
     # 服务端 organization.usage +1 且**绕过本地月度计数**（裸 httpx，见 quota
     # ._fetch_account_usage_live）——它是隐形的公司池消费者，不受 MONTHLY_LIMIT
     # 约束，只能靠这个 TTL 限频。本项目自身用量本地实时计数、无需靠它；它只为
-    # 看「跨团队公司池水位」。故设 7 天：≈4 次/月，周级刷新够用，几乎不吃池。
-    SENSOR_TOWER_ACCOUNT_USAGE_TTL_HOURS: int = 168
+    # 看「跨团队公司池水位」。故设 14 天：≈2 次/月，双周刷新够用，几乎不吃池。
+    SENSOR_TOWER_ACCOUNT_USAGE_TTL_HOURS: int = 336
     # 公司账户池软预留：池剩余 ≤ 此值时本项目 try_consume 主动返 False，让出最后
     # 几次给其他团队（避免我们一夜把池子拼光，导致他们的业务全断）。3000 池里留
     # 30 缓冲，本项目日均同步约 12 次，相当于 2~3 天的安全余量。设 0 = 仅硬限。
@@ -68,8 +69,8 @@ class Settings(BaseSettings):
 
     # 需要同步的 (country, platform) 组合全集。逗号分隔 "country:platform"。
     # 安卓也覆盖 US/JP/KR，与 iOS 对称（详情页两端都能切国家）。
-    # 实际月配额由下方"配额分级"压低：主市场每日全量、次市场隔日、销量周级解耦
-    # → 6 组从约 360/月降到约 140/月（详见 SYNC_RANKING_COMBOS_PRIMARY 等）。
+    # 实际月配额由下方"配额分级"压低：US 主市场周级、JP/KR 次市场月级、销量仅
+    # 主市场双周 → 6 组从约 360/月降到约 19/月（详见 SYNC_RANKING_COMBOS_PRIMARY 等）。
     SYNC_RANKING_COMBOS: str = "US:ios,US:android,JP:ios,KR:ios,JP:android,KR:android"
 
     # ── 配额分级（主/次市场 + 销量解耦）────────────────────────────
@@ -79,14 +80,18 @@ class Settings(BaseSettings):
     # SYNC_RANKING_COMBOS_PRIMARY: 主市场 combo（用 PRIMARY 间隔，可调得比次市场勤）。
     # 不在此列但在 SYNC_RANKING_COMBOS 内的 = 次市场（用 SECONDARY 间隔）。
     SYNC_RANKING_COMBOS_PRIMARY: str = "US:ios,US:android"
-    # 主/次市场拉榜间隔（天）。1=每天，2=隔日，7=每周。默认都按周——rank 长期
-    # 趋势走本地库读，周级足够；6 组 × 周级 ≈ 26/月拉榜。要 US 更勤就把 PRIMARY 调小。
+    # 主/次市场拉榜间隔（天）。1=每天，2=隔日，7=每周，30=每月。
+    # 现策略：US 是唯一在盯的主市场 → 周级；JP/KR 仅偶尔回看 → 月级。
+    # rank 长期趋势走本地库读，次市场月级足够。要 US 更勤就把 PRIMARY 调小。
+    # 用量：US 2组×周 ≈ 8.7/月 + JP/KR 4组×月 ≈ 4/月 ≈ 12.7/月拉榜。
     SYNC_PRIMARY_INTERVAL_DAYS: int = 7
-    SYNC_SECONDARY_INTERVAL_DAYS: int = 7
+    SYNC_SECONDARY_INTERVAL_DAYS: int = 30
     # 日榜销量(下载/收入)抓取间隔（天）。ST 销量估算本身 T-1/T-2、日间波动小，
     # 双周刷新对竞品研究足够。非抓取日榜行 dl/rev 落 NULL（库内诚实），日榜
     # 读路径用该 app 上次已知值兜底显示，详情页趋势自然退化成稀疏数据点。
-    # 默认 14：与周级拉榜相交后 ≈ 13/月销量调用。1 = 每天抓（等于不解耦）。
+    # ⚠️ 销量只对**主市场**抓（见 scheduler._scheduled_sync 的 with_sales 门控）：
+    # 次市场月级拉榜永远 with_sales=False，JP/KR 销量改走详情页按需取。
+    # 默认 14：US 2组×双周 ≈ 4.3/月销量调用。1 = 每天抓（等于不解耦）。
     SALES_FETCH_INTERVAL_DAYS: int = 14
 
     # ── 历史排名回填 ─────────────────────────────────────────────

@@ -230,6 +230,24 @@ async def test_scheduled_sync_primary_passes_sales_flag(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_scheduled_sync_secondary_never_fetches_sales(monkeypatch):
+    """次市场即便恰逢销量到点日也不抓销量：with_sales 恒 False（JP/KR 销量走详情页按需）。"""
+    from app import scheduler
+    from app.config import settings
+    monkeypatch.setattr(settings, "SYNC_RANKING_COMBOS", "US:ios,JP:ios")
+    monkeypatch.setattr(settings, "SYNC_RANKING_COMBOS_PRIMARY", "US:ios")
+    monkeypatch.setattr(settings, "SYNC_SECONDARY_INTERVAL_DAYS", 1)  # JP 每天到点（不跳过）
+    monkeypatch.setattr(settings, "SALES_FETCH_INTERVAL_DAYS", 1)     # 销量每天到点
+    monkeypatch.setattr(settings, "USE_MOCK_DATA", True)              # 跳过异动检测
+    sync_mock = AsyncMock(return_value=4)
+    monkeypatch.setattr(scheduler, "sync_daily_rankings", sync_mock)
+
+    await scheduler._scheduled_sync("JP", "ios")
+    sync_mock.assert_awaited_once()
+    assert sync_mock.await_args.kwargs["with_sales"] is False, "次市场不该抓销量"
+
+
+@pytest.mark.asyncio
 async def test_sync_daily_rankings_forwards_with_sales(client):
     """sync_daily_rankings(with_sales=False) → get_all_rankings_today 收到同值。"""
     from app import scheduler
