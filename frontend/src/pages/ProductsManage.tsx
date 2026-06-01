@@ -32,7 +32,13 @@ export default function ProductsManage() {
 
   const createMut = useMutation({
     mutationFn: (data: FormState) => productsApi.create(data),
-    onSuccess: () => { invalidate(); closeForm(); toast.success(tp.added) },
+    onSuccess: (created) => {
+      invalidate()
+      toast.success(tp.added)
+      // 保存后留在该产品的编辑态，直接露出素材上传/AI 解析区，无需再回列表点编辑
+      setMode({ kind: 'edit', id: created.id })
+      setForm({ name: created.name, brief: created.brief, is_default: created.is_default })
+    },
   })
   const updateMut = useMutation({
     mutationFn: ({ id, data }: { id: number; data: Partial<FormState> }) => productsApi.update(id, data),
