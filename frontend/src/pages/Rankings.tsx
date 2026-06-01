@@ -51,6 +51,10 @@ export default function Rankings() {
   }, [cooldownLeft])
 
   const board = slgOnly ? rankings.filter(g => g.is_slg) : rankings
+  // 同步降到周级后榜行 date 可能不是今天（读路径回最近一次已同步的榜）。
+  // 非当天才显示"数据截至 X"，避免让人误以为是实时今日榜。
+  const boardDate = rankings[0]?.date
+  const isStale = !!boardDate && boardDate !== new Date().toISOString().slice(0, 10)
   const filtered = board.filter(g =>
     (g.name ?? '').toLowerCase().includes(search.toLowerCase()) ||
     (g.publisher ?? '').toLowerCase().includes(search.toLowerCase())
@@ -88,6 +92,10 @@ export default function Rankings() {
           {cooling ? t.common.refreshCooldown(cooldownLeft) : t.common.refresh}
         </button>
       </PageHeader>
+
+      {isStale && (
+        <div className="font-data text-[11px] text-muted">{t.rankings.asOf(boardDate!)}</div>
+      )}
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[180px] max-w-xs">

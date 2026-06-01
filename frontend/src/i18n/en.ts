@@ -122,6 +122,7 @@ export const en: Translations = {
     game: 'Game',
     todayRevenue: 'Revenue today',
     todayDownloads: 'Downloads today',
+    asOf: (date: string) => `As of ${date}`,
   },
   materials: {
     title: 'Materials',

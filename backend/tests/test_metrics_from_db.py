@@ -114,6 +114,44 @@ async def test_today_rankings_carry_forward_sales(client):
 
 
 @pytest.mark.asyncio
+async def test_rankings_serves_latest_synced_board_no_st(client):
+    """同步降到周级：无"今日"行但库内有早先已同步的榜 → 服务最近那天的榜，
+    零 ST 调用（堵住非同步日打开仪表盘回退实时 ST 的漏配额）。"""
+    from app.routers import games
+    from app.database import AsyncSessionLocal, utcnow_naive
+    from app.models.game import GameRanking
+    earlier = (utcnow_naive() - timedelta(days=4)).strftime("%Y-%m-%d")
+    async with AsyncSessionLocal() as db:
+        db.add(GameRanking(app_id="com.board.a", date=earlier, rank=1,
+                           downloads=10, revenue=20.0, country="US", platform="ios",
+                           name="A", publisher="P"))
+        db.add(GameRanking(app_id="com.board.b", date=earlier, rank=2,
+                           downloads=None, revenue=None, country="US", platform="ios",
+                           name="B", publisher="P"))
+        await db.commit()
+
+    spy = AsyncMock(return_value=[])
+    with patch.object(games.sensor_tower_service, "get_all_rankings_today", new=spy):
+        r = await client.get("/api/games/rankings", params={"country": "US", "platform": "ios"})
+    assert r.status_code == 200
+    data = r.json()
+    assert {row["app_id"] for row in data} == {"com.board.a", "com.board.b"}
+    assert all(row["date"] == earlier for row in data), "应回最近一次同步日期"
+    spy.assert_not_awaited()  # 关键：不回退实时 ST
+
+
+@pytest.mark.asyncio
+async def test_rankings_cold_start_falls_back_to_st(client):
+    """库内该 combo 完全无数据（冷启动）才回退 ST。"""
+    from app.routers import games
+    spy = AsyncMock(return_value=[{"app_id": "x", "rank": 1, "name": "X"}])
+    with patch.object(games.sensor_tower_service, "get_all_rankings_today", new=spy):
+        r = await client.get("/api/games/rankings", params={"country": "ZZ", "platform": "ios"})
+    assert r.status_code == 200
+    spy.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_today_rankings_carry_forward_not_persisted(client):
     """兜底仅用于展示，绝不回写库：详情页趋势仍读真实 NULL 行（诚实周级点）。"""
     from app.database import AsyncSessionLocal, utcnow_naive

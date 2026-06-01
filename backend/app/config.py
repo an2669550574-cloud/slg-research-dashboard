@@ -23,9 +23,12 @@ class Settings(BaseSettings):
     # Sensor Tower 内存级缓存 TTL（秒）。Sensor Tower 数据本身是 T+1 日级，
     # 缓存比源头还短就纯属浪费配额。默认 24 小时。
     SENSOR_TOWER_CACHE_TTL: int = 86400
-    # 每月最多调用 Sensor Tower 真实 API 的次数。公司账号 3000/月共享，留 500 给本项目；
-    # 超额后自动降级到 sensor_tower_snapshots 表里的最后一次成功响应。
-    SENSOR_TOWER_MONTHLY_LIMIT: int = 500
+    # 每月最多调用 Sensor Tower 真实 API 的次数（硬上限）。公司账号 3000/月共享。
+    # 配额分级后稳态自动同步 ≈ 39/月，留余量给手动刷新/详情页按需取 → 设 50 封顶。
+    # 超额后自动降级到 sensor_tower_snapshots 表里的最后一次成功响应（不报错、不断站）。
+    # 注意：此值低于 RANK_BACKFILL_QUOTA_FLOOR(150) → 历史回填默认被该上限挡停
+    #（设计内：回填是一次性活，补完即可停；要补未完的历史临时把本值调高再跑）。
+    SENSOR_TOWER_MONTHLY_LIMIT: int = 50
     # 用量越过该百分比时打一条 ERROR（经 Sentry 推送），让维护者在配额耗尽
     # 前就收到主动告警，而不是等线上静默降级到过期快照才发现。
     SENSOR_TOWER_QUOTA_WARN_PCT: int = 80
@@ -49,10 +52,12 @@ class Settings(BaseSettings):
     # 不超过这个时长的快照，直接返回不消耗配额。设成跟 CACHE_TTL 一致即可。
     SENSOR_TOWER_SNAPSHOT_FRESH_HOURS: int = 24
 
-    # 拉 ST /v1/api_usage（公司账户级用量）的缓存窗口。本接口每次大概率自计
-    # organization.usage，TTL 宽点避免高频刷新自己撑爆公司总额；6h = 一天最多
-    # 4 次自查询，够即时性，又留足余量给业务调用。
-    SENSOR_TOWER_ACCOUNT_USAGE_TTL_HOURS: int = 6
+    # 拉 ST /v1/api_usage（公司账户级用量）的缓存窗口。⚠️ 本接口每次大概率让
+    # 服务端 organization.usage +1 且**绕过本地月度计数**（裸 httpx，见 quota
+    # ._fetch_account_usage_live）——它是隐形的公司池消费者，不受 MONTHLY_LIMIT
+    # 约束，只能靠这个 TTL 限频。本项目自身用量本地实时计数、无需靠它；它只为
+    # 看「跨团队公司池水位」。故设 7 天：≈4 次/月，周级刷新够用，几乎不吃池。
+    SENSOR_TOWER_ACCOUNT_USAGE_TTL_HOURS: int = 168
     # 公司账户池软预留：池剩余 ≤ 此值时本项目 try_consume 主动返 False，让出最后
     # 几次给其他团队（避免我们一夜把池子拼光，导致他们的业务全断）。3000 池里留
     # 30 缓冲，本项目日均同步约 12 次，相当于 2~3 天的安全余量。设 0 = 仅硬限。
@@ -68,19 +73,21 @@ class Settings(BaseSettings):
     SYNC_RANKING_COMBOS: str = "US:ios,US:android,JP:ios,KR:ios,JP:android,KR:android"
 
     # ── 配额分级（主/次市场 + 销量解耦）────────────────────────────
-    # 主市场 combo：每日全量同步（拉榜 + 销量），与改动前一致。其余在
-    # SYNC_RANKING_COMBOS 内但不在此列的 combo 视为次市场，按
-    # SYNC_SECONDARY_INTERVAL_DAYS 间隔同步以省配额（rank 趋势走本地库，
-    # 次市场少几天不影响主流程）。空串 = 全部 combo 都按主市场每日同步。
+    # 目标：稳态 ≤50 次/月（公司池 3000 共享）。三个间隔旋钮按 UTC 日序号取模
+    # 判定"今天是否到点"，纯函数、跨重启/多副本一致，无需持久化游标。
+    #
+    # SYNC_RANKING_COMBOS_PRIMARY: 主市场 combo（用 PRIMARY 间隔，可调得比次市场勤）。
+    # 不在此列但在 SYNC_RANKING_COMBOS 内的 = 次市场（用 SECONDARY 间隔）。
     SYNC_RANKING_COMBOS_PRIMARY: str = "US:ios,US:android"
-    # 次市场同步间隔（天）。1 = 每天（等于不分级）；2 = 隔日；7 = 每周。
-    # 按 UTC 日序号取模判定，跨重启稳定、无需持久化游标。
-    SYNC_SECONDARY_INTERVAL_DAYS: int = 2
+    # 主/次市场拉榜间隔（天）。1=每天，2=隔日，7=每周。默认都按周——rank 长期
+    # 趋势走本地库读，周级足够；6 组 × 周级 ≈ 26/月拉榜。要 US 更勤就把 PRIMARY 调小。
+    SYNC_PRIMARY_INTERVAL_DAYS: int = 7
+    SYNC_SECONDARY_INTERVAL_DAYS: int = 7
     # 日榜销量(下载/收入)抓取间隔（天）。ST 销量估算本身 T-1/T-2、日间波动小，
-    # 周级刷新对竞品研究足够。非抓取日榜行 dl/rev 落 NULL（库内诚实），日榜
-    # 读路径用该 app 上次已知值兜底显示，详情页趋势自然退化成周级数据点。
-    # 1 = 每天抓（等于不解耦）。
-    SALES_FETCH_INTERVAL_DAYS: int = 7
+    # 双周刷新对竞品研究足够。非抓取日榜行 dl/rev 落 NULL（库内诚实），日榜
+    # 读路径用该 app 上次已知值兜底显示，详情页趋势自然退化成稀疏数据点。
+    # 默认 14：与周级拉榜相交后 ≈ 13/月销量调用。1 = 每天抓（等于不解耦）。
+    SALES_FETCH_INTERVAL_DAYS: int = 14
 
     # ── 历史排名回填 ─────────────────────────────────────────────
     # ST 无"某 app 排名历史"接口；只能逐 (combo, 日期) 拉整张品类榜

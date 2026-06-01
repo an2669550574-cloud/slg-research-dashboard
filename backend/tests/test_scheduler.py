@@ -167,13 +167,14 @@ def test_due_by_interval_weekly_once_in_seven():
     assert sum(week) == 1
 
 
-def test_combo_due_primary_always_secondary_gated(monkeypatch):
-    """主市场 combo 每天到点；次市场受 interval 约束（大 interval → 多数天跳过）。"""
+def test_combo_due_primary_and_secondary_use_own_intervals(monkeypatch):
+    """主市场走 PRIMARY 间隔、次市场走 SECONDARY 间隔，各自独立。"""
     from app import scheduler
     from app.config import settings
     monkeypatch.setattr(settings, "SYNC_RANKING_COMBOS", "US:ios,JP:ios")
     monkeypatch.setattr(settings, "SYNC_RANKING_COMBOS_PRIMARY", "US:ios")
-    monkeypatch.setattr(settings, "SYNC_SECONDARY_INTERVAL_DAYS", 999)
+    monkeypatch.setattr(settings, "SYNC_PRIMARY_INTERVAL_DAYS", 1)     # 主市场每天
+    monkeypatch.setattr(settings, "SYNC_SECONDARY_INTERVAL_DAYS", 999)  # 次市场几乎不
     days = [date(2026, 6, 1) + timedelta(days=i) for i in range(5)]
     assert all(scheduler._combo_due_today("US", "ios", d) for d in days)
     assert not all(scheduler._combo_due_today("JP", "ios", d) for d in days)
@@ -214,6 +215,7 @@ async def test_scheduled_sync_primary_passes_sales_flag(monkeypatch):
     from app.config import settings
     monkeypatch.setattr(settings, "SYNC_RANKING_COMBOS", "US:ios")
     monkeypatch.setattr(settings, "SYNC_RANKING_COMBOS_PRIMARY", "US:ios")
+    monkeypatch.setattr(settings, "SYNC_PRIMARY_INTERVAL_DAYS", 1)  # 主市场每天到点
     monkeypatch.setattr(settings, "SALES_FETCH_INTERVAL_DAYS", 7)
     monkeypatch.setattr(settings, "USE_MOCK_DATA", True)  # 跳过异动检测
     not_sales = _date_with_parity(7, due=False)
