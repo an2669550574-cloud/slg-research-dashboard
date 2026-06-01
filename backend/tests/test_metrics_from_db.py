@@ -4,6 +4,7 @@
 测试环境 USE_MOCK_DATA=true，故需 monkeypatch use_mock=False 才能走真实分支。
 """
 import pytest
+from datetime import timedelta
 from unittest.mock import patch, AsyncMock
 
 WIN = {"country": "US", "platform": "ios",
@@ -76,3 +77,63 @@ async def test_uncovered_app_falls_back_to_st(client, monkeypatch):
     assert body["rankings"] == []
     assert [p["value"] for p in body["downloads"]] == [1]
     spy.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_today_rankings_carry_forward_sales(client):
+    """销量周级解耦：今日榜行 dl/rev=NULL（非抓取日）时，日榜读路径用该 app
+    上次已知销量兜底展示，零配额，不回写库。"""
+    from app.database import AsyncSessionLocal, utcnow_naive
+    from app.models.game import GameRanking
+    today = utcnow_naive().strftime("%Y-%m-%d")
+    earlier = (utcnow_naive() - timedelta(days=3)).strftime("%Y-%m-%d")
+    async with AsyncSessionLocal() as db:
+        # 三天前的抓取日：有真实销量
+        db.add(GameRanking(app_id="com.carry.x", date=earlier, rank=7,
+                           downloads=777, revenue=888.0, country="US", platform="ios",
+                           name="Carry X", publisher="P"))
+        # 今天：非抓取日，销量留 NULL
+        db.add(GameRanking(app_id="com.carry.x", date=today, rank=5,
+                           downloads=None, revenue=None, country="US", platform="ios",
+                           name="Carry X", publisher="P"))
+        # 对照：从未有过销量的 app，今日也 NULL → 兜底无值，保持 NULL
+        db.add(GameRanking(app_id="com.never.y", date=today, rank=6,
+                           downloads=None, revenue=None, country="US", platform="ios",
+                           name="Never Y", publisher="P"))
+        await db.commit()
+
+    r = await client.get("/api/games/rankings", params={"country": "US", "platform": "ios"})
+    assert r.status_code == 200
+    by_id = {row["app_id"]: row for row in r.json()}
+    # 有历史销量 → 兜底回上次已知值
+    assert by_id["com.carry.x"]["downloads"] == 777
+    assert by_id["com.carry.x"]["revenue"] == 888.0
+    # 无任何历史销量 → 仍为 None（不臆造）
+    assert by_id["com.never.y"]["downloads"] is None
+    assert by_id["com.never.y"]["revenue"] is None
+
+
+@pytest.mark.asyncio
+async def test_today_rankings_carry_forward_not_persisted(client):
+    """兜底仅用于展示，绝不回写库：详情页趋势仍读真实 NULL 行（诚实周级点）。"""
+    from app.database import AsyncSessionLocal, utcnow_naive
+    from app.models.game import GameRanking
+    from sqlalchemy import select
+    today = utcnow_naive().strftime("%Y-%m-%d")
+    earlier = (utcnow_naive() - timedelta(days=2)).strftime("%Y-%m-%d")
+    async with AsyncSessionLocal() as db:
+        db.add(GameRanking(app_id="com.persist.z", date=earlier, rank=3,
+                           downloads=111, revenue=222.0, country="US", platform="ios"))
+        db.add(GameRanking(app_id="com.persist.z", date=today, rank=2,
+                           downloads=None, revenue=None, country="US", platform="ios"))
+        await db.commit()
+
+    await client.get("/api/games/rankings", params={"country": "US", "platform": "ios"})
+
+    async with AsyncSessionLocal() as db:
+        row = (await db.execute(
+            select(GameRanking).where(
+                GameRanking.app_id == "com.persist.z", GameRanking.date == today)
+        )).scalar_one()
+        assert row.downloads is None, "兜底不得回写库"
+        assert row.revenue is None

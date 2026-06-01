@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, and_
 from typing import Optional, Literal
 from app.database import get_db, utcnow_naive
 from app.models.game import Game, GameRanking
@@ -81,6 +81,13 @@ async def get_rankings(
     )
     rows = result.scalars().all()
     if rows:
+        # 销量周级解耦：非抓取日榜行 dl/rev 为 NULL。为日榜展示不空窗，用该 app
+        # 最近一次已知 dl/rev 兜底（仅展示，不回写库——详情页趋势仍读真实 NULL 行，
+        # 自然退化成周级数据点，不被污染）。零配额，一次聚合查询。
+        carry = await _last_known_sales(
+            db, [r.app_id for r in rows if r.downloads is None and r.revenue is None],
+            country, platform, today,
+        )
         return [
             {
                 "app_id": r.app_id,
@@ -88,8 +95,8 @@ async def get_rankings(
                 "publisher": r.publisher,
                 "icon_url": r.icon_url,
                 "rank": r.rank,
-                "downloads": r.downloads,
-                "revenue": r.revenue,
+                "downloads": r.downloads if r.downloads is not None else carry.get(r.app_id, (None, None))[0],
+                "revenue": r.revenue if r.revenue is not None else carry.get(r.app_id, (None, None))[1],
                 "date": r.date,
                 "is_slg": is_slg(r.app_id, r.publisher),
             }
@@ -97,6 +104,38 @@ async def get_rankings(
         ]
     # DB 当日无数据 → 回退 Sensor Tower（可能消耗配额 / 也可能命中 24h snapshot）
     return await sensor_tower_service.get_all_rankings_today(country, platform)
+
+
+async def _last_known_sales(
+    db: AsyncSession, app_ids: list[str], country: str, platform: str, before: str
+) -> dict[str, tuple]:
+    """给定 app 列表，各取其 < before 日内最近一条有销量(downloads 非 NULL)的
+    (downloads, revenue)。零配额、纯本地聚合。空列表直接返回 {}。
+
+    用于日榜读路径 carry-forward：销量周级解耦后非抓取日榜行 dl/rev 为 NULL，
+    这里补上"上次已知值"用于展示，不回写库。
+    """
+    if not app_ids:
+        return {}
+    latest = (
+        select(GameRanking.app_id.label("aid"), func.max(GameRanking.date).label("d"))
+        .where(
+            GameRanking.app_id.in_(app_ids),
+            GameRanking.country == country,
+            GameRanking.platform == platform,
+            GameRanking.date < before,
+            GameRanking.downloads.isnot(None),
+        )
+        .group_by(GameRanking.app_id)
+        .subquery()
+    )
+    res = await db.execute(
+        select(GameRanking.app_id, GameRanking.downloads, GameRanking.revenue).join(
+            latest,
+            and_(GameRanking.app_id == latest.c.aid, GameRanking.date == latest.c.d),
+        ).where(GameRanking.country == country, GameRanking.platform == platform)
+    )
+    return {aid: (dl, rv) for aid, dl, rv in res.all()}
 
 
 @router.post(
