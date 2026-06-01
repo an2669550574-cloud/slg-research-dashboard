@@ -92,6 +92,9 @@ export const zh = {
       `公司 Sensor Tower 配额仅剩 ${remaining} 次，本页面数据可能无法拉取到最新值`,
     globalAlertReserved:
       '公司 Sensor Tower 配额已耗尽，本项目暂停调用 API；所有页面数据均来自历史快照',
+    // 数据停更提示（StaleDataAlert）—— ST 同步长期停滞 / key 被禁用时兜底
+    staleDataAlert: (date: string, days: number) =>
+      `Sensor Tower 数据已 ${days} 天未更新（最新至 ${date}）—— 同步可能已暂停，当前展示的是历史快照`,
     // 配额历史曲线（QuotaHistoryChart）—— 6/1 池重置定预算的数据依据
     quotaHistoryTitle: '配额历史',
     quotaHistorySince: (date: string) => `自 ${date} 起 · 仅本项目计数`,
@@ -192,6 +195,12 @@ export const zh = {
     sortTitleZa: '标题 Z→A',
     // AI 解析报告入口
     viewAnalysis: 'AI 解析报告',
+    // 分析状态徽标 / 后台完成提示 / 失败重试
+    analyzeRunningBadge: '分析中',
+    analyzeFailedBadge: '失败',
+    analyzeRetry: '分析失败，点击重试',
+    analyzeDone: (n: number) => n === 1 ? '1 条素材分析完成' : `${n} 条素材分析完成`,
+    analyzeFailed: (n: number) => n === 1 ? '1 条素材分析失败' : `${n} 条素材分析失败`,
   },
   materialAnalysis: {
     title: 'AI 画面解析',
@@ -248,6 +257,10 @@ export const zh = {
       notableVariations: '差异点',
       directions: '迁移方向',
       regenerate: '重新生成',
+      copyMd: '复制 Markdown',
+      downloadMd: '下载 .md',
+      copied: '已复制 Markdown 到剪贴板',
+      copyFailed: '复制失败，请改用下载',
       failed: '生成失败，请重试',
     },
   },

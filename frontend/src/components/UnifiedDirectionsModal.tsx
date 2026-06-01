@@ -1,38 +1,18 @@
 import { useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
-import { X, Sparkles, Layers, RefreshCw, Loader2 } from 'lucide-react'
+import { X, Sparkles, Layers, RefreshCw, Loader2, Copy, Download } from 'lucide-react'
 import { materialsApi } from '../lib/api'
 import type { AdaptModel } from '../lib/api'
 import { Select } from './Select'
 import { OwnProductPicker } from './OwnProductPicker'
+import { unifiedToMarkdown, downloadText, type UnifiedData } from '../lib/markdown'
 import { useT } from '../i18n'
 
 interface Props {
   open: boolean
   materialIds: number[]
   onClose: () => void
-}
-
-interface Direction {
-  name?: string
-  concept?: string
-  borrows_from_refs?: string
-  fit_to_self_product?: string
-  opening_3sec?: string
-  key_hooks?: { ts_est?: string; kind?: string; note?: string }[]
-  ending_cta?: string
-  risk_notes?: string
-}
-
-interface UnifiedData {
-  common_patterns?: {
-    shared_structure?: string
-    shared_hooks?: string[]
-    shared_pacing?: string
-    notable_variations?: string
-  }
-  directions?: Direction[]
 }
 
 const MODELS: AdaptModel[] = ['claude-sonnet-4.5', 'claude-opus-4.7']
@@ -76,6 +56,30 @@ export function UnifiedDirectionsModal({ open, materialIds, onClose }: Props) {
   }
   const reset = () => { setResult(null); setResultMeta(null) }
   const close = () => { reset(); onClose() }
+
+  const buildMarkdown = () =>
+    result ? unifiedToMarkdown(result, {
+      cost: resultMeta?.cost,
+      model: resultMeta?.model,
+      productBrief: ourProduct,
+    }) : ''
+
+  const handleCopy = async () => {
+    const md = buildMarkdown()
+    if (!md) return
+    try {
+      await navigator.clipboard.writeText(md)
+      toast.success(tu.copied)
+    } catch {
+      toast.error(tu.copyFailed)
+    }
+  }
+
+  const handleDownload = () => {
+    const md = buildMarkdown()
+    if (!md) return
+    downloadText(`unified-directions-${new Date().toISOString().slice(0, 10)}.md`, md)
+  }
 
   const est = estimate.data
   const cp = result?.common_patterns
@@ -219,9 +223,17 @@ export function UnifiedDirectionsModal({ open, materialIds, onClose }: Props) {
                   </div>
                 )}
 
-                <div className="flex items-center justify-end gap-2 pt-1">
-                  <button onClick={reset}
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <button onClick={handleCopy}
                     className="flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs text-secondary border border-default hover:border-strong hover:text-primary transition-colors">
+                    <Copy size={13} /> {tu.copyMd}
+                  </button>
+                  <button onClick={handleDownload}
+                    className="flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs text-secondary border border-default hover:border-strong hover:text-primary transition-colors">
+                    <Download size={13} /> {tu.downloadMd}
+                  </button>
+                  <button onClick={reset}
+                    className="flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs text-secondary border border-default hover:border-strong hover:text-primary transition-colors ml-auto">
                     <RefreshCw size={13} /> {tu.regenerate}
                   </button>
                   <button onClick={close}

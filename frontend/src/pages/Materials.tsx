@@ -72,11 +72,32 @@ export default function Materials() {
       sort_by: sortBy, order,
     }),
     placeholderData: keepPreviousData,
+    // 有素材处于 running 时轮询，让列表徽标在后台分析完成后自动翻 done/failed（详情抽屉只轮询单条）
+    refetchInterval: (query) =>
+      query.state.data?.items.some(m => m.analysis_status === 'running') ? 4000 : false,
   })
   const materials: MaterialOut[] = paged?.items ?? []
   const total = paged?.total ?? 0
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const page = Math.floor(offset / PAGE_SIZE) + 1
+
+  // 后台分析完成提示：对比上一帧各素材状态，捕捉 running→done / running→failed 的跃迁。
+  // 翻页换来的新条目其「上一帧」为空，不会误报；轮询刷新同页时只在状态真变化时弹一次。
+  const prevStatusRef = useRef<Record<number, string>>({})
+  useEffect(() => {
+    const prev = prevStatusRef.current
+    let done = 0
+    let failed = 0
+    for (const m of materials) {
+      if (prev[m.id] === 'running' && m.analysis_status === 'done') done++
+      if (prev[m.id] === 'running' && m.analysis_status === 'failed') failed++
+    }
+    if (done > 0) toast.success(t.materials.analyzeDone(done))
+    if (failed > 0) toast.error(t.materials.analyzeFailed(failed))
+    const next: Record<number, string> = {}
+    for (const m of materials) if (m.analysis_status) next[m.id] = m.analysis_status
+    prevStatusRef.current = next
+  }, [materials, t])
 
   const { data: allGames = [] } = useQuery({
     queryKey: ['games', 'tracked'],
@@ -339,17 +360,24 @@ export default function Materials() {
             </a>
           )}
         </div>
-        {/* 分析状态徽标：常驻显示（与平台徽标同侧底部），让列表一眼看出已分析的素材 */}
+        {/* 分析状态徽标：常驻显示（与平台徽标同侧底部），让列表一眼看出已分析的素材。
+            失败态做成可点按钮：title 展示错误原因，点击打开抽屉重试 */}
         {m.source === 'upload' && m.material_type === 'video' && m.analysis_status && m.analysis_status !== 'pending' && (
-          <span className={`absolute bottom-3 left-3 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-data backdrop-blur-sm border ${
-            m.analysis_status === 'done' ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
-            : m.analysis_status === 'running' ? 'bg-accent/15 border-accent/40 text-accent'
-            : 'bg-red-500/15 border-red-500/40 text-red-300'
-          }`}>
-            {m.analysis_status === 'done' && <><Sparkles size={9} /> AI</>}
-            {m.analysis_status === 'running' && <><Loader2 size={9} className="animate-spin" /> 分析中</>}
-            {m.analysis_status === 'failed' && <><AlertCircle size={9} /> 失败</>}
-          </span>
+          m.analysis_status === 'failed' ? (
+            <button onClick={() => setAnalyzing(m)}
+              title={m.analysis_error ? `${m.analysis_error}\n${t.materials.analyzeRetry}` : t.materials.analyzeRetry}
+              className="absolute bottom-3 left-3 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-data backdrop-blur-sm border bg-red-500/15 border-red-500/40 text-red-300 hover:bg-red-500/25 transition-colors">
+              <AlertCircle size={9} /> {t.materials.analyzeFailedBadge}
+            </button>
+          ) : (
+            <span className={`absolute bottom-3 left-3 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-data backdrop-blur-sm border ${
+              m.analysis_status === 'done' ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+              : 'bg-accent/15 border-accent/40 text-accent'
+            }`}>
+              {m.analysis_status === 'done' && <><Sparkles size={9} /> AI</>}
+              {m.analysis_status === 'running' && <><Loader2 size={9} className="animate-spin" /> {t.materials.analyzeRunningBadge}</>}
+            </span>
+          )
         )}
       </div>
     )
