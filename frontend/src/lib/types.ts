@@ -401,6 +401,59 @@ export interface OwnProductAnalyzeResult {
   material_count: number
 }
 
+// ─── 标签库（tag taxonomy）────────────────────────────────────────────────
+
+export type TagValueType = 'text' | 'date'
+
+/** 二级标签（受控值）。仅「文字」型一级标签下挂二级；「时间」型打标签时选日期。 */
+export interface TagOption {
+  id: number
+  dimension_id: number
+  value: string
+  sort_order: number
+  created_at: IsoDateString
+}
+
+/** 一级标签（维度 / 框架）。value_type=date 时 options 恒空。 */
+export interface TagDimension {
+  id: number
+  name: string
+  value_type: TagValueType
+  material_type: string | null
+  is_required: boolean
+  allow_multi: boolean
+  sort_order: number
+  created_at: IsoDateString
+  options: TagOption[]
+}
+
+export interface TagDimensionCreate {
+  name: string
+  value_type?: TagValueType
+  material_type?: string | null
+  is_required?: boolean
+  allow_multi?: boolean
+  sort_order?: number
+}
+
+// value_type 不可改（后端刻意省略）：text↔date 切换会让既有数据语义错乱。
+export type TagDimensionUpdate = Partial<Omit<TagDimensionCreate, 'value_type'>>
+
+export interface TagOptionCreate {
+  value: string
+  sort_order?: number
+}
+
+export type TagOptionUpdate = Partial<TagOptionCreate>
+
+/** 删除一级 / 二级标签的返回：含连带清理的计数。 */
+export interface TagDeleteResponse {
+  message: string
+  id: number
+  removed_options?: number
+  removed_material_tags?: number
+}
+
 export interface SyncRankingsResponse {
   message: string
   country: string

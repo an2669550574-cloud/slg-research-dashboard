@@ -31,6 +31,13 @@ import type {
   SeedResponse,
   SyncHistoryResponse,
   SyncRankingsResponse,
+  TagDimension,
+  TagDimensionCreate,
+  TagDimensionUpdate,
+  TagOption,
+  TagOptionCreate,
+  TagOptionUpdate,
+  TagDeleteResponse,
 } from './types'
 
 // 缺 X-Total-Count 头时 fallback 用 items.length（兼容老路由 / 测试夹具）
@@ -222,6 +229,29 @@ export const productsApi = {
     api.delete(`/products/${productId}/materials/${materialId}`).then(r => r.data),
   analyze: (productId: number): Promise<OwnProductAnalyzeResult> =>
     api.post(`/products/${productId}/analyze`).then(r => r.data),
+}
+
+// 删除一级 / 二级标签时附带管理员口令（后端未配置口令则忽略此头）。
+// 口令不进前端构建，运行时由调用方弹框收集后传入。
+function adminHeader(password?: string | null) {
+  return password ? { headers: { 'X-Admin-Password': password } } : undefined
+}
+
+export const tagsApi = {
+  listDimensions: (materialType?: string): Promise<TagDimension[]> =>
+    api.get('/tags/dimensions', { params: materialType ? { material_type: materialType } : {} }).then(r => r.data),
+  createDimension: (data: TagDimensionCreate): Promise<TagDimension> =>
+    api.post('/tags/dimensions', data).then(r => r.data),
+  updateDimension: (id: number, data: TagDimensionUpdate): Promise<TagDimension> =>
+    api.put(`/tags/dimensions/${id}`, data).then(r => r.data),
+  deleteDimension: (id: number, password?: string | null): Promise<TagDeleteResponse> =>
+    api.delete(`/tags/dimensions/${id}`, adminHeader(password)).then(r => r.data),
+  createOption: (dimId: number, data: TagOptionCreate): Promise<TagOption> =>
+    api.post(`/tags/dimensions/${dimId}/options`, data).then(r => r.data),
+  updateOption: (optId: number, data: TagOptionUpdate): Promise<TagOption> =>
+    api.put(`/tags/options/${optId}`, data).then(r => r.data),
+  deleteOption: (optId: number, password?: string | null): Promise<TagDeleteResponse> =>
+    api.delete(`/tags/options/${optId}`, adminHeader(password)).then(r => r.data),
 }
 
 export type AdaptModel = 'claude-sonnet-4.5' | 'claude-opus-4.7'

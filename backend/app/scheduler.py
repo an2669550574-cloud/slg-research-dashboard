@@ -181,6 +181,28 @@ async def sync_seed_games_if_empty() -> None:
         logger.info("Seeded %d games on first run", len(MOCK_SLG_GAMES))
 
 
+async def seed_tag_dimensions_if_empty() -> None:
+    """若标签库为空则建一组起步标签（对齐需求测试用例）：
+
+    - 投放时间（date 型，必选）
+    - 路型（text 型）：1路 / 2路 / 3路 / 4路
+    仅在 tag_dimensions 全空时插入，避免覆盖用户已维护的标签库。
+    """
+    from app.models.tag import TagDimension, TagOption
+    async with AsyncSessionLocal() as db:
+        existing = await db.execute(select(TagDimension))
+        if existing.scalars().first():
+            return
+        launch = TagDimension(name="投放时间", value_type="date", is_required=True, allow_multi=False, sort_order=0)
+        road = TagDimension(name="路型", value_type="text", allow_multi=True, sort_order=1)
+        db.add_all([launch, road])
+        await db.flush()
+        for i, v in enumerate(["1路", "2路", "3路", "4路"]):
+            db.add(TagOption(dimension_id=road.id, value=v, sort_order=i))
+        await db.commit()
+        logger.info("Seeded starter tag dimensions (投放时间 / 路型) on first run")
+
+
 def start_scheduler() -> None:
     if scheduler.running:
         return
