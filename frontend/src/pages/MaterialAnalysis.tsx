@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { Sparkles, ChevronRight, Film as FilmIcon, Radio, Tag as TagIcon, ArrowLeft, Download as DownloadIcon, Search, Layers, X } from 'lucide-react'
 import { materialsApi, gamesApi } from '../lib/api'
@@ -10,7 +10,6 @@ import { PageHeader } from '../components/PageHeader'
 import { Select } from '../components/Select'
 import { Pagination } from '../components/Pagination'
 import { QueryError } from '../components/QueryError'
-import { MaterialAnalysisDrawer } from '../components/MaterialAnalysisDrawer'
 import { UnifiedDirectionsModal } from '../components/UnifiedDirectionsModal'
 import { downloadCsv } from '../lib/csv'
 import { useDebouncedValue } from '../lib/hooks'
@@ -34,7 +33,6 @@ export default function MaterialAnalysis() {
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState('analyzed_at:desc')
   const [offset, setOffset] = useState(0)
-  const [active, setActive] = useState<MaterialOut | null>(null)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [unifiedOpen, setUnifiedOpen] = useState(false)
   const debouncedSearch = useDebouncedValue(search)
@@ -282,8 +280,9 @@ export default function MaterialAnalysis() {
                       aria-label={t.materialAnalysis.unified.selectRow}
                       className="w-4 h-4 accent-[var(--accent)] cursor-pointer" />
                   </div>
-                  {/* open button spans the remaining columns (display:contents) */}
-                  <button onClick={() => setActive(m)} className="contents text-left">
+                  {/* 整行点击进入整页详情（display:contents 让 Link 横跨剩余列）。
+                      抽屉只保留在素材库做即时触发，本页直达「完整解析」整页 */}
+                  <Link to={`/materials/${m.id}/analysis`} className="contents text-left">
                   {/* No. */}
                   <div className="hidden md:block font-data text-accent text-sm pt-1">
                     {String(offset + i + 1).padStart(2, '0')}
@@ -335,7 +334,7 @@ export default function MaterialAnalysis() {
                       {t.materialAnalysis.open} <ChevronRight size={13} />
                     </span>
                   </div>
-                  </button>
+                  </Link>
                 </div>
               )
             })}
@@ -347,7 +346,6 @@ export default function MaterialAnalysis() {
         <Pagination total={total} offset={offset} pageSize={PAGE_SIZE} onOffsetChange={setOffset} />
       </div>
 
-      <MaterialAnalysisDrawer material={active} onClose={() => setActive(null)} />
       <UnifiedDirectionsModal open={unifiedOpen} materialIds={[...selected]}
         onClose={() => setUnifiedOpen(false)} />
     </div>
