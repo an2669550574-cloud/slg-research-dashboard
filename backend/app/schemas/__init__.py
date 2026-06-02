@@ -14,6 +14,7 @@ from app.schemas.tag import (
 from app.schemas.tag_analysis import (
     TagAnalysisRequest, TagAnalysisMessageOut,
     TagAnalysisSessionOut, TagAnalysisSessionListItem,
+    TagAnalysisEstimateOut,
 )
 
 __all__ = [
@@ -33,6 +34,7 @@ __all__ = [
     "TagAnalysisMessageOut",
     "TagAnalysisSessionOut",
     "TagAnalysisSessionListItem",
+    "TagAnalysisEstimateOut",
     "OwnProductOut",
     "OwnProductCreate",
     "OwnProductUpdate",

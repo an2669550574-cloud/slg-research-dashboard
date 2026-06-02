@@ -220,6 +220,13 @@ export const en: Translations = {
       roleAssistant: 'Analysis',
       meta: (model: string, cost: number, count: number) =>
         `${model} · $${cost.toFixed(4)} · ${count} materials`,
+      // trigger button + live cost estimate
+      open: 'AI Tag Analysis',
+      close: 'Close',
+      estimating: 'Estimating…',
+      estimateAbout: (cost: number, count: number) => `~$${cost.toFixed(3)} · ${count} materials`,
+      estimateEmpty: 'No materials in scope',
+      estimateOverLimit: (count: number, limit: number) => `${count} · over ${limit} limit, narrow scope first`,
     },
     // auto-naming (P5)
     autoNameBtn: 'Auto-name',

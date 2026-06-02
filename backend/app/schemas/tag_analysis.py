@@ -67,3 +67,18 @@ class TagAnalysisSessionListItem(BaseModel):
     message_count: int = 0
     created_at: datetime
     updated_at: datetime
+
+
+class TagAnalysisEstimateOut(BaseModel):
+    """单次分析的成本预估（干跑，不真打网关）。用于模型下拉旁展示「约 $X」。
+
+    token 用 rough_token_count 估（CJK 1.3/字、其余 4 字/token，宁高勿低），输出按
+    一份结构化报告的典型规模估。empty/over_limit 时不给金额，前端转而提示护栏。"""
+    material_count: int
+    limit: int
+    empty: bool
+    over_limit: bool
+    model: str
+    input_tokens_est: int
+    output_tokens_est: int
+    estimated_cost_usd: float

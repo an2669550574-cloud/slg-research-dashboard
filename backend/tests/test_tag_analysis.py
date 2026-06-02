@@ -190,6 +190,56 @@ async def test_export_md_and_csv(client, monkeypatch):
     assert "路型,1路,1" in body and "路型,2路,1" in body
 
 
+# ── 成本预估（干跑，不打网关）─────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_estimate_returns_cost_for_valid_scope(client, monkeypatch):
+    road, ropt = await _mk_text_dim(client, "路型", ["1路", "2路"])
+    await _mk_material(client, "甲", [{"dimension_id": road["id"], "option_ids": [ropt["1路"]]}])
+    await _mk_material(client, "乙", [{"dimension_id": road["id"], "option_ids": [ropt["2路"]]}])
+
+    r = await client.get("/api/tags/analysis/estimate", params={"model": "claude-sonnet-4.5"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["material_count"] == 2
+    assert body["empty"] is False and body["over_limit"] is False
+    assert body["input_tokens_est"] > 0 and body["output_tokens_est"] > 0
+    assert body["estimated_cost_usd"] > 0
+    # opus 比 sonnet 贵：同范围预估金额应更高
+    r2 = await client.get("/api/tags/analysis/estimate", params={"model": "claude-opus-4.7"})
+    assert r2.json()["estimated_cost_usd"] > body["estimated_cost_usd"]
+
+
+@pytest.mark.asyncio
+async def test_estimate_empty_scope_no_cost(client):
+    r = await client.get("/api/tags/analysis/estimate", params={
+        "model": "claude-sonnet-4.5", "material_type": "playable",
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["material_count"] == 0 and body["empty"] is True
+    assert body["estimated_cost_usd"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_estimate_over_limit_flag(client, monkeypatch):
+    monkeypatch.setattr(_live_ta(), "MATERIAL_LIMIT", 1)
+    road, ropt = await _mk_text_dim(client, "路型", ["1路"])
+    for t in ("甲", "乙"):
+        await _mk_material(client, t, [{"dimension_id": road["id"], "option_ids": [ropt["1路"]]}])
+    r = await client.get("/api/tags/analysis/estimate", params={"model": "claude-sonnet-4.5"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["over_limit"] is True and body["estimated_cost_usd"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_estimate_rejects_bad_model(client):
+    r = await client.get("/api/tags/analysis/estimate", params={"model": "gpt-4o"})
+    assert r.status_code == 400
+    assert "不支持的模型" in r.json()["detail"]
+
+
 # ── 纯函数单测：分布 / 分析块（不走 DB / 网关）──────────────────────────────
 
 def test_distribution_dedup_per_material():

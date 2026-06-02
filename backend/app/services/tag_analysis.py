@@ -40,6 +40,10 @@ MATERIAL_LIMIT = 50
 # 允许的网关模型白名单（与创意迁移一致：sonnet 省 / opus 强）。传白名单外一律拒。
 ALLOWED_MODELS = ("claude-sonnet-4.5", "claude-opus-4.7")
 
+# 成本干跑预估时的输出 token 估值：一份结构化报告的典型规模（宁高勿低）。
+# 真实 max_tokens=4000，报告通常用不满；取 2200 作为「约 $X」的展示口径。
+ESTIMATE_OUTPUT_TOKENS = 2200
+
 # 报告模式的内置指令（用户不打字，点按钮即用此指令）。
 REPORT_INSTRUCTION = (
     "请基于以下「当前筛选范围的标签数据 + 素材 AI 分析内容」，生成一份结构化的买量"
@@ -308,6 +312,58 @@ async def run_turn(
     await db.commit()
     await db.refresh(session)
     return session
+
+
+async def estimate_turn(
+    db: AsyncSession,
+    *,
+    model: str,
+    app_id: Optional[str],
+    material_type: Optional[str],
+    tag_options: Optional[str],
+) -> dict:
+    """干跑预估单次报告分析的成本（不打网关）。供模型下拉旁实时展示「约 $X」。
+
+    与 run_turn 同口径数 scope，但**不抛**空/超限异常——返回 empty/over_limit 标志
+    让前端转而提示护栏。命中合法时按 system+数据块+报告指令 估 input token、用
+    ESTIMATE_OUTPUT_TOKENS 估 output，走 estimate_cost 折算美元（宁高勿低）。
+    raises ValueError 仅在模型非法时。"""
+    _validate_model(model)
+
+    scope = _scope_select(app_id, material_type)
+    scope = await tagging.apply_facet_filter(db, scope, tag_options)
+    count = (await db.execute(select(func.count()).select_from(scope.subquery()))).scalar_one()
+
+    base = {
+        "material_count": int(count),
+        "limit": MATERIAL_LIMIT,
+        "empty": count == 0,
+        "over_limit": count > MATERIAL_LIMIT,
+        "model": model,
+        "input_tokens_est": 0,
+        "output_tokens_est": 0,
+        "estimated_cost_usd": 0.0,
+    }
+    if count == 0 or count > MATERIAL_LIMIT:
+        return base
+
+    rows = (await db.execute(
+        select(Material).where(Material.id.in_(scope)).order_by(Material.created_at, Material.id)
+    )).scalars().all()
+    data_block, _ = await build_context_block(db, list(rows))
+    input_tokens = llm_gateway.rough_token_count(
+        _ANALYSIS_SYSTEM + "\n\n" + data_block + "\n\n" + REPORT_INSTRUCTION
+    )
+    cost = llm_gateway.estimate_cost(model, {
+        "prompt_tokens": input_tokens,
+        "completion_tokens": ESTIMATE_OUTPUT_TOKENS,
+    })
+    base.update(
+        input_tokens_est=input_tokens,
+        output_tokens_est=ESTIMATE_OUTPUT_TOKENS,
+        estimated_cost_usd=cost.total_usd,
+    )
+    return base
 
 
 async def delete_session(db: AsyncSession, session_id: int) -> None:

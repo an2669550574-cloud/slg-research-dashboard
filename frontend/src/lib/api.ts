@@ -44,6 +44,7 @@ import type {
   TagAnalysisSession,
   TagAnalysisSessionListItem,
   TagAnalysisRunRequest,
+  TagAnalysisEstimate,
 } from './types'
 
 // 缺 X-Total-Count 头时 fallback 用 items.length（兼容老路由 / 测试夹具）
@@ -274,6 +275,9 @@ export const tagAnalysisApi = {
     api.get('/tags/analysis').then(r => r.data),
   get: (id: number): Promise<TagAnalysisSession> =>
     api.get(`/tags/analysis/${id}`).then(r => r.data),
+  // 成本干跑预估：当前范围跑一次报告约花多少（不打网关、零配额）。供模型下拉旁「约 $X」。
+  estimate: (params: { model: string; app_id?: string; material_type?: string; tag_options?: string }): Promise<TagAnalysisEstimate> =>
+    api.get('/tags/analysis/estimate', { params }).then(r => r.data),
   del: (id: number): Promise<DeleteResponse> =>
     api.delete(`/tags/analysis/${id}`).then(r => r.data),
   // 导出走 axios（带 X-API-Key），拿 blob 后手动触发下载（<a download> 带不了鉴权头）。
