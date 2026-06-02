@@ -194,6 +194,9 @@ export const en: Translations = {
     aggSummary: (total: number, tagged: number) => `${tagged} of ${total} materials in scope carry this tag`,
     aggEmpty: 'No data in the current scope',
     aggColTotal: 'Total',
+    // auto-naming (P5)
+    autoNameBtn: 'Auto-name',
+    autoNameEmpty: 'Select structured tags first',
     // type / game / sort
     typeFilterAll: 'All types',
     gameFilterAll: 'All games',

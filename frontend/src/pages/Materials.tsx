@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tansta
 import toast from 'react-hot-toast'
 import { materialsApi, gamesApi } from '../lib/api'
 import { PLATFORM_CONFIG } from '../lib/utils'
-import { ExternalLink, Trash2, Plus, Search, Download as DownloadIcon, Upload, Film as FilmIcon, Radio, Pencil, X, Check, AlertCircle, Loader2, Tag as TagIcon, Sparkles, SlidersHorizontal } from 'lucide-react'
+import { ExternalLink, Trash2, Plus, Search, Download as DownloadIcon, Upload, Film as FilmIcon, Radio, Pencil, X, Check, AlertCircle, Loader2, Tag as TagIcon, Sparkles, SlidersHorizontal, Wand2 } from 'lucide-react'
 import { MaterialPreview } from '../components/MaterialPreview'
 import { MaterialAnalysisDrawer } from '../components/MaterialAnalysisDrawer'
 import {
@@ -11,6 +11,7 @@ import {
   type TagValueState,
 } from '../components/StructuredTagEditor'
 import { tagsApi } from '../lib/api'
+import { composeNameFromTags } from '../lib/tagName'
 import { TagAggregatePanel } from '../components/TagAggregatePanel'
 import { Select } from '../components/Select'
 import { PageHeader } from '../components/PageHeader'
@@ -145,6 +146,11 @@ export default function Materials() {
     queryFn: () => tagsApi.listDimensions(editorMaterialType || undefined),
     enabled: showForm,
   })
+  // 自动命名（P5）：从当前已选结构化标签按维度顺序拼出标题（模板化，零 LLM/配额）。
+  const autoNameSuggestion = useMemo(
+    () => composeNameFromTags(tagValues, editorDims),
+    [tagValues, editorDims],
+  )
 
   const closeForm = () => {
     setShowForm(false); setEditing(null)
@@ -545,10 +551,21 @@ export default function Materials() {
             </div>
           )}
 
-          {/* 标题：批量上传时按各自文件名生成，不显示标题输入 */}
+          {/* 标题：批量上传时按各自文件名生成，不显示标题输入。
+              「自动命名」按当前已选结构化标签拼标题（P5，模板化、零 LLM）。 */}
           {!(isUpload && !editing && files.length > 1) && (
-            <input required={!isUpload || !!editing} placeholder={t.materials.titlePlaceholder} value={form.title}
-              onChange={e => setForm(f => ({ ...f, title: e.target.value }))} className={inputClass} />
+            <div className="flex items-stretch gap-2">
+              <div className="flex-1 min-w-0">
+                <input required={!isUpload || !!editing} placeholder={t.materials.titlePlaceholder} value={form.title}
+                  onChange={e => setForm(f => ({ ...f, title: e.target.value }))} className={inputClass} />
+              </div>
+              <button type="button" disabled={!autoNameSuggestion}
+                onClick={() => setForm(f => ({ ...f, title: autoNameSuggestion }))}
+                title={autoNameSuggestion || t.materials.autoNameEmpty}
+                className="shrink-0 inline-flex items-center gap-1.5 px-3 rounded-lg text-xs border border-default text-secondary hover:text-accent hover:border-accent/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                <Wand2 size={13} /> {t.materials.autoNameBtn}
+              </button>
+            </div>
           )}
 
           {isUpload && !editing ? (

@@ -199,6 +199,9 @@ export const zh = {
     aggSummary: (total: number, tagged: number) => `范围内 ${total} 条素材，其中 ${tagged} 条已打此标签`,
     aggEmpty: '当前范围内暂无数据',
     aggColTotal: '合计',
+    // 自动命名（P5）
+    autoNameBtn: '自动命名',
+    autoNameEmpty: '先选结构化标签再自动命名',
     // 类型 / 游戏 / 排序
     typeFilterAll: '全部类型',
     gameFilterAll: '全部游戏',
