@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Sparkles, AlertCircle, Loader2, RefreshCw, Tag as TagIcon, Plus, Wand2, ChevronRight, FileText } from 'lucide-react'
+import { Sparkles, AlertCircle, Loader2, RefreshCw, Tag as TagIcon, Plus, Wand2, ChevronRight, FileText, History, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { materialsApi } from '../lib/api'
 import { OwnProductPicker } from './OwnProductPicker'
 import type {
-  MaterialOut, CreativeDirection, CreativeDirectionsResult, CreativeScriptResult,
+  MaterialOut, CreativeDirection, CreativeDirectionsResult, CreativeScriptResult, CreativeAdaptationOut,
 } from '../lib/types'
 
 /** 抽屉 + 详情页共用：拉取单素材分析数据 + 触发分析/采纳标签的 mutations。
@@ -287,36 +287,78 @@ function StatusBlock({
 const LS_PRODUCT_KEY = 'slg.adaptOurProduct'
 
 function AdaptBlock({ materialId }: { materialId: number }) {
+  const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   const [product, setProduct] = useState(() => localStorage.getItem(LS_PRODUCT_KEY) || '')
   const [productId, setProductId] = useState<number | null>(null)
   const [directions, setDirections] = useState<CreativeDirection[] | null>(null)
   const [chosen, setChosen] = useState<CreativeDirection | null>(null)
+  const [chosenIndex, setChosenIndex] = useState<number | null>(null)
   const [script, setScript] = useState<CreativeScriptResult['data'] | null>(null)
   const [totalCost, setTotalCost] = useState(0)
+  // 当前正在编辑/查看的历史存档 id：新生成或点开历史时设定，脚本回写靠它定位行。
+  const [currentId, setCurrentId] = useState<number | null>(null)
+
+  // 历史存档列表（零 LLM 开销，纯读本地库）；进区块即拉，作为「不丢成品」的真相源。
+  const { data: history = [] } = useQuery({
+    queryKey: ['adaptations', materialId],
+    queryFn: () => materialsApi.listAdaptations(materialId),
+    enabled: open,
+  })
 
   const dirMut = useMutation({
-    mutationFn: () => materialsApi.adaptDirections(materialId, product) as Promise<CreativeDirectionsResult>,
+    mutationFn: () => materialsApi.adaptDirections(materialId, product, productId),
     onSuccess: (r) => {
       localStorage.setItem(LS_PRODUCT_KEY, product)
       setDirections(r.data.directions ?? [])
-      setChosen(null); setScript(null)
+      setChosen(null); setChosenIndex(null); setScript(null)
+      setCurrentId(r.id)
       setTotalCost(c => c + (r.cost_usd || 0))
-      toast.success(`生成 ${r.data.directions?.length ?? 0} 个方向（$${(r.cost_usd ?? 0).toFixed(4)}）`)
+      qc.invalidateQueries({ queryKey: ['adaptations', materialId] })
+      toast.success(`生成 ${r.data.directions?.length ?? 0} 个方向（$${(r.cost_usd ?? 0).toFixed(4)}）· 已存历史`)
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || '方向生成失败'),
   })
 
   const scriptMut = useMutation({
-    mutationFn: (d: CreativeDirection) =>
-      materialsApi.adaptScript(materialId, product, d) as Promise<CreativeScriptResult>,
+    mutationFn: (p: { d: CreativeDirection; i: number }) =>
+      materialsApi.adaptScript(materialId, product, p.d, currentId, p.i) as Promise<CreativeScriptResult>,
     onSuccess: (r) => {
       setScript(r.data)
       setTotalCost(c => c + (r.cost_usd || 0))
-      toast.success(`脚本生成完成（$${(r.cost_usd ?? 0).toFixed(4)}）`)
+      qc.invalidateQueries({ queryKey: ['adaptations', materialId] })
+      toast.success(`脚本生成完成（$${(r.cost_usd ?? 0).toFixed(4)}）· 已存历史`)
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || '脚本生成失败'),
   })
+
+  const delMut = useMutation({
+    mutationFn: (id: number) => materialsApi.deleteAdaptation(id),
+    onSuccess: (_r, id) => {
+      qc.invalidateQueries({ queryKey: ['adaptations', materialId] })
+      // 删的是当前正在看的那条：清空工作区，回到空白态。
+      if (id === currentId) {
+        setCurrentId(null); setDirections(null); setChosen(null); setChosenIndex(null); setScript(null)
+      }
+      toast.success('已删除')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || '删除失败'),
+  })
+
+  // 点开一条历史存档：把它的方向/选定/脚本载入工作区。
+  const loadAdaptation = (a: CreativeAdaptationOut) => {
+    setCurrentId(a.id)
+    setProduct(a.our_product)
+    setProductId(a.product_id)
+    setDirections(a.data.directions ?? [])
+    const idx = a.chosen_index
+    if (idx != null && a.data.directions?.[idx]) {
+      setChosen(a.data.directions[idx]); setChosenIndex(idx)
+    } else {
+      setChosen(null); setChosenIndex(null)
+    }
+    setScript(a.script ?? null)
+  }
 
   if (!open) {
     return (
@@ -344,6 +386,47 @@ function AdaptBlock({ materialId }: { materialId: number }) {
           <button onClick={() => setOpen(false)} className="hover:text-primary">收起</button>
         </div>
       </div>
+
+      {/* ⓪ 历史存档：每次生成自动落库，点开载入工作区，垃圾可删 */}
+      {history.length > 0 && (
+        <div className="space-y-1.5">
+          <div className="eyebrow text-muted flex items-center gap-1.5">
+            <History size={11} /> 历史方向（{history.length}）
+          </div>
+          <div className="space-y-1">
+            {history.map(a => {
+              const isCur = a.id === currentId
+              const dirCount = a.data.directions?.length ?? 0
+              return (
+                <div key={a.id}
+                  className={`group flex items-center gap-2 px-2.5 py-2 rounded-lg border transition-colors ${isCur ? 'border-accent bg-accent/10' : 'border-default bg-elevated/30 hover:border-strong'}`}>
+                  <button onClick={() => loadAdaptation(a)} className="flex-1 min-w-0 text-left">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-primary truncate">
+                        {a.chosen_name ? `已选「${a.chosen_name}」` : `${dirCount} 个方向`}
+                        {a.script ? ' · 含脚本' : ''}
+                      </span>
+                      {isCur && <span className="text-[10px] font-data text-accent shrink-0">当前</span>}
+                    </div>
+                    <div className="text-[10px] font-data text-muted truncate">
+                      {a.created_at ? new Date(a.created_at).toLocaleString() : ''}
+                      {typeof a.cost_usd === 'number' ? ` · $${((a.cost_usd ?? 0) + (a.script_cost_usd ?? 0)).toFixed(4)}` : ''}
+                      {a.our_product ? ` · ${a.our_product.slice(0, 24)}` : ''}
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => { if (window.confirm('删除这条创意迁移历史？不可恢复。')) delMut.mutate(a.id) }}
+                    disabled={delMut.isPending}
+                    title="删除这条历史"
+                    className="shrink-0 p-1.5 rounded text-muted hover:text-red-400 hover:bg-red-500/10 disabled:opacity-50">
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* ① 自家产品：从已存档案选一条带入，或手动输入（localStorage 记忆手输值）*/}
       <OwnProductPicker
@@ -379,7 +462,7 @@ function AdaptBlock({ materialId }: { materialId: number }) {
           {directions.map((d, i) => {
             const isChosen = chosen?.name === d.name
             return (
-              <button key={i} onClick={() => { setChosen(d); setScript(null) }}
+              <button key={i} onClick={() => { setChosen(d); setChosenIndex(i); setScript(null) }}
                 className={`block w-full text-left p-3 rounded-lg border transition-colors ${isChosen ? 'border-accent bg-accent/10' : 'border-default bg-elevated/40 hover:border-strong'}`}>
                 <div className="flex items-baseline justify-between gap-2 mb-1">
                   <span className="font-display font-bold text-sm text-primary">{i + 1}. {d.name}</span>
@@ -414,7 +497,7 @@ function AdaptBlock({ materialId }: { materialId: number }) {
           <div className="flex items-center justify-between mb-2">
             <div className="eyebrow text-muted">分镜脚本</div>
             <button
-              onClick={() => scriptMut.mutate(chosen)}
+              onClick={() => scriptMut.mutate({ d: chosen, i: chosenIndex ?? 0 })}
               disabled={scriptMut.isPending}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-accent hover:brightness-110 disabled:opacity-50 text-xs font-semibold text-white">
               {scriptMut.isPending ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
