@@ -13,6 +13,7 @@ import {
 import { tagsApi } from '../lib/api'
 import { composeNameFromTags } from '../lib/tagName'
 import { TagAggregatePanel } from '../components/TagAggregatePanel'
+import { TagAnalysisAgent } from '../components/TagAnalysisAgent'
 import { Select } from '../components/Select'
 import { PageHeader } from '../components/PageHeader'
 import { useNavigate } from 'react-router-dom'
@@ -789,6 +790,12 @@ export default function Materials() {
         )}
         {/* 聚合分析（P4）：scope 跟随上方 material_type + 分面筛选；零 ST 配额。 */}
         <TagAggregatePanel dims={facetable} materialType={filterType || undefined} tagOptions={facetKey || undefined} />
+        {/* AI 标签分析 Agent（P6）：scope 跟随 类型 + 游戏 + 分面筛选；走 LLM 网关、零 ST 配额。 */}
+        <TagAnalysisAgent
+          materialType={filterType || undefined}
+          appId={filterGame || undefined}
+          tagOptions={facetKey || undefined}
+        />
       </div>
 
       {/* ══ GRID ══════════════════════════════════════════════ */}

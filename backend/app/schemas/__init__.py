@@ -11,6 +11,10 @@ from app.schemas.tag import (
     MaterialTagValueItem, MaterialTagValueInput, MaterialTagValuesPut,
     TagAggregateSubBucket, TagAggregateBucket, TagAggregateOut,
 )
+from app.schemas.tag_analysis import (
+    TagAnalysisRequest, TagAnalysisMessageOut,
+    TagAnalysisSessionOut, TagAnalysisSessionListItem,
+)
 
 __all__ = [
     "TagDimensionCreate",
@@ -25,6 +29,10 @@ __all__ = [
     "TagAggregateSubBucket",
     "TagAggregateBucket",
     "TagAggregateOut",
+    "TagAnalysisRequest",
+    "TagAnalysisMessageOut",
+    "TagAnalysisSessionOut",
+    "TagAnalysisSessionListItem",
     "OwnProductOut",
     "OwnProductCreate",
     "OwnProductUpdate",
