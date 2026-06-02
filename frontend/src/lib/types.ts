@@ -154,6 +154,8 @@ export interface MaterialOut {
   // 关键帧 + 联系单（migration 0007）：URL 含 HMAC 短时令牌
   analysis_frames: { ts: number; url: string }[] | null
   analysis_contact_sheet_url: string | null
+  // 结构化标签（P2）：素材在各一级标签维度下已打的值
+  tag_values: MaterialTagValueItem[]
 }
 
 // ─── 创意迁移（adapt）─────────────────────────────────────────────
@@ -239,6 +241,7 @@ export interface MaterialCreate {
   material_type?: string
   tags?: string[]
   notes?: string | null
+  tag_values?: MaterialTagValueInput[]
 }
 
 // app_id 可改：把已有素材重新归类到游戏（空串 = 取消关联）。
@@ -399,6 +402,113 @@ export interface OwnProductAnalyzeResult {
   cost_usd: number
   model: string
   material_count: number
+}
+
+// ─── 标签库（tag taxonomy）────────────────────────────────────────────────
+
+export type TagValueType = 'text' | 'date'
+
+/** 二级标签（受控值）。仅「文字」型一级标签下挂二级；「时间」型打标签时选日期。 */
+export interface TagOption {
+  id: number
+  dimension_id: number
+  value: string
+  sort_order: number
+  created_at: IsoDateString
+}
+
+/** 一级标签（维度 / 框架）。value_type=date 时 options 恒空。 */
+export interface TagDimension {
+  id: number
+  name: string
+  value_type: TagValueType
+  material_type: string | null
+  is_required: boolean
+  allow_multi: boolean
+  sort_order: number
+  created_at: IsoDateString
+  options: TagOption[]
+}
+
+export interface TagDimensionCreate {
+  name: string
+  value_type?: TagValueType
+  material_type?: string | null
+  is_required?: boolean
+  allow_multi?: boolean
+  sort_order?: number
+}
+
+// value_type 不可改（后端刻意省略）：text↔date 切换会让既有数据语义错乱。
+export type TagDimensionUpdate = Partial<Omit<TagDimensionCreate, 'value_type'>>
+
+export interface TagOptionCreate {
+  value: string
+  sort_order?: number
+}
+
+export type TagOptionUpdate = Partial<TagOptionCreate>
+
+// ─── 结构化打标签（P2）──────────────────────────────────────────────────
+
+/** 素材上一条已打标记（含维度元信息，免前端再 join）。 */
+export interface MaterialTagValueItem {
+  dimension_id: number
+  dimension_name: string
+  value_type: TagValueType
+  option_id: number | null
+  value: string | null
+  value_date: string | null
+}
+
+/** 打标签提交：一个维度一条。text 给 option_ids，date 给 value_date。 */
+export interface MaterialTagValueInput {
+  dimension_id: number
+  option_ids?: number[]
+  value_date?: string | null
+}
+
+// ─── 聚合分析（P4）─────────────────────────────────────────────────────
+// 按某文字型一级标签统计去重素材分布；可选第二维度做交叉透视。零 ST 配额。
+
+export interface TagAggregateSubBucket {
+  option_id: number
+  value: string
+  count: number
+}
+
+export interface TagAggregateBucket {
+  option_id: number
+  value: string
+  count: number
+  /** 仅交叉透视时存在：该主桶下按第二维度的细分。 */
+  sub?: TagAggregateSubBucket[] | null
+}
+
+export interface TagAggregateOut {
+  dimension_id: number
+  dimension_name: string
+  by_dimension_id: number | null
+  by_dimension_name: string | null
+  total_materials: number
+  tagged_materials: number
+  buckets: TagAggregateBucket[]
+}
+
+export interface TagAggregateParams {
+  dimension_id: number
+  by?: number
+  app_id?: string
+  material_type?: string
+  tag_options?: string
+}
+
+/** 删除一级 / 二级标签的返回：含连带清理的计数。 */
+export interface TagDeleteResponse {
+  message: string
+  id: number
+  removed_options?: number
+  removed_material_tags?: number
 }
 
 export interface SyncRankingsResponse {

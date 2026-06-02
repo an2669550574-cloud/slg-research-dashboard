@@ -3,9 +3,16 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tansta
 import toast from 'react-hot-toast'
 import { materialsApi, gamesApi } from '../lib/api'
 import { PLATFORM_CONFIG } from '../lib/utils'
-import { ExternalLink, Trash2, Plus, Search, Download as DownloadIcon, Upload, Film as FilmIcon, Radio, Pencil, X, Check, AlertCircle, Loader2, Tag as TagIcon, Sparkles } from 'lucide-react'
+import { ExternalLink, Trash2, Plus, Search, Download as DownloadIcon, Upload, Film as FilmIcon, Radio, Pencil, X, Check, AlertCircle, Loader2, Tag as TagIcon, Sparkles, SlidersHorizontal, Wand2 } from 'lucide-react'
 import { MaterialPreview } from '../components/MaterialPreview'
 import { MaterialAnalysisDrawer } from '../components/MaterialAnalysisDrawer'
+import {
+  StructuredTagEditor, emptyTagState, tagStateFromItems, tagStateToInputs, missingRequiredNames,
+  type TagValueState,
+} from '../components/StructuredTagEditor'
+import { tagsApi } from '../lib/api'
+import { composeNameFromTags } from '../lib/tagName'
+import { TagAggregatePanel } from '../components/TagAggregatePanel'
 import { Select } from '../components/Select'
 import { PageHeader } from '../components/PageHeader'
 import { useNavigate } from 'react-router-dom'
@@ -41,12 +48,14 @@ export default function Materials() {
   const [filterType, setFilterType] = useState('')
   const [filterGame, setFilterGame] = useState('')
   const [filterTag, setFilterTag] = useState('')
+  const [filterOptions, setFilterOptions] = useState<Set<number>>(new Set())
   const [sort, setSort] = useState('created_at:desc')
   const [offset, setOffset] = useState(0)
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState(emptyForm)
   const [mode, setMode] = useState<'link' | 'upload'>('link')
   const [editing, setEditing] = useState<MaterialOut | null>(null)
+  const [tagValues, setTagValues] = useState<TagValueState>(emptyTagState())
   const [analyzing, setAnalyzing] = useState<MaterialOut | null>(null)
   const [files, setFiles] = useState<File[]>([])
   const [queue, setQueue] = useState<QItem[]>([])
@@ -58,10 +67,13 @@ export default function Materials() {
 
   const [sortBy, order] = sort.split(':') as ['created_at' | 'title', 'asc' | 'desc']
 
-  useEffect(() => { setOffset(0) }, [debouncedSearch, filterPlatform, filterType, filterGame, filterTag, sort])
+  // 分面筛选（P3）：选中的二级标签 id 排序后逗号拼成稳定 key，既当 queryKey 又当请求参数。
+  const facetKey = useMemo(() => [...filterOptions].sort((a, b) => a - b).join(','), [filterOptions])
+
+  useEffect(() => { setOffset(0) }, [debouncedSearch, filterPlatform, filterType, filterGame, filterTag, facetKey, sort])
 
   const { data: paged, isLoading, isError, refetch } = useQuery({
-    queryKey: ['materials', debouncedSearch, filterPlatform, filterType, filterGame, filterTag, sort, offset],
+    queryKey: ['materials', debouncedSearch, filterPlatform, filterType, filterGame, filterTag, facetKey, sort, offset],
     queryFn: () => materialsApi.listPaged({
       limit: PAGE_SIZE, offset,
       q: debouncedSearch || undefined,
@@ -69,6 +81,7 @@ export default function Materials() {
       material_type: filterType || undefined,
       app_id: filterGame || undefined,
       tag: filterTag || undefined,
+      tag_options: facetKey || undefined,
       sort_by: sortBy, order,
     }),
     placeholderData: keepPreviousData,
@@ -110,9 +123,39 @@ export default function Materials() {
     queryFn: () => materialsApi.tags(filterGame || undefined),
   })
 
+  // 分面筛选维度（P3）：跟随类型筛选取适用的一级标签；只用文字型(有二级选项)做分面。
+  // 与编辑器/表单共享 ['tagDimensions', type] 缓存。零 ST 配额。
+  const { data: facetDims = [] } = useQuery({
+    queryKey: ['tagDimensions', filterType || 'all'],
+    queryFn: () => tagsApi.listDimensions(filterType || undefined),
+  })
+  const facetable = facetDims.filter(d => d.value_type === 'text' && d.options.length > 0)
+  const toggleFacet = (optId: number) => setFilterOptions(prev => {
+    const next = new Set(prev)
+    next.has(optId) ? next.delete(optId) : next.add(optId)
+    return next
+  })
+
+  // 结构化标签编辑器跟随的素材类型：上传按首个文件推断，其余看表单选择。
+  const editorMaterialType = mode === 'upload' && !editing
+    ? (files[0] ? inferType(files[0].name) : 'video')
+    : form.material_type
+  // 同一 queryKey 与编辑器内部共享缓存（不重复请求）；用于提交前的必填本地校验。
+  const { data: editorDims = [] } = useQuery({
+    queryKey: ['tagDimensions', editorMaterialType || 'all'],
+    queryFn: () => tagsApi.listDimensions(editorMaterialType || undefined),
+    enabled: showForm,
+  })
+  // 自动命名（P5）：从当前已选结构化标签按维度顺序拼出标题（模板化，零 LLM/配额）。
+  const autoNameSuggestion = useMemo(
+    () => composeNameFromTags(tagValues, editorDims),
+    [tagValues, editorDims],
+  )
+
   const closeForm = () => {
     setShowForm(false); setEditing(null)
     setForm(emptyForm); setMode('link'); setFiles([]); setQueue([])
+    setTagValues(emptyTagState())
     if (fileInputRef.current) fileInputRef.current.value = ''
     if (folderInputRef.current) folderInputRef.current.value = ''
     setDragActive(false)
@@ -124,14 +167,22 @@ export default function Materials() {
     toast.success(msg)
   }
 
+  // 后端校验失败（如必填标签缺失）时取 detail 展示，否则回落到通用文案。
+  const errDetail = (e: any, fallback: string) => e?.response?.data?.detail || fallback
+
   const createMut = useMutation({
     mutationFn: (data: any) => materialsApi.create(data),
     onSuccess: () => afterMutate(t.materials.addedToast),
+    onError: (e: any) => toast.error(errDetail(e, t.materials.saveFailed)),
   })
   const updateMut = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: any }) => materialsApi.update(id, data),
+    // 先存素材字段，再整体替换结构化标签（必填校验在后端）
+    mutationFn: async ({ id, data, tagInputs }: { id: number; data: any; tagInputs: any[] }) => {
+      await materialsApi.update(id, data)
+      return materialsApi.setTagValues(id, tagInputs)
+    },
     onSuccess: () => afterMutate(t.materials.savedToast),
-    onError: () => toast.error(t.materials.saveFailed),
+    onError: (e: any) => toast.error(errDetail(e, t.materials.saveFailed)),
   })
   const deleteMut = useMutation({
     mutationFn: (id: number) => materialsApi.delete(id),
@@ -155,6 +206,7 @@ export default function Materials() {
       platform: m.platform ?? 'other', material_type: m.material_type,
       tags: m.tags.join(', '), notes: m.notes ?? '',
     })
+    setTagValues(tagStateFromItems(m.tag_values))
     setFiles([]); setQueue([]); setShowForm(true)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -239,6 +291,7 @@ export default function Materials() {
   // 部分失败不影响其余；大文件(≤200MB)逐个走，比单请求收一堆稳。
   const runBatch = async () => {
     const tags = form.tags ? form.tags.split(',').map(s => s.trim()).filter(Boolean) : []
+    const tagValuesJson = JSON.stringify(tagStateToInputs(tagValues))
     const list = files
     setQueue(list.map(f => ({ name: f.name, status: 'pending', pct: 0 })))
     setBusy(true)
@@ -253,6 +306,7 @@ export default function Materials() {
       fd.append('platform', form.platform)
       fd.append('material_type', inferType(f.name))
       fd.append('tags', tags.join(','))
+      fd.append('tag_values', tagValuesJson)
       if (form.notes) fd.append('notes', form.notes)
       try {
         await materialsApi.upload(fd, pct =>
@@ -275,6 +329,10 @@ export default function Materials() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     const tags = form.tags ? form.tags.split(',').map(s => s.trim()).filter(Boolean) : []
+    const tagInputs = tagStateToInputs(tagValues)
+    // 提交前本地必填校验（后端仍是权威，这里只为少跑一次 400）
+    const missing = missingRequiredNames(editorDims, tagValues)
+    if (missing.length) { toast.error(t.materials.missingRequiredTags(missing.join('、'))); return }
 
     if (editing) {
       const data: any = {
@@ -282,10 +340,10 @@ export default function Materials() {
         material_type: form.material_type, tags, notes: form.notes,
       }
       if (editing.source === 'link') data.url = form.url
-      updateMut.mutate({ id: editing.id, data })
+      updateMut.mutate({ id: editing.id, data, tagInputs })
       return
     }
-    if (mode === 'link') { createMut.mutate({ ...form, tags }); return }
+    if (mode === 'link') { createMut.mutate({ ...form, tags, tag_values: tagInputs }); return }
     if (files.length === 0) { toast.error(t.materials.chooseFile); return }
     const tooBig = files.find(f => f.size > MAX_UPLOAD)
     if (tooBig) { toast.error(t.materials.fileTooLarge(200)); return }
@@ -301,6 +359,7 @@ export default function Materials() {
       material_type: filterType || undefined,
       app_id: filterGame || undefined,
       tag: filterTag || undefined,
+      tag_options: facetKey || undefined,
       sort_by: sortBy, order,
     }).catch(() => null)
     if (!all || all.items.length === 0) { toast.error(t.common.noExportData); return }
@@ -411,6 +470,17 @@ export default function Materials() {
             ))}
           </div>
         )}
+        {m.tag_values?.length > 0 && (
+          <div className="flex gap-1.5 flex-wrap pt-0.5">
+            {m.tag_values.map((tv, i) => (
+              <span key={i} title={`${tv.dimension_name}: ${tv.value ?? tv.value_date ?? ''}`}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-accent/25 bg-accent/5 text-[11px] text-secondary">
+                <span className="text-muted">{tv.dimension_name}</span>
+                <span className="text-primary">{tv.value ?? tv.value_date}</span>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     )
     return (
@@ -481,10 +551,21 @@ export default function Materials() {
             </div>
           )}
 
-          {/* 标题：批量上传时按各自文件名生成，不显示标题输入 */}
+          {/* 标题：批量上传时按各自文件名生成，不显示标题输入。
+              「自动命名」按当前已选结构化标签拼标题（P5，模板化、零 LLM）。 */}
           {!(isUpload && !editing && files.length > 1) && (
-            <input required={!isUpload || !!editing} placeholder={t.materials.titlePlaceholder} value={form.title}
-              onChange={e => setForm(f => ({ ...f, title: e.target.value }))} className={inputClass} />
+            <div className="flex items-stretch gap-2">
+              <div className="flex-1 min-w-0">
+                <input required={!isUpload || !!editing} placeholder={t.materials.titlePlaceholder} value={form.title}
+                  onChange={e => setForm(f => ({ ...f, title: e.target.value }))} className={inputClass} />
+              </div>
+              <button type="button" disabled={!autoNameSuggestion}
+                onClick={() => setForm(f => ({ ...f, title: autoNameSuggestion }))}
+                title={autoNameSuggestion || t.materials.autoNameEmpty}
+                className="shrink-0 inline-flex items-center gap-1.5 px-3 rounded-lg text-xs border border-default text-secondary hover:text-accent hover:border-accent/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                <Wand2 size={13} /> {t.materials.autoNameBtn}
+              </button>
+            </div>
           )}
 
           {isUpload && !editing ? (
@@ -598,6 +679,8 @@ export default function Materials() {
           <input placeholder={t.materials.notesPlaceholder} value={form.notes}
             onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className={inputClass} />
 
+          <StructuredTagEditor materialType={editorMaterialType} value={tagValues} onChange={setTagValues} />
+
           <div className="flex justify-end gap-2 border-t border-default pt-4">
             <button type="button" onClick={closeForm}
               className="px-4 py-2 text-sm text-secondary hover:text-primary transition-colors">{t.common.cancel}</button>
@@ -673,6 +756,39 @@ export default function Materials() {
             )
           })}
         </div>
+        {/* 结构化分面筛选栏（P3）：按一级标签分组的二级标签 chip；同维度内 OR、跨维度 AND。
+            本地 SQLite 过滤，零 ST 配额。仅在库里存在文字型一级标签时出现。 */}
+        {facetable.length > 0 && (
+          <div className="space-y-1.5 rounded-lg border border-default/60 bg-surface/40 px-3 py-2.5">
+            <div className="flex items-center gap-2">
+              <span className="flex items-center gap-1.5 text-xs text-muted">
+                <SlidersHorizontal size={13} /> {t.materials.facetFilterLabel}
+              </span>
+              {filterOptions.size > 0 && (
+                <button onClick={() => setFilterOptions(new Set())}
+                  className="text-[11px] text-muted hover:text-red-400 transition-colors">
+                  {t.materials.facetClear(filterOptions.size)}
+                </button>
+              )}
+            </div>
+            {facetable.map(d => (
+              <div key={d.id} className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] text-secondary min-w-[52px]">{d.name}</span>
+                {d.options.map(o => {
+                  const active = filterOptions.has(o.id)
+                  return (
+                    <button key={o.id} onClick={() => toggleFacet(o.id)} title={o.value}
+                      className={`px-2.5 py-0.5 rounded-md text-xs border transition-colors ${active ? 'bg-accent/15 border-accent/40 text-accent' : 'border-default text-secondary hover:border-strong hover:text-primary'}`}>
+                      {o.value}
+                    </button>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+        )}
+        {/* 聚合分析（P4）：scope 跟随上方 material_type + 分面筛选；零 ST 配额。 */}
+        <TagAggregatePanel dims={facetable} materialType={filterType || undefined} tagOptions={facetKey || undefined} />
       </div>
 
       {/* ══ GRID ══════════════════════════════════════════════ */}
@@ -696,7 +812,7 @@ export default function Materials() {
             <Radio size={26} className="text-muted/50 mb-3" />
             <div className="eyebrow text-muted">No Signal</div>
             <p className="text-secondary text-sm mt-2">
-              {debouncedSearch || filterPlatform || filterType || filterGame || filterTag ? t.common.noResult : t.materials.empty}
+              {debouncedSearch || filterPlatform || filterType || filterGame || filterTag || filterOptions.size ? t.common.noResult : t.materials.empty}
             </p>
           </div>
         ) : (

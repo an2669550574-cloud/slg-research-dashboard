@@ -5,8 +5,26 @@ from app.schemas.product import (
     OwnProductOut, OwnProductCreate, OwnProductUpdate,
     OwnProductMaterialOut, OwnProductMaterialTextCreate, OwnProductAnalyzeResult,
 )
+from app.schemas.tag import (
+    TagDimensionCreate, TagDimensionUpdate, TagDimensionOut,
+    TagOptionCreate, TagOptionUpdate, TagOptionOut,
+    MaterialTagValueItem, MaterialTagValueInput, MaterialTagValuesPut,
+    TagAggregateSubBucket, TagAggregateBucket, TagAggregateOut,
+)
 
 __all__ = [
+    "TagDimensionCreate",
+    "TagDimensionUpdate",
+    "TagDimensionOut",
+    "TagOptionCreate",
+    "TagOptionUpdate",
+    "TagOptionOut",
+    "MaterialTagValueItem",
+    "MaterialTagValueInput",
+    "MaterialTagValuesPut",
+    "TagAggregateSubBucket",
+    "TagAggregateBucket",
+    "TagAggregateOut",
     "OwnProductOut",
     "OwnProductCreate",
     "OwnProductUpdate",

@@ -8,6 +8,8 @@ backend/venv/
 
 # Build output
 frontend/dist/
+# TS incremental build cache（机器相关，不应入仓）
+*.tsbuildinfo
 
 # Environment & secrets
 backend/.env
@@ -38,6 +40,8 @@ Thumbs.db
 .claude/settings.local.json
 # Claude Code runtime lock files
 .claude/*.lock
+# Claude Code preview launch config (machine-specific local dev server)
+.claude/launch.json
 # MCP server config — contains absolute paths to local node install
 .mcp.json
 # Local Playwright MCP node install (machine-specific npm cache/global/modules)

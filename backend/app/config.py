@@ -10,6 +10,11 @@ class Settings(BaseSettings):
 
     # 鉴权：留空时跳过校验（开发模式），生产环境必须设置
     API_KEY: Optional[str] = None
+    # 标签库「删除」专用管理员口令。看板是单把 API_KEY 共享、无用户体系，故用一道
+    # 独立口令挡住误删一级/二级标签（连带丢失已打标记）。留空 → 跳过校验（开发模式，
+    # 与 API_KEY 同款语义）；生产环境想要"仅管理员可删"必须设置。不进前端构建，
+    # 仅运行时由前端弹框收集、走 X-Admin-Password 头发来后端比对。
+    ADMIN_DELETE_PASSWORD: Optional[str] = None
     # CORS 白名单：逗号分隔，留空或 "*" 则允许全部（开发模式）
     CORS_ORIGINS: str = "*"
     # 日志级别：DEBUG / INFO / WARNING / ERROR

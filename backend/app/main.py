@@ -6,11 +6,13 @@ from contextlib import asynccontextmanager
 from app.database import init_db
 from app.config import settings
 from app.security import require_api_key
-from app.scheduler import start_scheduler, shutdown_scheduler, sync_seed_games_if_empty
+from app.scheduler import (
+    start_scheduler, shutdown_scheduler, sync_seed_games_if_empty, seed_tag_dimensions_if_empty,
+)
 from app.logging_setup import configure_logging, RequestLoggingMiddleware
 from app.rate_limit import limiter
 from app.observability import init_sentry, deep_health
-from app.routers import games, history, materials, movements, product, quota
+from app.routers import games, history, materials, movements, product, quota, tags
 
 configure_logging(settings.LOG_LEVEL)
 init_sentry()
@@ -31,6 +33,7 @@ if not settings.API_KEY:
 async def lifespan(app: FastAPI):
     await init_db()
     await sync_seed_games_if_empty()
+    await seed_tag_dimensions_if_empty()
     start_scheduler()
     try:
         yield
@@ -70,6 +73,7 @@ app.include_router(movements.router, dependencies=_protected)
 app.include_router(product.router, dependencies=_protected)
 # 自有产品素材文件流：同 materials.file_router，HMAC 令牌鉴权，不挂 _protected
 app.include_router(product.file_router)
+app.include_router(tags.router, dependencies=_protected)
 
 
 @app.get("/api/health")

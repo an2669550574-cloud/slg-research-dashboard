@@ -31,6 +31,16 @@ import type {
   SeedResponse,
   SyncHistoryResponse,
   SyncRankingsResponse,
+  TagDimension,
+  TagDimensionCreate,
+  TagDimensionUpdate,
+  TagOption,
+  TagOptionCreate,
+  TagOptionUpdate,
+  TagDeleteResponse,
+  TagAggregateOut,
+  TagAggregateParams,
+  MaterialTagValueInput,
 } from './types'
 
 // 缺 X-Total-Count 头时 fallback 用 items.length（兼容老路由 / 测试夹具）
@@ -141,6 +151,7 @@ export interface MaterialListParams {
   platform?: string
   material_type?: string
   tag?: string
+  tag_options?: string
   q?: string
   analysis_status?: MaterialAnalysisStatus
   sort_by?: 'created_at' | 'title' | 'analyzed_at' | 'analysis_cost_usd'
@@ -170,6 +181,9 @@ export const materialsApi = {
     api.delete(`/materials/${id}`).then(r => r.data),
   get: (id: number): Promise<MaterialOut> =>
     api.get(`/materials/${id}`).then(r => r.data),
+  // 结构化打标签（P2）：整体替换某素材的标签值（replace-all）；必填/单多选校验在后端
+  setTagValues: (id: number, values: MaterialTagValueInput[]): Promise<MaterialOut> =>
+    api.put(`/materials/${id}/tag-values`, { values }).then(r => r.data),
   analyze: (id: number): Promise<MaterialOut> =>
     api.post(`/materials/${id}/analyze`).then(r => r.data),
   adoptTags: (id: number): Promise<MaterialOut> =>
@@ -222,6 +236,31 @@ export const productsApi = {
     api.delete(`/products/${productId}/materials/${materialId}`).then(r => r.data),
   analyze: (productId: number): Promise<OwnProductAnalyzeResult> =>
     api.post(`/products/${productId}/analyze`).then(r => r.data),
+}
+
+// 删除一级 / 二级标签时附带管理员口令（后端未配置口令则忽略此头）。
+// 口令不进前端构建，运行时由调用方弹框收集后传入。
+function adminHeader(password?: string | null) {
+  return password ? { headers: { 'X-Admin-Password': password } } : undefined
+}
+
+export const tagsApi = {
+  listDimensions: (materialType?: string): Promise<TagDimension[]> =>
+    api.get('/tags/dimensions', { params: materialType ? { material_type: materialType } : {} }).then(r => r.data),
+  createDimension: (data: TagDimensionCreate): Promise<TagDimension> =>
+    api.post('/tags/dimensions', data).then(r => r.data),
+  updateDimension: (id: number, data: TagDimensionUpdate): Promise<TagDimension> =>
+    api.put(`/tags/dimensions/${id}`, data).then(r => r.data),
+  deleteDimension: (id: number, password?: string | null): Promise<TagDeleteResponse> =>
+    api.delete(`/tags/dimensions/${id}`, adminHeader(password)).then(r => r.data),
+  createOption: (dimId: number, data: TagOptionCreate): Promise<TagOption> =>
+    api.post(`/tags/dimensions/${dimId}/options`, data).then(r => r.data),
+  updateOption: (optId: number, data: TagOptionUpdate): Promise<TagOption> =>
+    api.put(`/tags/options/${optId}`, data).then(r => r.data),
+  deleteOption: (optId: number, password?: string | null): Promise<TagDeleteResponse> =>
+    api.delete(`/tags/options/${optId}`, adminHeader(password)).then(r => r.data),
+  aggregate: (params: TagAggregateParams): Promise<TagAggregateOut> =>
+    api.get('/tags/aggregate', { params }).then(r => r.data),
 }
 
 export type AdaptModel = 'claude-sonnet-4.5' | 'claude-opus-4.7'
