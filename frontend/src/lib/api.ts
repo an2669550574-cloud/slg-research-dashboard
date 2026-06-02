@@ -2,6 +2,8 @@ import axios, { AxiosError } from 'axios'
 import toast from 'react-hot-toast'
 import type {
   AppLookupResult,
+  CreativeAdaptationOut,
+  CreativeDirectionsResponse,
   DeleteResponse,
   GameCreate,
   GameOut,
@@ -172,10 +174,18 @@ export const materialsApi = {
     api.post(`/materials/${id}/analyze`).then(r => r.data),
   adoptTags: (id: number): Promise<MaterialOut> =>
     api.post(`/materials/${id}/adopt-tags`).then(r => r.data),
-  adaptDirections: (id: number, ourProduct: string) =>
-    api.post(`/materials/${id}/adapt/directions`, { our_product: ourProduct }).then(r => r.data),
-  adaptScript: (id: number, ourProduct: string, direction: unknown) =>
-    api.post(`/materials/${id}/adapt/script`, { our_product: ourProduct, direction }).then(r => r.data),
+  adaptDirections: (id: number, ourProduct: string, productId?: number | null): Promise<CreativeDirectionsResponse> =>
+    api.post(`/materials/${id}/adapt/directions`, { our_product: ourProduct, product_id: productId ?? null }).then(r => r.data),
+  adaptScript: (id: number, ourProduct: string, direction: unknown, adaptationId?: number | null, directionIndex?: number | null) =>
+    api.post(`/materials/${id}/adapt/script`, {
+      our_product: ourProduct, direction,
+      adaptation_id: adaptationId ?? null, direction_index: directionIndex ?? null,
+    }).then(r => r.data),
+  // 创意迁移历史存档：列出 / 删除（零 LLM 开销，纯本地库）
+  listAdaptations: (id: number): Promise<CreativeAdaptationOut[]> =>
+    api.get(`/materials/${id}/adaptations`).then(r => r.data),
+  deleteAdaptation: (adaptationId: number): Promise<DeleteResponse> =>
+    api.delete(`/materials/adaptations/${adaptationId}`).then(r => r.data),
   // 跨素材统一方向：估算成本（干跑，不烧配额）
   unifiedDirectionsEstimate: (
     materialIds: number[], ourProduct: string, model: AdaptModel,

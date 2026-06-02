@@ -208,6 +208,29 @@ export interface CreativeScriptResult {
   model: string
 }
 
+// 阶段 1 返回新增 id（用于把后续脚本回写到同一条历史存档）
+export interface CreativeDirectionsResponse extends CreativeDirectionsResult {
+  id: number
+}
+
+// 一条创意迁移历史存档（方向 run + 可选脚本）
+export interface CreativeAdaptationOut {
+  id: number
+  material_id: number
+  our_product: string
+  product_id: number | null
+  data: { directions: CreativeDirection[]; constraints_check?: CreativeConstraintsCheck }
+  model: string | null
+  cost_usd: number | null
+  chosen_index: number | null
+  chosen_name: string | null
+  script: CreativeScriptResult['data'] | null
+  script_model: string | null
+  script_cost_usd: number | null
+  created_at: string | null
+  script_updated_at: string | null
+}
+
 export interface MaterialCreate {
   app_id: string
   title: string

@@ -6,7 +6,7 @@ from typing import Optional, Literal
 from urllib.parse import quote
 from app.config import settings
 from app.database import get_db, utcnow_naive
-from app.models.material import Material
+from app.models.material import Material, CreativeAdaptation
 from app.schemas import MaterialCreate, MaterialUpdate, MaterialOut, MaterialTagCount
 from pydantic import BaseModel, Field
 from app.services import creative_adapt, media, video_analyze
@@ -249,11 +249,35 @@ async def adopt_analysis_tags(material_id: int, db: AsyncSession = Depends(get_d
 class AdaptDirectionsReq(BaseModel):
     our_product: str = Field(..., min_length=1, max_length=4000,
                              description="自家产品 brief，自由文本")
+    product_id: Optional[int] = Field(None, description="来源「我方产品」档案 id（手输则为空）")
 
 
 class AdaptScriptReq(BaseModel):
     our_product: str = Field(..., min_length=1, max_length=4000)
     direction: dict = Field(..., description="阶段 1 输出的某个方向对象")
+    adaptation_id: Optional[int] = Field(None, description="所属历史存档 id；带上则把脚本回写该行")
+    direction_index: Optional[int] = Field(None, description="选定方向在 directions 数组中的下标")
+
+
+def _adaptation_out(r: CreativeAdaptation) -> dict:
+    """历史存档转出。data 字段刻意复刻阶段 1 端点的 {directions, constraints_check}
+    形状，让前端复用同一套渲染组件。"""
+    return {
+        "id": r.id,
+        "material_id": r.material_id,
+        "our_product": r.our_product,
+        "product_id": r.product_id,
+        "data": {"directions": r.directions or [], "constraints_check": r.constraints_check},
+        "model": r.model,
+        "cost_usd": r.cost_usd,
+        "chosen_index": r.chosen_index,
+        "chosen_name": r.chosen_name,
+        "script": r.script,
+        "script_model": r.script_model,
+        "script_cost_usd": r.script_cost_usd,
+        "created_at": r.created_at.isoformat() if r.created_at else None,
+        "script_updated_at": r.script_updated_at.isoformat() if r.script_updated_at else None,
+    }
 
 
 @router.post("/{material_id}/adapt/directions")
@@ -284,7 +308,20 @@ async def adapt_directions(
     except Exception as e:
         # 网关/网络/解析失败：返回 4xx/5xx 让前端展示，不污染 analysis_* 字段
         raise HTTPException(status_code=502, detail=f"方向生成失败：{type(e).__name__}: {str(e)[:200]}")
-    return {"data": result.data, "cost_usd": result.cost_usd, "model": result.model}
+    # 自动落库进历史（花了钱的成品不丢）；写库失败不该吞掉已生成的结果，故宽容处理。
+    row = CreativeAdaptation(
+        material_id=m.id,
+        our_product=req.our_product.strip(),
+        product_id=req.product_id,
+        directions=result.data.get("directions") or [],
+        constraints_check=result.data.get("constraints_check"),
+        model=result.model,
+        cost_usd=result.cost_usd,
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return {"id": row.id, "data": result.data, "cost_usd": result.cost_usd, "model": result.model}
 
 
 @router.post("/{material_id}/adapt/script")
@@ -311,7 +348,47 @@ async def adapt_script(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"脚本生成失败：{type(e).__name__}: {str(e)[:200]}")
+    # 回写脚本到所属历史存档（只留最后一次脚本）；存档不存在则静默跳过（仍返回结果）。
+    if req.adaptation_id is not None:
+        row = (await db.execute(
+            select(CreativeAdaptation).where(
+                CreativeAdaptation.id == req.adaptation_id,
+                CreativeAdaptation.material_id == m.id,
+            )
+        )).scalar_one_or_none()
+        if row is not None:
+            row.chosen_index = req.direction_index
+            row.chosen_name = req.direction.get("name")
+            row.script = result.data
+            row.script_model = result.model
+            row.script_cost_usd = result.cost_usd
+            row.script_updated_at = utcnow_naive()
+            await db.commit()
     return {"data": result.data, "cost_usd": result.cost_usd, "model": result.model}
+
+
+@router.get("/{material_id}/adaptations")
+async def list_adaptations(material_id: int, db: AsyncSession = Depends(get_db)):
+    """列出某素材的创意迁移历史（最新在前）。零 LLM 开销，纯读本地库。"""
+    rows = (await db.execute(
+        select(CreativeAdaptation)
+        .where(CreativeAdaptation.material_id == material_id)
+        .order_by(CreativeAdaptation.created_at.desc(), CreativeAdaptation.id.desc())
+    )).scalars().all()
+    return [_adaptation_out(r) for r in rows]
+
+
+@router.delete("/adaptations/{adaptation_id}")
+async def delete_adaptation(adaptation_id: int, db: AsyncSession = Depends(get_db)):
+    """删除一条创意迁移历史存档。"""
+    row = (await db.execute(
+        select(CreativeAdaptation).where(CreativeAdaptation.id == adaptation_id)
+    )).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="历史存档不存在")
+    await db.delete(row)
+    await db.commit()
+    return {"message": "已删除", "id": adaptation_id}
 
 
 # ── 跨素材统一方向（选项 C：勾选 N 支 done 素材 → 归纳共性 → 统一方向）──
