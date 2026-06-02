@@ -24,6 +24,7 @@ export const zh = {
     delete: '删除',
     edit: '编辑',
     add: '添加',
+    clear: '清空',
     apply: '应用',
     refresh: '刷新数据',
     refreshCooldown: (s: number) => `刷新 (${s}s)`,
@@ -202,6 +203,13 @@ export const zh = {
     analyzeRetry: '分析失败，点击重试',
     analyzeDone: (n: number) => n === 1 ? '1 条素材分析完成' : `${n} 条素材分析完成`,
     analyzeFailed: (n: number) => n === 1 ? '1 条素材分析失败' : `${n} 条素材分析失败`,
+    // 结构化打标签（P2）
+    structuredTagsLabel: '结构化标签',
+    tagMultiHint: '可多选',
+    tagSingleHint: '单选',
+    tagDateHint: '选择日期',
+    tagNoOptions: '该标签暂无可选值，去标签库添加',
+    missingRequiredTags: (names: string) => `请先填写必填标签：${names}`,
   },
   materialAnalysis: {
     title: 'AI 画面解析',

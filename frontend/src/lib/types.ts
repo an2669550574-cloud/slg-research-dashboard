@@ -154,6 +154,8 @@ export interface MaterialOut {
   // 关键帧 + 联系单（migration 0007）：URL 含 HMAC 短时令牌
   analysis_frames: { ts: number; url: string }[] | null
   analysis_contact_sheet_url: string | null
+  // 结构化标签（P2）：素材在各一级标签维度下已打的值
+  tag_values: MaterialTagValueItem[]
 }
 
 // ─── 创意迁移（adapt）─────────────────────────────────────────────
@@ -239,6 +241,7 @@ export interface MaterialCreate {
   material_type?: string
   tags?: string[]
   notes?: string | null
+  tag_values?: MaterialTagValueInput[]
 }
 
 // app_id 可改：把已有素材重新归类到游戏（空串 = 取消关联）。
@@ -445,6 +448,25 @@ export interface TagOptionCreate {
 }
 
 export type TagOptionUpdate = Partial<TagOptionCreate>
+
+// ─── 结构化打标签（P2）──────────────────────────────────────────────────
+
+/** 素材上一条已打标记（含维度元信息，免前端再 join）。 */
+export interface MaterialTagValueItem {
+  dimension_id: number
+  dimension_name: string
+  value_type: TagValueType
+  option_id: number | null
+  value: string | null
+  value_date: string | null
+}
+
+/** 打标签提交：一个维度一条。text 给 option_ids，date 给 value_date。 */
+export interface MaterialTagValueInput {
+  dimension_id: number
+  option_ids?: number[]
+  value_date?: string | null
+}
 
 /** 删除一级 / 二级标签的返回：含连带清理的计数。 */
 export interface TagDeleteResponse {

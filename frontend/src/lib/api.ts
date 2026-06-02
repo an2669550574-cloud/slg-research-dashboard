@@ -38,6 +38,7 @@ import type {
   TagOptionCreate,
   TagOptionUpdate,
   TagDeleteResponse,
+  MaterialTagValueInput,
 } from './types'
 
 // 缺 X-Total-Count 头时 fallback 用 items.length（兼容老路由 / 测试夹具）
@@ -177,6 +178,9 @@ export const materialsApi = {
     api.delete(`/materials/${id}`).then(r => r.data),
   get: (id: number): Promise<MaterialOut> =>
     api.get(`/materials/${id}`).then(r => r.data),
+  // 结构化打标签（P2）：整体替换某素材的标签值（replace-all）；必填/单多选校验在后端
+  setTagValues: (id: number, values: MaterialTagValueInput[]): Promise<MaterialOut> =>
+    api.put(`/materials/${id}/tag-values`, { values }).then(r => r.data),
   analyze: (id: number): Promise<MaterialOut> =>
     api.post(`/materials/${id}/analyze`).then(r => r.data),
   adoptTags: (id: number): Promise<MaterialOut> =>

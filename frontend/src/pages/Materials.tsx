@@ -6,6 +6,11 @@ import { PLATFORM_CONFIG } from '../lib/utils'
 import { ExternalLink, Trash2, Plus, Search, Download as DownloadIcon, Upload, Film as FilmIcon, Radio, Pencil, X, Check, AlertCircle, Loader2, Tag as TagIcon, Sparkles } from 'lucide-react'
 import { MaterialPreview } from '../components/MaterialPreview'
 import { MaterialAnalysisDrawer } from '../components/MaterialAnalysisDrawer'
+import {
+  StructuredTagEditor, emptyTagState, tagStateFromItems, tagStateToInputs, missingRequiredNames,
+  type TagValueState,
+} from '../components/StructuredTagEditor'
+import { tagsApi } from '../lib/api'
 import { Select } from '../components/Select'
 import { PageHeader } from '../components/PageHeader'
 import { useNavigate } from 'react-router-dom'
@@ -47,6 +52,7 @@ export default function Materials() {
   const [form, setForm] = useState(emptyForm)
   const [mode, setMode] = useState<'link' | 'upload'>('link')
   const [editing, setEditing] = useState<MaterialOut | null>(null)
+  const [tagValues, setTagValues] = useState<TagValueState>(emptyTagState())
   const [analyzing, setAnalyzing] = useState<MaterialOut | null>(null)
   const [files, setFiles] = useState<File[]>([])
   const [queue, setQueue] = useState<QItem[]>([])
@@ -110,9 +116,21 @@ export default function Materials() {
     queryFn: () => materialsApi.tags(filterGame || undefined),
   })
 
+  // 结构化标签编辑器跟随的素材类型：上传按首个文件推断，其余看表单选择。
+  const editorMaterialType = mode === 'upload' && !editing
+    ? (files[0] ? inferType(files[0].name) : 'video')
+    : form.material_type
+  // 同一 queryKey 与编辑器内部共享缓存（不重复请求）；用于提交前的必填本地校验。
+  const { data: editorDims = [] } = useQuery({
+    queryKey: ['tagDimensions', editorMaterialType || 'all'],
+    queryFn: () => tagsApi.listDimensions(editorMaterialType || undefined),
+    enabled: showForm,
+  })
+
   const closeForm = () => {
     setShowForm(false); setEditing(null)
     setForm(emptyForm); setMode('link'); setFiles([]); setQueue([])
+    setTagValues(emptyTagState())
     if (fileInputRef.current) fileInputRef.current.value = ''
     if (folderInputRef.current) folderInputRef.current.value = ''
     setDragActive(false)
@@ -124,14 +142,22 @@ export default function Materials() {
     toast.success(msg)
   }
 
+  // 后端校验失败（如必填标签缺失）时取 detail 展示，否则回落到通用文案。
+  const errDetail = (e: any, fallback: string) => e?.response?.data?.detail || fallback
+
   const createMut = useMutation({
     mutationFn: (data: any) => materialsApi.create(data),
     onSuccess: () => afterMutate(t.materials.addedToast),
+    onError: (e: any) => toast.error(errDetail(e, t.materials.saveFailed)),
   })
   const updateMut = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: any }) => materialsApi.update(id, data),
+    // 先存素材字段，再整体替换结构化标签（必填校验在后端）
+    mutationFn: async ({ id, data, tagInputs }: { id: number; data: any; tagInputs: any[] }) => {
+      await materialsApi.update(id, data)
+      return materialsApi.setTagValues(id, tagInputs)
+    },
     onSuccess: () => afterMutate(t.materials.savedToast),
-    onError: () => toast.error(t.materials.saveFailed),
+    onError: (e: any) => toast.error(errDetail(e, t.materials.saveFailed)),
   })
   const deleteMut = useMutation({
     mutationFn: (id: number) => materialsApi.delete(id),
@@ -155,6 +181,7 @@ export default function Materials() {
       platform: m.platform ?? 'other', material_type: m.material_type,
       tags: m.tags.join(', '), notes: m.notes ?? '',
     })
+    setTagValues(tagStateFromItems(m.tag_values))
     setFiles([]); setQueue([]); setShowForm(true)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -239,6 +266,7 @@ export default function Materials() {
   // 部分失败不影响其余；大文件(≤200MB)逐个走，比单请求收一堆稳。
   const runBatch = async () => {
     const tags = form.tags ? form.tags.split(',').map(s => s.trim()).filter(Boolean) : []
+    const tagValuesJson = JSON.stringify(tagStateToInputs(tagValues))
     const list = files
     setQueue(list.map(f => ({ name: f.name, status: 'pending', pct: 0 })))
     setBusy(true)
@@ -253,6 +281,7 @@ export default function Materials() {
       fd.append('platform', form.platform)
       fd.append('material_type', inferType(f.name))
       fd.append('tags', tags.join(','))
+      fd.append('tag_values', tagValuesJson)
       if (form.notes) fd.append('notes', form.notes)
       try {
         await materialsApi.upload(fd, pct =>
@@ -275,6 +304,10 @@ export default function Materials() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     const tags = form.tags ? form.tags.split(',').map(s => s.trim()).filter(Boolean) : []
+    const tagInputs = tagStateToInputs(tagValues)
+    // 提交前本地必填校验（后端仍是权威，这里只为少跑一次 400）
+    const missing = missingRequiredNames(editorDims, tagValues)
+    if (missing.length) { toast.error(t.materials.missingRequiredTags(missing.join('、'))); return }
 
     if (editing) {
       const data: any = {
@@ -282,10 +315,10 @@ export default function Materials() {
         material_type: form.material_type, tags, notes: form.notes,
       }
       if (editing.source === 'link') data.url = form.url
-      updateMut.mutate({ id: editing.id, data })
+      updateMut.mutate({ id: editing.id, data, tagInputs })
       return
     }
-    if (mode === 'link') { createMut.mutate({ ...form, tags }); return }
+    if (mode === 'link') { createMut.mutate({ ...form, tags, tag_values: tagInputs }); return }
     if (files.length === 0) { toast.error(t.materials.chooseFile); return }
     const tooBig = files.find(f => f.size > MAX_UPLOAD)
     if (tooBig) { toast.error(t.materials.fileTooLarge(200)); return }
@@ -408,6 +441,17 @@ export default function Materials() {
                 className={`px-2 py-0.5 rounded border text-[11px] transition-colors ${filterTag === tag ? 'bg-accent/15 border-accent/40 text-accent' : 'bg-elevated border-default text-secondary hover:border-strong hover:text-primary'}`}>
                 {tag}
               </button>
+            ))}
+          </div>
+        )}
+        {m.tag_values?.length > 0 && (
+          <div className="flex gap-1.5 flex-wrap pt-0.5">
+            {m.tag_values.map((tv, i) => (
+              <span key={i} title={`${tv.dimension_name}: ${tv.value ?? tv.value_date ?? ''}`}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-accent/25 bg-accent/5 text-[11px] text-secondary">
+                <span className="text-muted">{tv.dimension_name}</span>
+                <span className="text-primary">{tv.value ?? tv.value_date}</span>
+              </span>
             ))}
           </div>
         )}
@@ -597,6 +641,8 @@ export default function Materials() {
           </div>
           <input placeholder={t.materials.notesPlaceholder} value={form.notes}
             onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className={inputClass} />
+
+          <StructuredTagEditor materialType={editorMaterialType} value={tagValues} onChange={setTagValues} />
 
           <div className="flex justify-end gap-2 border-t border-default pt-4">
             <button type="button" onClick={closeForm}

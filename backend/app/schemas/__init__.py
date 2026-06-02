@@ -8,6 +8,7 @@ from app.schemas.product import (
 from app.schemas.tag import (
     TagDimensionCreate, TagDimensionUpdate, TagDimensionOut,
     TagOptionCreate, TagOptionUpdate, TagOptionOut,
+    MaterialTagValueItem, MaterialTagValueInput, MaterialTagValuesPut,
 )
 
 __all__ = [
@@ -17,6 +18,9 @@ __all__ = [
     "TagOptionCreate",
     "TagOptionUpdate",
     "TagOptionOut",
+    "MaterialTagValueItem",
+    "MaterialTagValueInput",
+    "MaterialTagValuesPut",
     "OwnProductOut",
     "OwnProductCreate",
     "OwnProductUpdate",

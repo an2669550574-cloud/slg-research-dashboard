@@ -2,6 +2,8 @@ from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel, ConfigDict
 
+from app.schemas.tag import MaterialTagValueItem, MaterialTagValueInput
+
 
 class MaterialCreate(BaseModel):
     """外链素材。上传素材走 POST /api/materials/upload（multipart），不走这里。"""
@@ -12,6 +14,8 @@ class MaterialCreate(BaseModel):
     material_type: str = "video"
     tags: list[str] = []
     notes: Optional[str] = None
+    # 结构化标签（P2）：随建素材一并打。required 维度缺失会被拒（400）。
+    tag_values: list[MaterialTagValueInput] = []
 
 
 class MaterialUpdate(BaseModel):
@@ -73,3 +77,6 @@ class MaterialOut(BaseModel):
     # 抽帧 + 联系单：DB 只存元信息，URL 由 service 注入（含 HMAC 短时令牌）
     analysis_frames: Optional[list[dict]] = None  # [{ts, url}]
     analysis_contact_sheet_url: Optional[str] = None
+
+    # 结构化标签（P2）：素材在各一级标签维度下已打的值；由路由批量注入。
+    tag_values: list[MaterialTagValueItem] = []

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -62,3 +62,29 @@ class TagDimensionOut(BaseModel):
     sort_order: int
     created_at: datetime
     options: list[TagOptionOut] = []
+
+
+# ── 素材打标签（material_tag_values，P2）──────────────────────────────────
+# 打标签 = 给素材在各一级标签维度下选定值：text 维度选 option(可多)，date 维度选日期。
+
+class MaterialTagValueItem(BaseModel):
+    """素材上一条已打标记的对外形态（含维度元信息，免前端再 join）。"""
+    dimension_id: int
+    dimension_name: str
+    value_type: str
+    option_id: Optional[int] = None
+    value: Optional[str] = None
+    value_date: Optional[date] = None
+
+
+class MaterialTagValueInput(BaseModel):
+    """打标签提交：一个维度一条。text 维度给 option_ids（单选时长度≤1），
+    date 维度给 value_date。两者按维度 value_type 各取所需。"""
+    dimension_id: int
+    option_ids: list[int] = []
+    value_date: Optional[date] = None
+
+
+class MaterialTagValuesPut(BaseModel):
+    """整体替换某素材的全部结构化标签（replace-all 语义）。"""
+    values: list[MaterialTagValueInput] = []

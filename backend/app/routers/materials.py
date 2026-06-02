@@ -1,3 +1,4 @@
+import json
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,9 +8,12 @@ from urllib.parse import quote
 from app.config import settings
 from app.database import get_db, utcnow_naive
 from app.models.material import Material, CreativeAdaptation
-from app.schemas import MaterialCreate, MaterialUpdate, MaterialOut, MaterialTagCount
-from pydantic import BaseModel, Field
-from app.services import creative_adapt, media, video_analyze
+from app.schemas import (
+    MaterialCreate, MaterialUpdate, MaterialOut, MaterialTagCount,
+    MaterialTagValueInput, MaterialTagValuesPut,
+)
+from pydantic import BaseModel, Field, ValidationError
+from app.services import creative_adapt, media, video_analyze, tagging
 
 router = APIRouter(prefix="/api/materials", tags=["materials"])
 # 站内播放/预览：<video>/<img> 的 src 带不了 X-API-Key 头，故此路由**不挂**全局
@@ -24,7 +28,7 @@ MATERIAL_SORT_FIELDS = {
 }
 
 
-def _to_out(m: Material) -> MaterialOut:
+def _to_out(m: Material, tag_values=None) -> MaterialOut:
     out = MaterialOut.model_validate(m)
     out.stream_url = media.stream_url(m)
     # 抽帧 + 联系单：URL 走相同 HMAC 令牌（与 stream_url 一致：token=sign(material_id)）
@@ -37,7 +41,15 @@ def _to_out(m: Material) -> MaterialOut:
     if m.analysis_has_contact_sheet:
         tok = media.sign(m.id)
         out.analysis_contact_sheet_url = f"/api/materials/{m.id}/contact-sheet?token={tok}"
+    if tag_values is not None:
+        out.tag_values = tag_values
     return out
+
+
+async def _single_out(db: AsyncSession, m: Material) -> MaterialOut:
+    """单素材出参：补上其结构化标签（P2）。供 create/get/update/analyze 等单条返回用。"""
+    vals = (await tagging.load_tag_values_map(db, [m.id])).get(m.id, [])
+    return _to_out(m, tag_values=vals)
 
 
 @router.get("/", response_model=list[MaterialOut])
@@ -87,7 +99,9 @@ async def list_materials(
     base = base.order_by(sort_col.desc() if order == "desc" else sort_col.asc())
     base = base.limit(limit).offset(offset)
     result = await db.execute(base)
-    return [_to_out(m) for m in result.scalars().all()]
+    items = result.scalars().all()
+    tv_map = await tagging.load_tag_values_map(db, [m.id for m in items])
+    return [_to_out(m, tag_values=tv_map.get(m.id, [])) for m in items]
 
 
 @router.get("/tags", response_model=list[MaterialTagCount])
@@ -113,12 +127,20 @@ async def list_material_tags(
 
 @router.post("/", response_model=MaterialOut, status_code=201)
 async def create_material(data: MaterialCreate, db: AsyncSession = Depends(get_db)):
-    """外链素材。"""
-    m = Material(**data.model_dump(), source="link")
+    """外链素材。tag_values 随建一并打，必填维度缺失则回滚拒绝。"""
+    payload = data.model_dump()
+    tag_values = [MaterialTagValueInput(**v) for v in payload.pop("tag_values", [])]
+    m = Material(**payload, source="link")
     db.add(m)
+    await db.flush()  # 拿到 m.id 给标签关联用，但先不提交
+    try:
+        await tagging.set_material_tag_values(db, m, tag_values)
+    except ValueError as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
     await db.commit()
     await db.refresh(m)
-    return _to_out(m)
+    return await _single_out(db, m)
 
 
 @router.post("/upload", response_model=MaterialOut, status_code=201)
@@ -131,8 +153,18 @@ async def upload_material(
     material_type: str = Form("video"),
     tags: str = Form(""),
     notes: Optional[str] = Form(None),
+    tag_values: str = Form("", description="结构化标签 JSON：[{dimension_id, option_ids, value_date}]"),
 ):
-    """部门自有素材上传：校验类型/大小、流式落盘、入库。"""
+    """部门自有素材上传：校验类型/大小、流式落盘、入库。
+
+    tag_values 是 JSON 字符串（multipart 带不了嵌套对象）；批量上传时同一组
+    结构化标签套到每个文件。必填维度缺失则删档回滚拒绝（与 create 一致）。"""
+    try:
+        raw_tv = json.loads(tag_values) if tag_values.strip() else []
+        parsed_tv = [MaterialTagValueInput(**v) for v in raw_tv]
+    except (json.JSONDecodeError, ValidationError, TypeError) as e:
+        raise HTTPException(status_code=400, detail=f"结构化标签格式错误：{e}")
+
     info = await media.save_upload(file)
     if material_type not in ("video", "image"):
         material_type = info["kind"]
@@ -151,9 +183,16 @@ async def upload_material(
         notes=notes,
     )
     db.add(m)
+    await db.flush()
+    try:
+        await tagging.set_material_tag_values(db, m, parsed_tv)
+    except ValueError as e:
+        await db.rollback()
+        media.delete_file(info["file_path"])  # 落盘已发生，校验失败须删档免留孤儿
+        raise HTTPException(status_code=400, detail=str(e))
     await db.commit()
     await db.refresh(m)
-    return _to_out(m)
+    return await _single_out(db, m)
 
 
 @router.put("/{material_id}", response_model=MaterialOut)
@@ -166,7 +205,7 @@ async def update_material(material_id: int, data: MaterialUpdate, db: AsyncSessi
         setattr(m, k, v)
     await db.commit()
     await db.refresh(m)
-    return _to_out(m)
+    return await _single_out(db, m)
 
 
 @router.post("/{material_id}/analyze", response_model=MaterialOut)
@@ -208,7 +247,7 @@ async def analyze_material_endpoint(
 
     background.add_task(video_analyze.analyze_material, material_id)
 
-    return _to_out(m)
+    return await _single_out(db, m)
 
 
 @router.get("/{material_id}", response_model=MaterialOut)
@@ -217,7 +256,24 @@ async def get_material(material_id: int, db: AsyncSession = Depends(get_db)):
     m = (await db.execute(select(Material).where(Material.id == material_id))).scalar_one_or_none()
     if not m:
         raise HTTPException(status_code=404, detail="素材不存在")
-    return _to_out(m)
+    return await _single_out(db, m)
+
+
+@router.put("/{material_id}/tag-values", response_model=MaterialOut)
+async def set_tag_values(
+    material_id: int, data: MaterialTagValuesPut, db: AsyncSession = Depends(get_db),
+):
+    """整体替换某素材的结构化标签（P2，replace-all）。必填/单多选/归属校验失败 → 400。"""
+    m = (await db.execute(select(Material).where(Material.id == material_id))).scalar_one_or_none()
+    if not m:
+        raise HTTPException(status_code=404, detail="素材不存在")
+    try:
+        await tagging.set_material_tag_values(db, m, data.values)
+    except ValueError as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    await db.commit()
+    return await _single_out(db, m)
 
 
 @router.post("/{material_id}/adopt-tags", response_model=MaterialOut)
@@ -231,7 +287,7 @@ async def adopt_analysis_tags(material_id: int, db: AsyncSession = Depends(get_d
     if not m:
         raise HTTPException(status_code=404, detail="素材不存在")
     if not m.analysis_tags:
-        return _to_out(m)
+        return await _single_out(db, m)
     existing = list(m.tags or [])
     seen = set(existing)
     for t in m.analysis_tags:
@@ -241,7 +297,7 @@ async def adopt_analysis_tags(material_id: int, db: AsyncSession = Depends(get_d
     m.tags = existing
     await db.commit()
     await db.refresh(m)
-    return _to_out(m)
+    return await _single_out(db, m)
 
 
 # ── 创意迁移（两段式：方向 → 脚本，人在中间筛）───────────────────────

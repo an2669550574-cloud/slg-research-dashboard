@@ -26,6 +26,7 @@ export const en: Translations = {
     delete: 'Delete',
     edit: 'Edit',
     add: 'Add',
+    clear: 'Clear',
     apply: 'Apply',
     refresh: 'Refresh',
     refreshCooldown: (s: number) => `Refresh (${s}s)`,
@@ -197,6 +198,13 @@ export const en: Translations = {
     analyzeRetry: 'Analysis failed — click to retry',
     analyzeDone: (n: number) => n === 1 ? '1 material analyzed' : `${n} materials analyzed`,
     analyzeFailed: (n: number) => n === 1 ? '1 material failed to analyze' : `${n} materials failed to analyze`,
+    // Structured tagging (P2)
+    structuredTagsLabel: 'Structured tags',
+    tagMultiHint: 'multi-select',
+    tagSingleHint: 'single',
+    tagDateHint: 'pick a date',
+    tagNoOptions: 'No options yet — add some in the tag library',
+    missingRequiredTags: (names: string) => `Required tags missing: ${names}`,
   },
   materialAnalysis: {
     title: 'AI Creative Analysis',
