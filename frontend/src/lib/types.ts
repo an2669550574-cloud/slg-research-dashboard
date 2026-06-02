@@ -503,6 +503,53 @@ export interface TagAggregateParams {
   tag_options?: string
 }
 
+// ── AI 标签分析 Agent（P6）─────────────────────────────────────────
+export type TagAnalysisMode = 'report' | 'chat'
+export type TagAnalysisModel = 'claude-sonnet-4.5' | 'claude-opus-4.7'
+
+export interface TagAnalysisMessage {
+  id: number
+  role: 'user' | 'assistant'
+  content: string
+  model?: string | null
+  cost_usd?: number | null
+  material_count?: number | null
+  created_at: string
+}
+
+export interface TagAnalysisSession {
+  id: number
+  title: string
+  app_id?: string | null
+  material_type?: string | null
+  tag_options?: string | null
+  model: string
+  created_at: string
+  updated_at: string
+  messages: TagAnalysisMessage[]
+}
+
+export interface TagAnalysisSessionListItem {
+  id: number
+  title: string
+  material_type?: string | null
+  model: string
+  message_count: number
+  created_at: string
+  updated_at: string
+}
+
+/** 跑一轮分析：session_id 空=新建报告会话；带 session_id + mode=chat=追问。 */
+export interface TagAnalysisRunRequest {
+  session_id?: number
+  mode: TagAnalysisMode
+  message?: string
+  model: TagAnalysisModel
+  app_id?: string
+  material_type?: string
+  tag_options?: string
+}
+
 /** 删除一级 / 二级标签的返回：含连带清理的计数。 */
 export interface TagDeleteResponse {
   message: string

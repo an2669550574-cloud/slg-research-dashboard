@@ -41,6 +41,9 @@ import type {
   TagAggregateOut,
   TagAggregateParams,
   MaterialTagValueInput,
+  TagAnalysisSession,
+  TagAnalysisSessionListItem,
+  TagAnalysisRunRequest,
 } from './types'
 
 // 缺 X-Total-Count 头时 fallback 用 items.length（兼容老路由 / 测试夹具）
@@ -261,6 +264,30 @@ export const tagsApi = {
     api.delete(`/tags/options/${optId}`, adminHeader(password)).then(r => r.data),
   aggregate: (params: TagAggregateParams): Promise<TagAggregateOut> =>
     api.get('/tags/aggregate', { params }).then(r => r.data),
+}
+
+// AI 标签分析 Agent（P6）：跑报告 / 追问、会话回查、导出 md·csv。走公司网关，零 ST 配额。
+export const tagAnalysisApi = {
+  run: (data: TagAnalysisRunRequest): Promise<TagAnalysisSession> =>
+    api.post('/tags/analysis', data).then(r => r.data),
+  list: (): Promise<TagAnalysisSessionListItem[]> =>
+    api.get('/tags/analysis').then(r => r.data),
+  get: (id: number): Promise<TagAnalysisSession> =>
+    api.get(`/tags/analysis/${id}`).then(r => r.data),
+  del: (id: number): Promise<DeleteResponse> =>
+    api.delete(`/tags/analysis/${id}`).then(r => r.data),
+  // 导出走 axios（带 X-API-Key），拿 blob 后手动触发下载（<a download> 带不了鉴权头）。
+  exportFile: async (id: number, fmt: 'md' | 'csv'): Promise<void> => {
+    const r = await api.get(`/tags/analysis/${id}/export.${fmt}`, { responseType: 'blob' })
+    const url = URL.createObjectURL(r.data as Blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `tag-analysis-${id}.${fmt}`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  },
 }
 
 export type AdaptModel = 'claude-sonnet-4.5' | 'claude-opus-4.7'
