@@ -38,6 +38,8 @@ import type {
   TagOptionCreate,
   TagOptionUpdate,
   TagDeleteResponse,
+  TagAggregateOut,
+  TagAggregateParams,
   MaterialTagValueInput,
 } from './types'
 
@@ -257,6 +259,8 @@ export const tagsApi = {
     api.put(`/tags/options/${optId}`, data).then(r => r.data),
   deleteOption: (optId: number, password?: string | null): Promise<TagDeleteResponse> =>
     api.delete(`/tags/options/${optId}`, adminHeader(password)).then(r => r.data),
+  aggregate: (params: TagAggregateParams): Promise<TagAggregateOut> =>
+    api.get('/tags/aggregate', { params }).then(r => r.data),
 }
 
 export type AdaptModel = 'claude-sonnet-4.5' | 'claude-opus-4.7'

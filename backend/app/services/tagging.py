@@ -16,6 +16,35 @@ from app.models.tag import TagDimension, TagOption, MaterialTagValue
 from app.schemas import MaterialTagValueItem, MaterialTagValueInput
 
 
+def _parse_option_ids(tag_options: str | None) -> list[int]:
+    """把逗号分隔的二级标签 id 串解析为整数列表，脏值/空段静默忽略（不 500）。"""
+    if not tag_options:
+        return []
+    return [int(p) for p in tag_options.split(",") if p.strip().lstrip("-").isdigit()]
+
+
+async def apply_facet_filter(db: AsyncSession, base, tag_options: str | None):
+    """给一个以 Material 为根的 select 追加结构化分面筛选（P3/P4 共用）：
+    选中的二级标签按所属一级标签分组，同维度内 OR、跨维度 AND——每个维度一条
+    EXISTS 相关子查询（素材须命中该维度任一选项）。无有效 id 时原样返回。"""
+    opt_ids = _parse_option_ids(tag_options)
+    if not opt_ids:
+        return base
+    by_dim: dict[int, list[int]] = {}
+    for oid, did in (await db.execute(
+        select(TagOption.id, TagOption.dimension_id).where(TagOption.id.in_(opt_ids))
+    )).all():
+        by_dim.setdefault(did, []).append(oid)
+    for oids in by_dim.values():
+        base = base.where(
+            select(MaterialTagValue.id).where(
+                MaterialTagValue.material_id == Material.id,
+                MaterialTagValue.option_id.in_(oids),
+            ).exists()
+        )
+    return base
+
+
 async def applicable_dimensions(db: AsyncSession, material_type: str | None) -> list[TagDimension]:
     """适用于某素材类型的一级标签：material_type 精确匹配 + 通用(NULL)，按 sort 排。"""
     stmt = select(TagDimension).order_by(TagDimension.sort_order, TagDimension.id)

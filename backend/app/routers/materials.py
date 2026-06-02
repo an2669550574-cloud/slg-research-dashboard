@@ -8,7 +8,6 @@ from urllib.parse import quote
 from app.config import settings
 from app.database import get_db, utcnow_naive
 from app.models.material import Material, CreativeAdaptation
-from app.models.tag import TagOption, MaterialTagValue
 from app.schemas import (
     MaterialCreate, MaterialUpdate, MaterialOut, MaterialTagCount,
     MaterialTagValueInput, MaterialTagValuesPut,
@@ -93,23 +92,8 @@ async def list_materials(
                 "WHERE json_each.value = :tag)"
             ).bindparams(tag=tag)
         )
-    if tag_options:
-        # 分面筛选（P3）：把选中的二级标签 id 按所属一级标签分组，同维度内 OR、
-        # 跨维度 AND。每个维度一条 EXISTS 相关子查询（素材须命中该维度任一选项）。
-        opt_ids = [int(p) for p in tag_options.split(",") if p.strip().lstrip("-").isdigit()]
-        if opt_ids:
-            by_dim: dict[int, list[int]] = {}
-            for oid, did in (await db.execute(
-                select(TagOption.id, TagOption.dimension_id).where(TagOption.id.in_(opt_ids))
-            )).all():
-                by_dim.setdefault(did, []).append(oid)
-            for oids in by_dim.values():
-                base = base.where(
-                    select(MaterialTagValue.id).where(
-                        MaterialTagValue.material_id == Material.id,
-                        MaterialTagValue.option_id.in_(oids),
-                    ).exists()
-                )
+    # 结构化分面筛选（P3）：同维度内 OR、跨维度 AND（与聚合分析 P4 共用同一 helper）。
+    base = await tagging.apply_facet_filter(db, base, tag_options)
     if q:
         like = f"%{q}%"
         base = base.where((Material.title.ilike(like)) | (Material.notes.ilike(like)))

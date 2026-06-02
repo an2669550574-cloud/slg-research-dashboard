@@ -4,18 +4,22 @@
 SQLite 默认不强制 FK 级联，故删除一级 / 二级时在应用层显式连带清理
 子表 + 已打标记（material_tag_values），与 product.py 的删除套路一致。
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, delete as sa_delete, update as sa_update
+from sqlalchemy import select, func, distinct, delete as sa_delete, update as sa_update
+from sqlalchemy.orm import aliased
 from typing import Optional
 
 from app.database import get_db
+from app.models.material import Material
 from app.models.tag import TagDimension, TagOption, MaterialTagValue
 from app.schemas import (
     TagDimensionCreate, TagDimensionUpdate, TagDimensionOut,
     TagOptionCreate, TagOptionUpdate, TagOptionOut,
+    TagAggregateOut, TagAggregateBucket, TagAggregateSubBucket,
 )
 from app.security import require_admin_password
+from app.services import tagging
 
 router = APIRouter(prefix="/api/tags", tags=["tags"])
 
@@ -72,6 +76,98 @@ async def list_dimensions(
     dims = (await db.execute(stmt)).scalars().all()
     opts = await _options_of([d.id for d in dims], db)
     return [_dim_out(d, opts.get(d.id, [])) for d in dims]
+
+
+@router.get("/aggregate", response_model=TagAggregateOut)
+async def aggregate_by_dimension(
+    dimension_id: int = Query(..., description="主维度：按其二级标签统计素材分布"),
+    by: Optional[int] = Query(None, description="可选第二维度 id → 交叉透视（每个主桶再细分）"),
+    app_id: Optional[str] = None,
+    material_type: Optional[str] = None,
+    tag_options: Optional[str] = Query(None, description="与素材列表同口径的分面筛选；先圈定 scope 再聚合"),
+    db: AsyncSession = Depends(get_db),
+):
+    """聚合分析（P4）：按某文字型一级标签统计素材分布，可选第二维度做交叉透视。
+
+    - 桶含计数为 0 的二级标签（呈现完整标签库口径，不只命中项）。
+    - count 为「去重素材数」：多选维度下一个素材命中多个二级标签会分别计入各桶，
+      故各桶之和可能 > tagged_materials，这是多标签分布的预期语义。
+    - scope 过滤（app_id/material_type/tag_options）与素材列表一致，先圈再聚。
+    纯本地 SQLite 聚合，零 Sensor Tower 配额。"""
+    dim = await _get_dim_or_404(dimension_id, db)
+    if dim.value_type != "text":
+        raise HTTPException(status_code=400, detail="聚合分析仅支持「文字」型一级标签")
+    by_dim: Optional[TagDimension] = None
+    if by is not None:
+        if by == dimension_id:
+            raise HTTPException(status_code=400, detail="交叉维度不能与主维度相同")
+        by_dim = await _get_dim_or_404(by, db)
+        if by_dim.value_type != "text":
+            raise HTTPException(status_code=400, detail="交叉维度仅支持「文字」型一级标签")
+
+    # scope：满足范围过滤的素材 id 集合（含分面筛选，复用 P3 helper）
+    scope = select(Material.id)
+    if app_id:
+        scope = scope.where(Material.app_id == app_id)
+    if material_type:
+        scope = scope.where(Material.material_type == material_type)
+    scope = await tagging.apply_facet_filter(db, scope, tag_options)
+
+    total = (await db.execute(
+        select(func.count()).select_from(scope.subquery())
+    )).scalar_one()
+    tagged = (await db.execute(
+        select(func.count(distinct(MaterialTagValue.material_id))).where(
+            MaterialTagValue.dimension_id == dimension_id,
+            MaterialTagValue.material_id.in_(scope),
+        )
+    )).scalar_one()
+
+    prim_map = dict((await db.execute(
+        select(MaterialTagValue.option_id, func.count(distinct(MaterialTagValue.material_id)))
+        .where(
+            MaterialTagValue.dimension_id == dimension_id,
+            MaterialTagValue.material_id.in_(scope),
+        )
+        .group_by(MaterialTagValue.option_id)
+    )).all())
+
+    prim_opts = (await _options_of([dimension_id], db)).get(dimension_id, [])
+    cross_map: dict[tuple[int, int], int] = {}
+    by_opts: list[TagOption] = []
+    if by_dim is not None:
+        by_opts = (await _options_of([by], db)).get(by, [])
+        A, B = aliased(MaterialTagValue), aliased(MaterialTagValue)
+        cross_map = {
+            (p, s): n for p, s, n in (await db.execute(
+                select(A.option_id, B.option_id, func.count(distinct(A.material_id)))
+                .join(B, B.material_id == A.material_id)
+                .where(
+                    A.dimension_id == dimension_id,
+                    B.dimension_id == by,
+                    A.material_id.in_(scope),
+                )
+                .group_by(A.option_id, B.option_id)
+            )).all()
+        }
+
+    buckets = [
+        TagAggregateBucket(
+            option_id=o.id, value=o.value, count=prim_map.get(o.id, 0),
+            sub=[
+                TagAggregateSubBucket(option_id=so.id, value=so.value,
+                                      count=cross_map.get((o.id, so.id), 0))
+                for so in by_opts
+            ] if by_dim is not None else None,
+        )
+        for o in prim_opts
+    ]
+    return TagAggregateOut(
+        dimension_id=dim.id, dimension_name=dim.name,
+        by_dimension_id=by_dim.id if by_dim else None,
+        by_dimension_name=by_dim.name if by_dim else None,
+        total_materials=total, tagged_materials=tagged, buckets=buckets,
+    )
 
 
 @router.post("/dimensions", response_model=TagDimensionOut, status_code=201)

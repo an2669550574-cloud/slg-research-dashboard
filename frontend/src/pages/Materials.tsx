@@ -11,6 +11,7 @@ import {
   type TagValueState,
 } from '../components/StructuredTagEditor'
 import { tagsApi } from '../lib/api'
+import { TagAggregatePanel } from '../components/TagAggregatePanel'
 import { Select } from '../components/Select'
 import { PageHeader } from '../components/PageHeader'
 import { useNavigate } from 'react-router-dom'
@@ -769,6 +770,8 @@ export default function Materials() {
             ))}
           </div>
         )}
+        {/* 聚合分析（P4）：scope 跟随上方 material_type + 分面筛选；零 ST 配额。 */}
+        <TagAggregatePanel dims={facetable} materialType={filterType || undefined} tagOptions={facetKey || undefined} />
       </div>
 
       {/* ══ GRID ══════════════════════════════════════════════ */}

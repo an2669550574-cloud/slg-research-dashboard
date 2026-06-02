@@ -185,6 +185,15 @@ export const en: Translations = {
     // structured facet filter bar (P3)
     facetFilterLabel: 'Facets',
     facetClear: (n: number) => `Clear ${n}`,
+    // aggregation analysis (P4)
+    aggTitle: 'Aggregation',
+    aggHint: 'Material distribution across structured tags within the current filter scope',
+    aggPrimary: 'Break down by',
+    aggBy: 'Cross with',
+    aggByNone: 'No cross-tab',
+    aggSummary: (total: number, tagged: number) => `${tagged} of ${total} materials in scope carry this tag`,
+    aggEmpty: 'No data in the current scope',
+    aggColTotal: 'Total',
     // type / game / sort
     typeFilterAll: 'All types',
     gameFilterAll: 'All games',

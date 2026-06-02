@@ -88,3 +88,31 @@ class MaterialTagValueInput(BaseModel):
 class MaterialTagValuesPut(BaseModel):
     """整体替换某素材的全部结构化标签（replace-all 语义）。"""
     values: list[MaterialTagValueInput] = []
+
+
+# ── 聚合分析（P4）─────────────────────────────────────────────────────────
+# 按某文字型一级标签统计素材分布；可选第二维度做交叉透视。纯本地聚合，零 ST 配额。
+
+class TagAggregateSubBucket(BaseModel):
+    """交叉透视时主桶下的次级细分（by 维度每个二级标签的去重素材数）。"""
+    option_id: int
+    value: str
+    count: int
+
+
+class TagAggregateBucket(BaseModel):
+    """主维度某二级标签的桶：命中的去重素材数；交叉透视时带 sub 细分。"""
+    option_id: int
+    value: str
+    count: int
+    sub: Optional[list[TagAggregateSubBucket]] = None
+
+
+class TagAggregateOut(BaseModel):
+    dimension_id: int
+    dimension_name: str
+    by_dimension_id: Optional[int] = None
+    by_dimension_name: Optional[str] = None
+    total_materials: int   # scope 内去重素材总数
+    tagged_materials: int  # scope 内在主维度有任一值的去重素材数（≤ total）
+    buckets: list[TagAggregateBucket] = []

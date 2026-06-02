@@ -190,6 +190,15 @@ export const zh = {
     // 结构化分面筛选栏（P3）
     facetFilterLabel: '分面',
     facetClear: (n: number) => `清除 ${n} 项`,
+    // 聚合分析（P4）
+    aggTitle: '聚合分析',
+    aggHint: '按结构化标签统计当前筛选范围内的素材分布',
+    aggPrimary: '拆分维度',
+    aggBy: '交叉维度',
+    aggByNone: '不交叉',
+    aggSummary: (total: number, tagged: number) => `范围内 ${total} 条素材，其中 ${tagged} 条已打此标签`,
+    aggEmpty: '当前范围内暂无数据',
+    aggColTotal: '合计',
     // 类型 / 游戏 / 排序
     typeFilterAll: '全部类型',
     gameFilterAll: '全部游戏',

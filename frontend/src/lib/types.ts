@@ -468,6 +468,41 @@ export interface MaterialTagValueInput {
   value_date?: string | null
 }
 
+// ─── 聚合分析（P4）─────────────────────────────────────────────────────
+// 按某文字型一级标签统计去重素材分布；可选第二维度做交叉透视。零 ST 配额。
+
+export interface TagAggregateSubBucket {
+  option_id: number
+  value: string
+  count: number
+}
+
+export interface TagAggregateBucket {
+  option_id: number
+  value: string
+  count: number
+  /** 仅交叉透视时存在：该主桶下按第二维度的细分。 */
+  sub?: TagAggregateSubBucket[] | null
+}
+
+export interface TagAggregateOut {
+  dimension_id: number
+  dimension_name: string
+  by_dimension_id: number | null
+  by_dimension_name: string | null
+  total_materials: number
+  tagged_materials: number
+  buckets: TagAggregateBucket[]
+}
+
+export interface TagAggregateParams {
+  dimension_id: number
+  by?: number
+  app_id?: string
+  material_type?: string
+  tag_options?: string
+}
+
 /** 删除一级 / 二级标签的返回：含连带清理的计数。 */
 export interface TagDeleteResponse {
   message: string

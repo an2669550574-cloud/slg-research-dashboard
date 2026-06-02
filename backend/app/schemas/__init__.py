@@ -9,6 +9,7 @@ from app.schemas.tag import (
     TagDimensionCreate, TagDimensionUpdate, TagDimensionOut,
     TagOptionCreate, TagOptionUpdate, TagOptionOut,
     MaterialTagValueItem, MaterialTagValueInput, MaterialTagValuesPut,
+    TagAggregateSubBucket, TagAggregateBucket, TagAggregateOut,
 )
 
 __all__ = [
@@ -21,6 +22,9 @@ __all__ = [
     "MaterialTagValueItem",
     "MaterialTagValueInput",
     "MaterialTagValuesPut",
+    "TagAggregateSubBucket",
+    "TagAggregateBucket",
+    "TagAggregateOut",
     "OwnProductOut",
     "OwnProductCreate",
     "OwnProductUpdate",
