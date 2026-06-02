@@ -58,6 +58,7 @@ export default function Materials() {
   const [editing, setEditing] = useState<MaterialOut | null>(null)
   const [tagValues, setTagValues] = useState<TagValueState>(emptyTagState())
   const [analyzing, setAnalyzing] = useState<MaterialOut | null>(null)
+  const [agentOpen, setAgentOpen] = useState(false)
   const [files, setFiles] = useState<File[]>([])
   const [queue, setQueue] = useState<QItem[]>([])
   const [busy, setBusy] = useState(false)
@@ -790,13 +791,22 @@ export default function Materials() {
         )}
         {/* 聚合分析（P4）：scope 跟随上方 material_type + 分面筛选；零 ST 配额。 */}
         <TagAggregatePanel dims={facetable} materialType={filterType || undefined} tagOptions={facetKey || undefined} />
-        {/* AI 标签分析 Agent（P6）：scope 跟随 类型 + 游戏 + 分面筛选；走 LLM 网关、零 ST 配额。 */}
-        <TagAnalysisAgent
-          materialType={filterType || undefined}
-          appId={filterGame || undefined}
-          tagOptions={facetKey || undefined}
-        />
+        {/* AI 标签分析 Agent（P6）：触发按钮 → 右侧抽屉；scope 跟随 类型+游戏+分面，零 ST 配额。 */}
+        <button
+          onClick={() => setAgentOpen(true)}
+          className="inline-flex items-center gap-2 rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-xs font-medium text-accent hover:bg-accent/20 transition-colors"
+        >
+          <Sparkles size={14} /> {t.materials.agent.open}
+        </button>
       </div>
+
+      <TagAnalysisAgent
+        open={agentOpen}
+        onClose={() => setAgentOpen(false)}
+        materialType={filterType || undefined}
+        appId={filterGame || undefined}
+        tagOptions={facetKey || undefined}
+      />
 
       {/* ══ GRID ══════════════════════════════════════════════ */}
       <div className="reveal reveal-3 mt-6">

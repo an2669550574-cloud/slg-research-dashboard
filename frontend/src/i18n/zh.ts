@@ -225,6 +225,13 @@ export const zh = {
       roleAssistant: '分析',
       meta: (model: string, cost: number, count: number) =>
         `${model} · $${cost.toFixed(4)} · ${count} 条素材`,
+      // 触发按钮 + 实时成本预估
+      open: 'AI 标签分析',
+      close: '收起',
+      estimating: '预估中…',
+      estimateAbout: (cost: number, count: number) => `约 $${cost.toFixed(3)} · ${count} 条素材`,
+      estimateEmpty: '当前范围无素材',
+      estimateOverLimit: (count: number, limit: number) => `${count} 条 · 超 ${limit} 上限，请先缩小范围`,
     },
     // 自动命名（P5）
     autoNameBtn: '自动命名',

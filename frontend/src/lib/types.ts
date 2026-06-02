@@ -550,6 +550,18 @@ export interface TagAnalysisRunRequest {
   tag_options?: string
 }
 
+/** 单次报告分析的成本干跑预估（不打网关、零配额）。empty/over_limit 时不给金额。 */
+export interface TagAnalysisEstimate {
+  material_count: number
+  limit: number
+  empty: boolean
+  over_limit: boolean
+  model: string
+  input_tokens_est: number
+  output_tokens_est: number
+  estimated_cost_usd: number
+}
+
 /** 删除一级 / 二级标签的返回：含连带清理的计数。 */
 export interface TagDeleteResponse {
   message: string

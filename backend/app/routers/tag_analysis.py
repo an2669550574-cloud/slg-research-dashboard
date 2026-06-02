@@ -12,7 +12,7 @@ from app.config import settings
 from app.models.tag_analysis import TagAnalysisSession, TagAnalysisMessage
 from app.schemas import (
     TagAnalysisRequest, TagAnalysisSessionOut, TagAnalysisMessageOut,
-    TagAnalysisSessionListItem,
+    TagAnalysisSessionListItem, TagAnalysisEstimateOut,
 )
 from app.services import tag_analysis, video_analyze
 
@@ -77,6 +77,30 @@ async def list_sessions(db: AsyncSession = Depends(get_db)):
         item.message_count = counts.get(s.id, 0)
         out.append(item)
     return out
+
+
+@router.get("/estimate", response_model=TagAnalysisEstimateOut)
+async def estimate(
+    model: str,
+    app_id: str | None = None,
+    material_type: str | None = None,
+    tag_options: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """干跑预估当前范围跑一次报告分析的成本（不打网关、零配额）。
+
+    必须声明在 `/{session_id}` 之前，否则 "estimate" 会被当作 int 路径参数 → 422。
+    空范围 / 超限不报错，返回标志位让前端转提示护栏；模型非法 → 400。"""
+    try:
+        return await tag_analysis.estimate_turn(
+            db,
+            model=model,
+            app_id=app_id,
+            material_type=material_type,
+            tag_options=tag_options,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/{session_id}", response_model=TagAnalysisSessionOut)
