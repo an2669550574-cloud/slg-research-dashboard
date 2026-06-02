@@ -187,6 +187,9 @@ export const zh = {
     tagFilterAll: '全部',
     noTags: '暂无标签',
     clearTag: '清除标签筛选',
+    // 结构化分面筛选栏（P3）
+    facetFilterLabel: '分面',
+    facetClear: (n: number) => `清除 ${n} 项`,
     // 类型 / 游戏 / 排序
     typeFilterAll: '全部类型',
     gameFilterAll: '全部游戏',

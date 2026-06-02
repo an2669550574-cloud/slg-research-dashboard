@@ -149,6 +149,7 @@ export interface MaterialListParams {
   platform?: string
   material_type?: string
   tag?: string
+  tag_options?: string
   q?: string
   analysis_status?: MaterialAnalysisStatus
   sort_by?: 'created_at' | 'title' | 'analyzed_at' | 'analysis_cost_usd'

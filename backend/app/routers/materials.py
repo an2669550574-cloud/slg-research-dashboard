@@ -8,6 +8,7 @@ from urllib.parse import quote
 from app.config import settings
 from app.database import get_db, utcnow_naive
 from app.models.material import Material, CreativeAdaptation
+from app.models.tag import TagOption, MaterialTagValue
 from app.schemas import (
     MaterialCreate, MaterialUpdate, MaterialOut, MaterialTagCount,
     MaterialTagValueInput, MaterialTagValuesPut,
@@ -60,6 +61,10 @@ async def list_materials(
     platform: Optional[str] = None,
     material_type: Optional[str] = None,
     tag: Optional[str] = Query(None, description="精确匹配某个标签（素材 tags 含该标签）"),
+    tag_options: Optional[str] = Query(
+        None,
+        description="结构化二级标签分面筛选：二级标签 id 逗号分隔；同一维度内 OR、跨维度 AND",
+    ),
     q: Optional[str] = Query(None, description="模糊匹配 title 或 notes"),
     analysis_status: Optional[Literal["pending", "running", "done", "failed"]] = Query(
         None, description="按 LLM 分析状态筛选；AI 分析报告页用 done 拉已分析素材"
@@ -88,6 +93,23 @@ async def list_materials(
                 "WHERE json_each.value = :tag)"
             ).bindparams(tag=tag)
         )
+    if tag_options:
+        # 分面筛选（P3）：把选中的二级标签 id 按所属一级标签分组，同维度内 OR、
+        # 跨维度 AND。每个维度一条 EXISTS 相关子查询（素材须命中该维度任一选项）。
+        opt_ids = [int(p) for p in tag_options.split(",") if p.strip().lstrip("-").isdigit()]
+        if opt_ids:
+            by_dim: dict[int, list[int]] = {}
+            for oid, did in (await db.execute(
+                select(TagOption.id, TagOption.dimension_id).where(TagOption.id.in_(opt_ids))
+            )).all():
+                by_dim.setdefault(did, []).append(oid)
+            for oids in by_dim.values():
+                base = base.where(
+                    select(MaterialTagValue.id).where(
+                        MaterialTagValue.material_id == Material.id,
+                        MaterialTagValue.option_id.in_(oids),
+                    ).exists()
+                )
     if q:
         like = f"%{q}%"
         base = base.where((Material.title.ilike(like)) | (Material.notes.ilike(like)))

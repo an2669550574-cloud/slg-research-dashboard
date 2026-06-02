@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tansta
 import toast from 'react-hot-toast'
 import { materialsApi, gamesApi } from '../lib/api'
 import { PLATFORM_CONFIG } from '../lib/utils'
-import { ExternalLink, Trash2, Plus, Search, Download as DownloadIcon, Upload, Film as FilmIcon, Radio, Pencil, X, Check, AlertCircle, Loader2, Tag as TagIcon, Sparkles } from 'lucide-react'
+import { ExternalLink, Trash2, Plus, Search, Download as DownloadIcon, Upload, Film as FilmIcon, Radio, Pencil, X, Check, AlertCircle, Loader2, Tag as TagIcon, Sparkles, SlidersHorizontal } from 'lucide-react'
 import { MaterialPreview } from '../components/MaterialPreview'
 import { MaterialAnalysisDrawer } from '../components/MaterialAnalysisDrawer'
 import {
@@ -46,6 +46,7 @@ export default function Materials() {
   const [filterType, setFilterType] = useState('')
   const [filterGame, setFilterGame] = useState('')
   const [filterTag, setFilterTag] = useState('')
+  const [filterOptions, setFilterOptions] = useState<Set<number>>(new Set())
   const [sort, setSort] = useState('created_at:desc')
   const [offset, setOffset] = useState(0)
   const [showForm, setShowForm] = useState(false)
@@ -64,10 +65,13 @@ export default function Materials() {
 
   const [sortBy, order] = sort.split(':') as ['created_at' | 'title', 'asc' | 'desc']
 
-  useEffect(() => { setOffset(0) }, [debouncedSearch, filterPlatform, filterType, filterGame, filterTag, sort])
+  // 分面筛选（P3）：选中的二级标签 id 排序后逗号拼成稳定 key，既当 queryKey 又当请求参数。
+  const facetKey = useMemo(() => [...filterOptions].sort((a, b) => a - b).join(','), [filterOptions])
+
+  useEffect(() => { setOffset(0) }, [debouncedSearch, filterPlatform, filterType, filterGame, filterTag, facetKey, sort])
 
   const { data: paged, isLoading, isError, refetch } = useQuery({
-    queryKey: ['materials', debouncedSearch, filterPlatform, filterType, filterGame, filterTag, sort, offset],
+    queryKey: ['materials', debouncedSearch, filterPlatform, filterType, filterGame, filterTag, facetKey, sort, offset],
     queryFn: () => materialsApi.listPaged({
       limit: PAGE_SIZE, offset,
       q: debouncedSearch || undefined,
@@ -75,6 +79,7 @@ export default function Materials() {
       material_type: filterType || undefined,
       app_id: filterGame || undefined,
       tag: filterTag || undefined,
+      tag_options: facetKey || undefined,
       sort_by: sortBy, order,
     }),
     placeholderData: keepPreviousData,
@@ -114,6 +119,19 @@ export default function Materials() {
   const { data: tagCounts = [] } = useQuery({
     queryKey: ['materialTags', filterGame],
     queryFn: () => materialsApi.tags(filterGame || undefined),
+  })
+
+  // 分面筛选维度（P3）：跟随类型筛选取适用的一级标签；只用文字型(有二级选项)做分面。
+  // 与编辑器/表单共享 ['tagDimensions', type] 缓存。零 ST 配额。
+  const { data: facetDims = [] } = useQuery({
+    queryKey: ['tagDimensions', filterType || 'all'],
+    queryFn: () => tagsApi.listDimensions(filterType || undefined),
+  })
+  const facetable = facetDims.filter(d => d.value_type === 'text' && d.options.length > 0)
+  const toggleFacet = (optId: number) => setFilterOptions(prev => {
+    const next = new Set(prev)
+    next.has(optId) ? next.delete(optId) : next.add(optId)
+    return next
   })
 
   // 结构化标签编辑器跟随的素材类型：上传按首个文件推断，其余看表单选择。
@@ -334,6 +352,7 @@ export default function Materials() {
       material_type: filterType || undefined,
       app_id: filterGame || undefined,
       tag: filterTag || undefined,
+      tag_options: facetKey || undefined,
       sort_by: sortBy, order,
     }).catch(() => null)
     if (!all || all.items.length === 0) { toast.error(t.common.noExportData); return }
@@ -719,6 +738,37 @@ export default function Materials() {
             )
           })}
         </div>
+        {/* 结构化分面筛选栏（P3）：按一级标签分组的二级标签 chip；同维度内 OR、跨维度 AND。
+            本地 SQLite 过滤，零 ST 配额。仅在库里存在文字型一级标签时出现。 */}
+        {facetable.length > 0 && (
+          <div className="space-y-1.5 rounded-lg border border-default/60 bg-surface/40 px-3 py-2.5">
+            <div className="flex items-center gap-2">
+              <span className="flex items-center gap-1.5 text-xs text-muted">
+                <SlidersHorizontal size={13} /> {t.materials.facetFilterLabel}
+              </span>
+              {filterOptions.size > 0 && (
+                <button onClick={() => setFilterOptions(new Set())}
+                  className="text-[11px] text-muted hover:text-red-400 transition-colors">
+                  {t.materials.facetClear(filterOptions.size)}
+                </button>
+              )}
+            </div>
+            {facetable.map(d => (
+              <div key={d.id} className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] text-secondary min-w-[52px]">{d.name}</span>
+                {d.options.map(o => {
+                  const active = filterOptions.has(o.id)
+                  return (
+                    <button key={o.id} onClick={() => toggleFacet(o.id)} title={o.value}
+                      className={`px-2.5 py-0.5 rounded-md text-xs border transition-colors ${active ? 'bg-accent/15 border-accent/40 text-accent' : 'border-default text-secondary hover:border-strong hover:text-primary'}`}>
+                      {o.value}
+                    </button>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ══ GRID ══════════════════════════════════════════════ */}
@@ -742,7 +792,7 @@ export default function Materials() {
             <Radio size={26} className="text-muted/50 mb-3" />
             <div className="eyebrow text-muted">No Signal</div>
             <p className="text-secondary text-sm mt-2">
-              {debouncedSearch || filterPlatform || filterType || filterGame || filterTag ? t.common.noResult : t.materials.empty}
+              {debouncedSearch || filterPlatform || filterType || filterGame || filterTag || filterOptions.size ? t.common.noResult : t.materials.empty}
             </p>
           </div>
         ) : (

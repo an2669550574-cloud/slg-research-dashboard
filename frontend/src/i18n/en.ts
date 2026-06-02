@@ -182,6 +182,9 @@ export const en: Translations = {
     tagFilterAll: 'All',
     noTags: 'No tags yet',
     clearTag: 'Clear tag filter',
+    // structured facet filter bar (P3)
+    facetFilterLabel: 'Facets',
+    facetClear: (n: number) => `Clear ${n}`,
     // type / game / sort
     typeFilterAll: 'All types',
     gameFilterAll: 'All games',
