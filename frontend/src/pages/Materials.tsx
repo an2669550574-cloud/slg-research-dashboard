@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tansta
 import toast from 'react-hot-toast'
 import { materialsApi, gamesApi } from '../lib/api'
 import { PLATFORM_CONFIG } from '../lib/utils'
-import { ExternalLink, Trash2, Plus, Search, Download as DownloadIcon, Upload, Film as FilmIcon, Radio, Pencil, X, Check, AlertCircle, Loader2, Tag as TagIcon, Sparkles, SlidersHorizontal, Wand2 } from 'lucide-react'
+import { ExternalLink, Trash2, Plus, Search, Download as DownloadIcon, Upload, Film as FilmIcon, Radio, Pencil, X, Check, AlertCircle, Loader2, Tag as TagIcon, Sparkles, SlidersHorizontal, Wand2, MessagesSquare } from 'lucide-react'
 import { MaterialPreview } from '../components/MaterialPreview'
 import { MaterialAnalysisDrawer } from '../components/MaterialAnalysisDrawer'
 import {
@@ -520,6 +520,11 @@ export default function Materials() {
           <Sparkles size={14} />
           <span className="hidden sm:inline">{t.materials.viewAnalysis}</span>
         </button>
+        <button onClick={() => setAgentOpen(true)}
+          className="flex items-center gap-2 px-3.5 py-2.5 rounded-lg font-data text-xs text-secondary border border-default hover:border-strong hover:text-primary bg-surface/60 transition-colors">
+          <MessagesSquare size={14} />
+          <span className="hidden sm:inline">{t.materials.agent.open}</span>
+        </button>
         <button onClick={exportCsv}
           className="flex items-center gap-2 px-3.5 py-2.5 rounded-lg font-data text-xs text-secondary border border-default hover:border-strong hover:text-primary bg-surface/60 transition-colors">
           <DownloadIcon size={14} />
@@ -698,9 +703,10 @@ export default function Materials() {
       )}
 
       {/* ══ TOOLBAR ══════════════════════════════════════════ */}
-      <div className="reveal reveal-2 mt-6 space-y-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center flex-1 min-w-[220px] max-w-md rounded-lg border border-default bg-surface/60 focus-within:border-accent transition-colors">
+      <div className="reveal reveal-2 mt-6 space-y-2.5">
+        {/* 搜索 + 平台 + 游戏/类型/排序合并到一行（宽屏一行排开，窄屏自动换行） */}
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex items-center flex-1 min-w-[200px] max-w-sm rounded-lg border border-default bg-surface/60 focus-within:border-accent transition-colors">
             <span className="pl-3 pr-1 text-muted"><Search size={15} /></span>
             <input type="text" placeholder={t.materials.searchPlaceholder} value={search}
               onChange={e => setSearch(e.target.value)}
@@ -718,21 +724,19 @@ export default function Materials() {
               )
             })}
           </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="w-44">
+          <div className="w-40">
             <Select aria-label={t.materials.gameFilterAll} value={filterGame} onChange={setFilterGame}
               options={[{ value: '', label: t.materials.gameFilterAll },
                 ...allGames.map(g => ({ value: g.app_id, label: g.name }))]} />
           </div>
-          <div className="w-36">
+          <div className="w-32">
             <Select aria-label={t.materials.typeFilterAll} value={filterType} onChange={setFilterType}
               options={[{ value: '', label: t.materials.typeFilterAll },
                 { value: 'video', label: t.materials.types.video },
                 { value: 'image', label: t.materials.types.image },
                 { value: 'playable', label: t.materials.types.playable }]} />
           </div>
-          <div className="w-40">
+          <div className="w-36">
             <Select aria-label={t.materials.sortLabel} value={sort} onChange={setSort} options={sortOptions} />
           </div>
         </div>
@@ -789,15 +793,9 @@ export default function Materials() {
             ))}
           </div>
         )}
-        {/* 聚合分析（P4）：scope 跟随上方 material_type + 分面筛选；零 ST 配额。 */}
+        {/* 聚合分析（P4）：scope 跟随上方 material_type + 分面筛选；零 ST 配额。
+            AI 标签分析入口已上移到页头（与「AI 解析报告」并排），抽屉在下方挂载。 */}
         <TagAggregatePanel dims={facetable} materialType={filterType || undefined} tagOptions={facetKey || undefined} />
-        {/* AI 标签分析 Agent（P6）：触发按钮 → 右侧抽屉；scope 跟随 类型+游戏+分面，零 ST 配额。 */}
-        <button
-          onClick={() => setAgentOpen(true)}
-          className="inline-flex items-center gap-2 rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-xs font-medium text-accent hover:bg-accent/20 transition-colors"
-        >
-          <Sparkles size={14} /> {t.materials.agent.open}
-        </button>
       </div>
 
       <TagAnalysisAgent
