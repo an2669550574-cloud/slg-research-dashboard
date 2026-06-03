@@ -236,6 +236,15 @@ export const zh = {
     // 自动命名（P5）
     autoNameBtn: '自动命名',
     autoNameEmpty: '先选结构化标签再自动命名',
+    // 按结构化标签命名（卡片一键 / 工具栏批量）
+    nameByTags: '按标签命名',
+    nameByTagsNoTags: '该素材还没打结构化标签',
+    nameByTagsSame: '标题已是标签命名',
+    nameByTagsDone: '已按标签重命名',
+    nameByTagsBatch: '按标签命名（本页）',
+    nameByTagsBatchConfirm: (n: number) => `将用结构化标签重命名本页 ${n} 个已打标签的素材，标题会被覆盖。继续？`,
+    nameByTagsBatchNone: '本页没有已打结构化标签、可重命名的素材',
+    nameByTagsBatchResult: (n: number) => `已按标签重命名 ${n} 个素材`,
     // 类型 / 游戏 / 排序
     typeFilterAll: '全部类型',
     gameFilterAll: '全部游戏',

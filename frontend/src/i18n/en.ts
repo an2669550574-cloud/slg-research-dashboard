@@ -231,6 +231,15 @@ export const en: Translations = {
     // auto-naming (P5)
     autoNameBtn: 'Auto-name',
     autoNameEmpty: 'Select structured tags first',
+    // name from structured tags (per-card / batch)
+    nameByTags: 'Name from tags',
+    nameByTagsNoTags: 'No structured tags on this material yet',
+    nameByTagsSame: 'Title already matches its tags',
+    nameByTagsDone: 'Renamed from tags',
+    nameByTagsBatch: 'Name from tags (page)',
+    nameByTagsBatchConfirm: (n: number) => `Rename ${n} tagged material(s) on this page from their structured tags? Titles will be overwritten.`,
+    nameByTagsBatchNone: 'No tagged materials to rename on this page',
+    nameByTagsBatchResult: (n: number) => `Renamed ${n} material(s) from tags`,
     // type / game / sort
     typeFilterAll: 'All types',
     gameFilterAll: 'All games',

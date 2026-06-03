@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { composeNameFromTags } from './tagName'
-import type { TagDimension } from './types'
+import { composeNameFromTags, composeNameFromTagValues } from './tagName'
+import type { TagDimension, MaterialTagValueItem } from './types'
 import type { TagValueState } from '../components/StructuredTagEditor'
 
 // 中文标签库夹具：路型(单/多选 text) / 桶子(text) / 投放时间(date)。
@@ -50,5 +50,36 @@ describe('composeNameFromTags', () => {
   it('全空返回空串', () => {
     expect(composeNameFromTags({}, DIMS)).toBe('')
     expect(composeNameFromTags({ 2: { optionIds: [], valueDate: null } }, DIMS)).toBe('')
+  })
+})
+
+// 卡片/批量一键命名：直接吃素材自身 tag_values（后端已按维度序返回）
+const tv = (
+  dimension_id: number, dimension_name: string,
+  value_type: 'text' | 'date', value: string | null, value_date: string | null = null,
+): MaterialTagValueItem =>
+  ({ dimension_id, dimension_name, value_type, option_id: null, value, value_date })
+
+describe('composeNameFromTagValues', () => {
+  it('按到达顺序分组维度，同维度多值用 + 连，维度间用 _', () => {
+    const items = [
+      tv(1, '投放时间', 'date', null, '2026-03-01'),
+      tv(2, '角色', 'text', '机枪兵'),
+      tv(2, '角色', 'text', '机甲'),
+      tv(3, '路型', 'text', '3路'),
+    ]
+    expect(composeNameFromTagValues(items)).toBe('2026-03-01_机枪兵+机甲_3路')
+  })
+
+  it('跳过空值，支持自定义分隔符', () => {
+    const items = [
+      tv(1, '投放时间', 'date', null, null),
+      tv(2, '桶子', 'text', '金像'),
+    ]
+    expect(composeNameFromTagValues(items, '-')).toBe('金像')
+  })
+
+  it('空数组返回空串', () => {
+    expect(composeNameFromTagValues([])).toBe('')
   })
 })
