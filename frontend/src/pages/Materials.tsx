@@ -11,7 +11,7 @@ import {
   type TagValueState,
 } from '../components/StructuredTagEditor'
 import { tagsApi } from '../lib/api'
-import { composeNameFromTags } from '../lib/tagName'
+import { composeNameFromTags, composeNameFromTagValues } from '../lib/tagName'
 import { TagAggregatePanel } from '../components/TagAggregatePanel'
 import { TagAnalysisAgent } from '../components/TagAnalysisAgent'
 import { Select } from '../components/Select'
@@ -38,7 +38,7 @@ const inputClass =
 type QStatus = 'pending' | 'uploading' | 'done' | 'error'
 interface QItem { name: string; status: QStatus; pct: number; error?: string }
 
-const emptyForm = { title: '', url: '', app_id: '', platform: 'youtube', material_type: 'video', tags: '', notes: '' }
+const emptyForm = { title: '', url: '', app_id: '', platform: 'other', material_type: 'video', tags: '', notes: '' }
 
 export default function Materials() {
   const navigate = useNavigate()
@@ -194,6 +194,34 @@ export default function Materials() {
       toast.success(t.materials.deletedToast)
     },
   })
+
+  // 按结构化标签命名：直接用素材自身 tag_values 拼标题（零 LLM/配额）。
+  // 卡片单条即时改；批量对「本页」已打标签的素材串行改，名字撞了补 -2/-3 后缀去重。
+  const renameOneByTags = async (m: MaterialOut) => {
+    const name = composeNameFromTagValues(m.tag_values ?? [])
+    if (!name) { toast(t.materials.nameByTagsNoTags); return }
+    if (name === m.title) { toast(t.materials.nameByTagsSame); return }
+    await materialsApi.update(m.id, { title: name })
+    qc.invalidateQueries({ queryKey: ['materials'] })
+    toast.success(t.materials.nameByTagsDone)
+  }
+  const renameByTagsBatch = async () => {
+    const targets = materials.filter(m => composeNameFromTagValues(m.tag_values ?? []))
+    if (targets.length === 0) { toast(t.materials.nameByTagsBatchNone); return }
+    if (!window.confirm(t.materials.nameByTagsBatchConfirm(targets.length))) return
+    const seen = new Map<string, number>()
+    let done = 0
+    for (const m of targets) {
+      const base = composeNameFromTagValues(m.tag_values)
+      const dup = seen.get(base) ?? 0
+      seen.set(base, dup + 1)
+      const name = dup === 0 ? base : `${base}-${dup + 1}`
+      if (name === m.title) continue
+      try { await materialsApi.update(m.id, { title: name }); done++ } catch { /* 单条失败跳过 */ }
+    }
+    qc.invalidateQueries({ queryKey: ['materials'] })
+    toast.success(t.materials.nameByTagsBatchResult(done))
+  }
 
   const gameMap = useMemo(() => Object.fromEntries(allGames.map(g => [g.app_id, g])), [allGames])
   const typeLabel = (kind: string) => t.materials.types[kind as keyof typeof t.materials.types] || kind
@@ -408,6 +436,12 @@ export default function Materials() {
             <button onClick={() => setAnalyzing(m)} title="AI 分析"
               className="p-1.5 rounded bg-base/75 backdrop-blur-sm text-secondary hover:text-accent">
               <Sparkles size={14} />
+            </button>
+          )}
+          {m.tag_values?.length > 0 && (
+            <button onClick={() => renameOneByTags(m)} title={t.materials.nameByTags}
+              className="p-1.5 rounded bg-base/75 backdrop-blur-sm text-secondary hover:text-accent">
+              <Wand2 size={14} />
             </button>
           )}
           <button onClick={() => openEdit(m)} title={t.materials.editMaterial}
@@ -670,9 +704,6 @@ export default function Materials() {
               onChange={v => setForm(f => ({ ...f, app_id: v }))}
               options={[{ value: '', label: t.materials.selectGame },
                 ...allGames.map(g => ({ value: g.app_id, label: g.name }))]} />
-            <Select value={form.platform} onChange={v => setForm(f => ({ ...f, platform: v }))}
-              options={[{ value: 'youtube', label: 'YouTube' }, { value: 'tiktok', label: 'TikTok' },
-                { value: 'meta', label: 'Meta Ads' }, { value: 'other', label: t.materials.platforms.other }]} />
             {/* 上传走文件扩展名自动判类型；link/编辑才需手选 */}
             {(!isUpload || !!editing) && (
               <Select value={form.material_type} onChange={v => setForm(f => ({ ...f, material_type: v }))}
@@ -680,8 +711,6 @@ export default function Materials() {
                   { value: 'image', label: t.materials.types.image },
                   { value: 'playable', label: t.materials.types.playable }]} />
             )}
-            <input placeholder={t.materials.tagsPlaceholder} value={form.tags}
-              onChange={e => setForm(f => ({ ...f, tags: e.target.value }))} className={inputClass} />
           </div>
           <input placeholder={t.materials.notesPlaceholder} value={form.notes}
             onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className={inputClass} />
@@ -805,6 +834,16 @@ export default function Materials() {
         appId={filterGame || undefined}
         tagOptions={facetKey || undefined}
       />
+
+      {/* 批量「按标签命名」：对本页已打结构化标签的素材一次性按标签重命名 */}
+      {materials.some(m => m.tag_values?.length) && (
+        <div className="reveal reveal-3 mt-6 flex justify-end">
+          <button type="button" onClick={renameByTagsBatch}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-default text-secondary hover:text-accent hover:border-accent/40 transition-colors">
+            <Wand2 size={13} /> {t.materials.nameByTagsBatch}
+          </button>
+        </div>
+      )}
 
       {/* ══ GRID ══════════════════════════════════════════════ */}
       <div className="reveal reveal-3 mt-6">
