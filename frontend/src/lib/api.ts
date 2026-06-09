@@ -45,6 +45,14 @@ import type {
   TagAnalysisSessionListItem,
   TagAnalysisRunRequest,
   TagAnalysisEstimate,
+  PublisherEntity,
+  PublisherEntityCreate,
+  PublisherEntityUpdate,
+  PublisherAlias,
+  PublisherAliasCreate,
+  PublisherAppId,
+  PublisherAppIdCreate,
+  PublisherProduct,
 } from './types'
 
 // 缺 X-Total-Count 头时 fallback 用 items.length（兼容老路由 / 测试夹具）
@@ -292,6 +300,31 @@ export const tagAnalysisApi = {
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
   },
+}
+
+// 厂商主体（publisher entities）：主体 CRUD + 马甲/app_id 子资源 + 旗下产品聚合。
+// 三表是 is_slg 判定的唯一数据源；写操作后端会即时刷新内存索引。零 ST 配额。
+export const publishersApi = {
+  list: (): Promise<PublisherEntity[]> =>
+    api.get('/publishers/').then(r => r.data),
+  get: (id: number): Promise<PublisherEntity> =>
+    api.get(`/publishers/${id}`).then(r => r.data),
+  create: (data: PublisherEntityCreate): Promise<PublisherEntity> =>
+    api.post('/publishers/', data).then(r => r.data),
+  update: (id: number, data: PublisherEntityUpdate): Promise<PublisherEntity> =>
+    api.put(`/publishers/${id}`, data).then(r => r.data),
+  delete: (id: number): Promise<DeleteResponse> =>
+    api.delete(`/publishers/${id}`).then(r => r.data),
+  addAlias: (id: number, data: PublisherAliasCreate): Promise<PublisherAlias> =>
+    api.post(`/publishers/${id}/aliases`, data).then(r => r.data),
+  deleteAlias: (id: number, aliasId: number): Promise<DeleteResponse> =>
+    api.delete(`/publishers/${id}/aliases/${aliasId}`).then(r => r.data),
+  addAppId: (id: number, data: PublisherAppIdCreate): Promise<PublisherAppId> =>
+    api.post(`/publishers/${id}/app-ids`, data).then(r => r.data),
+  deleteAppId: (id: number, appIdRowId: number): Promise<DeleteResponse> =>
+    api.delete(`/publishers/${id}/app-ids/${appIdRowId}`).then(r => r.data),
+  products: (id: number, days = 30): Promise<PublisherProduct[]> =>
+    api.get(`/publishers/${id}/products`, { params: { days } }).then(r => r.data),
 }
 
 export type AdaptModel = 'claude-sonnet-4.5' | 'claude-opus-4.7'

@@ -203,6 +203,33 @@ async def seed_tag_dimensions_if_empty() -> None:
         logger.info("Seeded starter tag dimensions (投放时间 / 路型) on first run")
 
 
+async def seed_publishers_if_empty() -> None:
+    """publisher_entities 空表时灌入内置起步种子（slg_publishers.SEED_PUBLISHERS）。
+
+    幂等：表非空即跳过，绝不覆盖用户已维护的主体 / 马甲。种子的 keyword/app_id
+    全集与迁移前硬编码白名单一致，首次启动后 is_slg 行为不变。
+    """
+    from app.models.publisher import PublisherEntity, PublisherAlias, PublisherAppId
+    from app.services.slg_publishers import SEED_PUBLISHERS
+    async with AsyncSessionLocal() as db:
+        existing = await db.execute(select(PublisherEntity))
+        if existing.scalars().first():
+            return
+        for i, p in enumerate(SEED_PUBLISHERS):
+            e = PublisherEntity(
+                name=p["name"], name_en=p["name_en"], hq_region=p["hq_region"],
+                is_slg=p["is_slg"], brief=p["brief"], sort_order=i,
+            )
+            db.add(e)
+            await db.flush()  # 拿 e.id 再挂子行
+            for kw, label in p["aliases"]:
+                db.add(PublisherAlias(entity_id=e.id, keyword=kw, label=label))
+            for aid, note in p["app_ids"]:
+                db.add(PublisherAppId(entity_id=e.id, app_id=aid, note=note))
+        await db.commit()
+        logger.info("Seeded %d publisher entities on first run", len(SEED_PUBLISHERS))
+
+
 def start_scheduler() -> None:
     if scheduler.running:
         return

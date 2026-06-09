@@ -570,6 +570,77 @@ export interface TagDeleteResponse {
   removed_material_tags?: number
 }
 
+// ─── 厂商主体（publisher entities）────────────────────────────────────────
+
+export interface PublisherAlias {
+  id: number
+  keyword: string
+  label: string | null
+}
+
+export interface PublisherAppId {
+  id: number
+  app_id: string
+  note: string | null
+}
+
+export interface PublisherEntity {
+  id: number
+  name: string
+  name_en: string | null
+  hq_region: string | null
+  is_slg: boolean
+  brief: string | null
+  sort_order: number
+  aliases: PublisherAlias[]
+  app_ids: PublisherAppId[]
+  /** 旗下产品数；列表 / 详情视图均填 */
+  product_count: number | null
+  created_at: IsoDateString
+  updated_at: IsoDateString
+}
+
+export interface PublisherAliasCreate {
+  keyword: string
+  label?: string | null
+}
+
+export interface PublisherAppIdCreate {
+  app_id: string
+  note?: string | null
+}
+
+export interface PublisherEntityCreate {
+  name: string
+  name_en?: string | null
+  hq_region?: string | null
+  is_slg?: boolean
+  brief?: string | null
+  sort_order?: number
+  aliases?: PublisherAliasCreate[]
+  app_ids?: PublisherAppIdCreate[]
+}
+
+export interface PublisherEntityUpdate {
+  name?: string
+  name_en?: string | null
+  hq_region?: string | null
+  is_slg?: boolean
+  brief?: string | null
+  sort_order?: number
+}
+
+/** 主体旗下某产品：跨已监测市场窗口内合计下载/收入，零 ST 配额。 */
+export interface PublisherProduct {
+  app_id: string
+  name: string | null
+  publisher: string | null
+  icon_url: string | null
+  downloads: number
+  revenue: number
+  matched_by: 'alias' | 'app_id'
+}
+
 export interface SyncRankingsResponse {
   message: string
   country: string

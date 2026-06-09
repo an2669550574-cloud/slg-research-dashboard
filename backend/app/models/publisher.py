@@ -1,0 +1,64 @@
+from sqlalchemy import String, Integer, DateTime, Text, Boolean, ForeignKey
+from sqlalchemy.orm import Mapped, mapped_column
+from datetime import datetime
+from typing import Optional
+from app.database import Base, utcnow_naive
+
+
+class PublisherEntity(Base):
+    """厂商主体：一个真实发行/研发实体（如「江娱互动」「FunPlus」）。
+
+    一个主体在海外常用多个发行马甲（PublisherAlias）发行产品；旗下多品类大厂的
+    个别真·SLG 单品按 app_id 精确钉（PublisherAppId）。「主体→旗下产品」是
+    **查询态聚合**——用 aliases 对 game_rankings.publisher 做 token 子序列匹配 +
+    app_ids 精确匹配，不在 game_rankings 上加外键，对榜单数据零污染、零迁移。
+
+    is_slg 标记同时驱动榜单「仅 SLG / 全部策略」过滤与竞品异动检测——本表 +
+    aliases + app_ids 是 is_slg 判定的唯一数据源（运行时走 slg_publishers 内存索引）。
+    """
+    __tablename__ = "publisher_entities"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))  # 中文主体名，如「江娱互动」
+    name_en: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    hq_region: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # 国内 / 海外 / 具体国家
+    is_slg: Mapped[bool] = mapped_column(Boolean, default=True)
+    brief: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # 短背景 / 调研备注
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=utcnow_naive, onupdate=utcnow_naive
+    )
+
+
+class PublisherAlias(Base):
+    """主体的海外发行马甲：榜单 publisher 字段里出现的发行标。
+
+    keyword = 小写分词后的**连续 token 子序列**，命中 game_rankings.publisher 即
+    归一到该主体（与旧 slg_publishers 的匹配同规则，对 `Pte. Ltd.`/`Inc`/标点鲁棒）。
+    一个主体可有多条（如 FunPlus 系 = funplus / kingsgroup）。label 仅供展示。
+    """
+    __tablename__ = "publisher_aliases"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entity_id: Mapped[int] = mapped_column(
+        ForeignKey("publisher_entities.id", ondelete="CASCADE"), index=True
+    )
+    keyword: Mapped[str] = mapped_column(String(100))  # token 匹配键，如 "kingsgroup"
+    label: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)  # 展示名，如 "KingsGroup"
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class PublisherAppId(Base):
+    """多品类大厂旗下单款真·SLG 的精确钉：按发行商收会连带一堆非 SLG，只能按
+    app_id 精确归到主体。跨商店 iOS 数字 id 与 Android 包名各算一行（两端 id 不同）。
+    """
+    __tablename__ = "publisher_app_ids"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entity_id: Mapped[int] = mapped_column(
+        ForeignKey("publisher_entities.id", ondelete="CASCADE"), index=True
+    )
+    app_id: Mapped[str] = mapped_column(String(100), index=True)
+    note: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)

@@ -16,6 +16,12 @@ from app.schemas.tag_analysis import (
     TagAnalysisSessionOut, TagAnalysisSessionListItem,
     TagAnalysisEstimateOut,
 )
+from app.schemas.publisher import (
+    PublisherEntityOut, PublisherEntityCreate, PublisherEntityUpdate,
+    PublisherAliasOut, PublisherAliasCreate,
+    PublisherAppIdOut, PublisherAppIdCreate,
+    PublisherProductOut,
+)
 
 __all__ = [
     "TagDimensionCreate",
@@ -55,4 +61,12 @@ __all__ = [
     "MaterialCreate",
     "MaterialUpdate",
     "MaterialTagCount",
+    "PublisherEntityOut",
+    "PublisherEntityCreate",
+    "PublisherEntityUpdate",
+    "PublisherAliasOut",
+    "PublisherAliasCreate",
+    "PublisherAppIdOut",
+    "PublisherAppIdCreate",
+    "PublisherProductOut",
 ]

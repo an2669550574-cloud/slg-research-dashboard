@@ -7,12 +7,13 @@ from app.database import init_db
 from app.config import settings
 from app.security import require_api_key
 from app.scheduler import (
-    start_scheduler, shutdown_scheduler, sync_seed_games_if_empty, seed_tag_dimensions_if_empty,
+    start_scheduler, shutdown_scheduler, sync_seed_games_if_empty,
+    seed_tag_dimensions_if_empty, seed_publishers_if_empty,
 )
 from app.logging_setup import configure_logging, RequestLoggingMiddleware
 from app.rate_limit import limiter
 from app.observability import init_sentry, deep_health
-from app.routers import games, history, materials, movements, product, quota, tags, tag_analysis
+from app.routers import games, history, materials, movements, product, quota, tags, tag_analysis, publishers
 
 configure_logging(settings.LOG_LEVEL)
 init_sentry()
@@ -34,6 +35,10 @@ async def lifespan(app: FastAPI):
     await init_db()
     await sync_seed_games_if_empty()
     await seed_tag_dimensions_if_empty()
+    await seed_publishers_if_empty()
+    # 厂商主体三表是 is_slg 判定的源；启动加载进内存索引（seed 之后，确保非空）。
+    from app.services.slg_publishers import load_index_from_db
+    await load_index_from_db()
     start_scheduler()
     try:
         yield
@@ -75,6 +80,7 @@ app.include_router(product.router, dependencies=_protected)
 app.include_router(product.file_router)
 app.include_router(tags.router, dependencies=_protected)
 app.include_router(tag_analysis.router, dependencies=_protected)
+app.include_router(publishers.router, dependencies=_protected)
 
 
 @app.get("/api/health")
