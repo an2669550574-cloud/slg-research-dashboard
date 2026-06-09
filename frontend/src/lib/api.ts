@@ -55,6 +55,8 @@ import type {
   PublisherAppIdCreate,
   PublisherSource,
   PublisherSourceCreate,
+  PublisherRelationLink,
+  PublisherRelationCreate,
   PublisherProduct,
 } from './types'
 
@@ -338,6 +340,11 @@ export const publishersApi = {
     api.post(`/publishers/${id}/sources`, data).then(r => r.data),
   deleteSource: (id: number, sourceId: number): Promise<DeleteResponse> =>
     api.delete(`/publishers/${id}/sources/${sourceId}`).then(r => r.data),
+  // 股权/母子关系：从本主体视角增删（counterpart_role=parent 对方是母公司 / child 是子公司）。
+  addRelation: (id: number, data: PublisherRelationCreate): Promise<PublisherRelationLink> =>
+    api.post(`/publishers/${id}/relations`, data).then(r => r.data),
+  deleteRelation: (id: number, relationId: number): Promise<DeleteResponse> =>
+    api.delete(`/publishers/${id}/relations/${relationId}`).then(r => r.data),
   products: (id: number, days = 30): Promise<PublisherProduct[]> =>
     api.get(`/publishers/${id}/products`, { params: { days } }).then(r => r.data),
 }

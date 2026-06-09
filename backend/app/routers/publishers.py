@@ -10,17 +10,20 @@
 import re
 from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func, delete as sa_delete
+from sqlalchemy import select, func, or_, delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db, utcnow_naive
-from app.models.publisher import PublisherEntity, PublisherAlias, PublisherAppId, PublisherSource
+from app.models.publisher import (
+    PublisherEntity, PublisherAlias, PublisherAppId, PublisherSource, PublisherRelation,
+)
 from app.models.game import GameRanking
 from app.schemas import (
     PublisherEntityOut, PublisherEntityCreate, PublisherEntityUpdate,
     PublisherAliasOut, PublisherAliasCreate,
     PublisherAppIdOut, PublisherAppIdCreate,
-    PublisherSourceOut, PublisherSourceCreate, PublisherProductOut,
+    PublisherSourceOut, PublisherSourceCreate,
+    PublisherRelationCreate, PublisherRelationLinkOut, PublisherProductOut,
 )
 from app.services.slg_publishers import load_index_from_db
 from app.services.provenance import is_primary, provenance_tier
@@ -81,6 +84,36 @@ def _source_out(s: PublisherSource) -> PublisherSourceOut:
     )
 
 
+def _rel_link(rel: PublisherRelation, counterpart_id: int, name_map: dict[int, str]) -> PublisherRelationLinkOut:
+    return PublisherRelationLinkOut(
+        relation_id=rel.id, entity_id=counterpart_id, name=name_map.get(counterpart_id, "?"),
+        relation_type=rel.relation_type, stake_pct=rel.stake_pct, note=rel.note,
+    )
+
+
+async def _relations(entity_id: int, db: AsyncSession):
+    """返回 (parents, children)：本主体的母公司/投资方、子公司/关联（对方名已解析）。"""
+    rels = (await db.execute(
+        select(PublisherRelation).where(
+            or_(PublisherRelation.parent_id == entity_id, PublisherRelation.child_id == entity_id)
+        ).order_by(PublisherRelation.id)
+    )).scalars().all()
+    cp_ids = {(r.child_id if r.parent_id == entity_id else r.parent_id) for r in rels}
+    name_map: dict[int, str] = {}
+    if cp_ids:
+        rows = (await db.execute(
+            select(PublisherEntity.id, PublisherEntity.name).where(PublisherEntity.id.in_(cp_ids))
+        )).all()
+        name_map = {i: n for i, n in rows}
+    parents, children = [], []
+    for r in rels:
+        if r.child_id == entity_id:  # 对方是母公司
+            parents.append(_rel_link(r, r.parent_id, name_map))
+        if r.parent_id == entity_id:  # 对方是子公司
+            children.append(_rel_link(r, r.child_id, name_map))
+    return parents, children
+
+
 async def _ranking_pairs(db: AsyncSession) -> list[tuple[str, str | None]]:
     """全部曾上榜 app 的 (app_id, 代表 publisher)，用于批量算各主体旗下产品数。"""
     res = await db.execute(
@@ -102,7 +135,7 @@ def _count_for_entity(pairs, alias_kw_tokens, app_id_set) -> int:
     return n
 
 
-def _build_out(e: PublisherEntity, aliases, app_ids, sources, product_count: int | None) -> PublisherEntityOut:
+def _build_out(e: PublisherEntity, aliases, app_ids, sources, parents, children, product_count: int | None) -> PublisherEntityOut:
     return PublisherEntityOut(
         id=e.id, name=e.name, name_en=e.name_en, hq_region=e.hq_region,
         is_slg=e.is_slg, brief=e.brief, sort_order=e.sort_order,
@@ -110,6 +143,7 @@ def _build_out(e: PublisherEntity, aliases, app_ids, sources, product_count: int
         app_ids=[PublisherAppIdOut.model_validate(a) for a in app_ids],
         sources=[_source_out(s) for s in sources],
         provenance_tier=provenance_tier([s.source_type for s in sources]),
+        parents=parents, children=children,
         product_count=product_count,
         created_at=e.created_at, updated_at=e.updated_at,
     )
@@ -124,6 +158,7 @@ async def list_publishers(db: AsyncSession = Depends(get_db)):
     all_aliases = (await db.execute(select(PublisherAlias).order_by(PublisherAlias.id))).scalars().all()
     all_app_ids = (await db.execute(select(PublisherAppId).order_by(PublisherAppId.id))).scalars().all()
     all_sources = (await db.execute(select(PublisherSource).order_by(PublisherSource.id))).scalars().all()
+    all_relations = (await db.execute(select(PublisherRelation).order_by(PublisherRelation.id))).scalars().all()
     pairs = await _ranking_pairs(db)
 
     by_alias: dict[int, list[PublisherAlias]] = {}
@@ -136,6 +171,13 @@ async def list_publishers(db: AsyncSession = Depends(get_db)):
     for s in all_sources:
         by_source.setdefault(s.entity_id, []).append(s)
 
+    name_map = {e.id: e.name for e in entities}
+    by_parents: dict[int, list[PublisherRelationLinkOut]] = {}   # entity 作为 child → 它的母公司
+    by_children: dict[int, list[PublisherRelationLinkOut]] = {}  # entity 作为 parent → 它的子公司
+    for r in all_relations:
+        by_parents.setdefault(r.child_id, []).append(_rel_link(r, r.parent_id, name_map))
+        by_children.setdefault(r.parent_id, []).append(_rel_link(r, r.child_id, name_map))
+
     out = []
     for e in entities:
         aliases = by_alias.get(e.id, [])
@@ -143,7 +185,11 @@ async def list_publishers(db: AsyncSession = Depends(get_db)):
         sources = by_source.get(e.id, [])
         kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
         app_id_set = {a.app_id for a in app_ids}
-        out.append(_build_out(e, aliases, app_ids, sources, _count_for_entity(pairs, kw_tokens, app_id_set)))
+        out.append(_build_out(
+            e, aliases, app_ids, sources,
+            by_parents.get(e.id, []), by_children.get(e.id, []),
+            _count_for_entity(pairs, kw_tokens, app_id_set),
+        ))
     return out
 
 
@@ -164,9 +210,10 @@ async def create_publisher(data: PublisherEntityCreate, db: AsyncSession = Depen
     await load_index_from_db()
     aliases, app_ids = await _children(e.id, db)
     sources = await _sources(e.id, db)
+    parents, children = await _relations(e.id, db)
     pairs = await _ranking_pairs(db)
     kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
-    return _build_out(e, aliases, app_ids, sources, _count_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids}))
+    return _build_out(e, aliases, app_ids, sources, parents, children, _count_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids}))
 
 
 @router.get("/{entity_id}", response_model=PublisherEntityOut)
@@ -174,9 +221,10 @@ async def get_publisher(entity_id: int, db: AsyncSession = Depends(get_db)):
     e = await _get_entity_or_404(entity_id, db)
     aliases, app_ids = await _children(entity_id, db)
     sources = await _sources(entity_id, db)
+    parents, children = await _relations(entity_id, db)
     pairs = await _ranking_pairs(db)
     kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
-    return _build_out(e, aliases, app_ids, sources, _count_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids}))
+    return _build_out(e, aliases, app_ids, sources, parents, children, _count_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids}))
 
 
 @router.put("/{entity_id}", response_model=PublisherEntityOut)
@@ -189,9 +237,10 @@ async def update_publisher(entity_id: int, data: PublisherEntityUpdate, db: Asyn
     await load_index_from_db()  # is_slg 字段虽不入索引，统一刷新保持简单
     aliases, app_ids = await _children(entity_id, db)
     sources = await _sources(entity_id, db)
+    parents, children = await _relations(entity_id, db)
     pairs = await _ranking_pairs(db)
     kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
-    return _build_out(e, aliases, app_ids, sources, _count_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids}))
+    return _build_out(e, aliases, app_ids, sources, parents, children, _count_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids}))
 
 
 @router.delete("/{entity_id}")
@@ -201,6 +250,9 @@ async def delete_publisher(entity_id: int, db: AsyncSession = Depends(get_db)):
     await db.execute(sa_delete(PublisherAlias).where(PublisherAlias.entity_id == entity_id))
     await db.execute(sa_delete(PublisherAppId).where(PublisherAppId.entity_id == entity_id))
     await db.execute(sa_delete(PublisherSource).where(PublisherSource.entity_id == entity_id))
+    await db.execute(sa_delete(PublisherRelation).where(
+        or_(PublisherRelation.parent_id == entity_id, PublisherRelation.child_id == entity_id)
+    ))
     await db.delete(e)
     await db.commit()
     await load_index_from_db()
@@ -288,6 +340,58 @@ async def delete_source(entity_id: int, source_id: int, db: AsyncSession = Depen
     )).scalar_one_or_none()
     if s:
         await db.delete(s)
+        await db.commit()
+    return {"message": "deleted"}
+
+
+# ── 子资源：股权/母子关系 ──────────────────────────────────────────────────
+
+@router.post("/{entity_id}/relations", response_model=PublisherRelationLinkOut, status_code=201)
+async def add_relation(entity_id: int, data: PublisherRelationCreate, db: AsyncSession = Depends(get_db)):
+    """从本主体视角加一条股权关系。counterpart_role='parent' = 对方是本主体母公司；
+    'child' = 对方是本主体子公司。禁自环、禁重复 (parent,child) 对。"""
+    await _get_entity_or_404(entity_id, db)
+    if data.counterpart_id == entity_id:
+        raise HTTPException(status_code=400, detail="不能与自身建立股权关系")
+    await _get_entity_or_404(data.counterpart_id, db)  # 对方必须存在
+
+    if data.counterpart_role == "parent":
+        parent_id, child_id = data.counterpart_id, entity_id
+    else:  # 'child'
+        parent_id, child_id = entity_id, data.counterpart_id
+
+    dup = (await db.execute(
+        select(PublisherRelation).where(
+            PublisherRelation.parent_id == parent_id, PublisherRelation.child_id == child_id
+        )
+    )).scalar_one_or_none()
+    if dup:
+        raise HTTPException(status_code=409, detail="该股权关系已存在")
+
+    rel = PublisherRelation(
+        parent_id=parent_id, child_id=child_id,
+        relation_type=data.relation_type, stake_pct=data.stake_pct, note=data.note,
+    )
+    db.add(rel)
+    await db.commit()
+    await db.refresh(rel)
+    # 从本主体视角返回（对方 = counterpart_id）
+    name = (await db.execute(
+        select(PublisherEntity.name).where(PublisherEntity.id == data.counterpart_id)
+    )).scalar_one()
+    return _rel_link(rel, data.counterpart_id, {data.counterpart_id: name})
+
+
+@router.delete("/{entity_id}/relations/{relation_id}")
+async def delete_relation(entity_id: int, relation_id: int, db: AsyncSession = Depends(get_db)):
+    rel = (await db.execute(
+        select(PublisherRelation).where(
+            PublisherRelation.id == relation_id,
+            or_(PublisherRelation.parent_id == entity_id, PublisherRelation.child_id == entity_id),
+        )
+    )).scalar_one_or_none()
+    if rel:
+        await db.delete(rel)
         await db.commit()
     return {"message": "deleted"}
 

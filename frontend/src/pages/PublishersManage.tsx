@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { Plus, Trash2, Pencil, X, Building2, Globe, Boxes, ChevronDown, ChevronRight, Link2, ShieldCheck } from 'lucide-react'
+import { Plus, Trash2, Pencil, X, Building2, Globe, Boxes, ChevronDown, ChevronRight, Link2, ShieldCheck, Network } from 'lucide-react'
 import { publishersApi } from '../lib/api'
 import { useT } from '../i18n'
 import { PageHeader } from '../components/PageHeader'
@@ -10,6 +10,7 @@ import { QueryError } from '../components/QueryError'
 import type {
   PublisherEntity, PublisherEntityCreate, PublisherEntityUpdate,
   PublisherSourceCreate, PublisherSourceType,
+  PublisherRelationCreate, PublisherRelationType, RelationCounterpartRole,
 } from '../lib/types'
 
 type EntityForm = {
@@ -32,6 +33,10 @@ const SOURCE_TYPE_ORDER: PublisherSourceType[] = [
 type SrcForm = { title: string; url: string; source_type: PublisherSourceType; confidence: string; as_of: string }
 const BLANK_SRC: SrcForm = { title: '', url: '', source_type: 'registry', confidence: '', as_of: '' }
 
+const RELATION_TYPE_ORDER: PublisherRelationType[] = ['wholly_owned', 'controlling', 'minority', 'affiliate']
+type RelForm = { counterpart_id: string; counterpart_role: RelationCounterpartRole; relation_type: PublisherRelationType; stake_pct: string }
+const BLANK_REL: RelForm = { counterpart_id: '', counterpart_role: 'parent', relation_type: 'controlling', stake_pct: '' }
+
 const fmtNum = (n: number) => n.toLocaleString('en-US')
 const fmtMoney = (n: number) => `$${Math.round(n).toLocaleString('en-US')}`
 
@@ -45,6 +50,7 @@ export default function PublishersManage() {
   const [newAlias, setNewAlias] = useState<Record<number, string>>({})
   const [newAppId, setNewAppId] = useState<Record<number, string>>({})
   const [srcForm, setSrcForm] = useState<Record<number, SrcForm>>({})
+  const [relForm, setRelForm] = useState<Record<number, RelForm>>({})
   const [expanded, setExpanded] = useState<Record<number, boolean>>({})
 
   const isEditing = mode.kind === 'edit'
@@ -92,6 +98,14 @@ export default function PublishersManage() {
   const delSourceMut = useMutation({
     mutationFn: ({ id, sourceId }: { id: number; sourceId: number }) => publishersApi.deleteSource(id, sourceId),
     onSuccess: () => { invalidate(); toast.success(tt.sourceDeleted) },
+  })
+  const addRelationMut = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: PublisherRelationCreate }) => publishersApi.addRelation(id, data),
+    onSuccess: (_o, { id }) => { invalidate(); setRelForm(s => ({ ...s, [id]: BLANK_REL })); toast.success(tt.relationAdded) },
+  })
+  const delRelationMut = useMutation({
+    mutationFn: ({ id, relationId }: { id: number; relationId: number }) => publishersApi.deleteRelation(id, relationId),
+    onSuccess: () => { invalidate(); toast.success(tt.relationDeleted) },
   })
 
   function closeForm() { setMode({ kind: 'closed' }); setForm(EMPTY_FORM) }
@@ -155,6 +169,21 @@ export default function PublishersManage() {
   const handleDelSource = (id: number, sourceId: number) => {
     if (!window.confirm(tt.confirmDeleteSource)) return
     delSourceMut.mutate({ id, sourceId })
+  }
+  const setRel = (id: number, patch: Partial<RelForm>) =>
+    setRelForm(s => ({ ...s, [id]: { ...(s[id] ?? BLANK_REL), ...patch } }))
+  const handleAddRelation = (id: number) => {
+    const f = relForm[id] ?? BLANK_REL
+    if (!f.counterpart_id) { toast.error(tt.relationNeedCounterpart); return }
+    const stake = f.stake_pct.trim()
+    addRelationMut.mutate({ id, data: {
+      counterpart_id: Number(f.counterpart_id), counterpart_role: f.counterpart_role,
+      relation_type: f.relation_type, stake_pct: stake === '' ? null : Number(stake),
+    } })
+  }
+  const handleDelRelation = (id: number, relationId: number) => {
+    if (!window.confirm(tt.confirmDeleteRelation)) return
+    delRelationMut.mutate({ id, relationId })
   }
 
   const submitting = createMut.isPending || updateMut.isPending
@@ -421,6 +450,84 @@ export default function PublishersManage() {
                   />
                   <button onClick={() => handleAddSource(e.id)} disabled={addSourceMut.isPending}
                     className="p-1 text-muted hover:text-accent transition-colors" title={tt.addSource}>
+                    <Plus size={14} />
+                  </button>
+                </div>
+              </div>
+
+              {/* 股权/母子关系 */}
+              <div className="border-t border-default pt-3 space-y-2">
+                <div className="flex items-center gap-1.5 text-[11px] text-secondary">
+                  <Network size={12} />{tt.relationsLabel}
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <div className="text-[10px] text-muted">{tt.parentsLabel}</div>
+                    {e.parents.length === 0 && <div className="text-[11px] text-muted">{tt.noParents}</div>}
+                    {e.parents.map(p => (
+                      <div key={p.relation_id} className="flex items-center gap-2 text-xs bg-elevated border border-default rounded-lg px-2.5 py-1.5">
+                        <Building2 size={11} className="text-accent shrink-0" />
+                        <span className="text-primary truncate">{p.name}</span>
+                        <span className="shrink-0 text-[10px] text-secondary">
+                          {tt.relationTypes[p.relation_type]}{p.stake_pct != null ? ` · ${tt.stakeSuffix(p.stake_pct)}` : ''}
+                        </span>
+                        <button onClick={() => handleDelRelation(e.id, p.relation_id)} title={t.common.delete}
+                          className="ml-auto shrink-0 text-muted hover:text-red-400 transition-colors"><X size={12} /></button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="text-[10px] text-muted">{tt.childrenLabel}</div>
+                    {e.children.length === 0 && <div className="text-[11px] text-muted">{tt.noChildren}</div>}
+                    {e.children.map(c => (
+                      <div key={c.relation_id} className="flex items-center gap-2 text-xs bg-elevated border border-default rounded-lg px-2.5 py-1.5">
+                        <Building2 size={11} className="text-secondary shrink-0" />
+                        <span className="text-primary truncate">{c.name}</span>
+                        <span className="shrink-0 text-[10px] text-secondary">
+                          {tt.relationTypes[c.relation_type]}{c.stake_pct != null ? ` · ${tt.stakeSuffix(c.stake_pct)}` : ''}
+                        </span>
+                        <button onClick={() => handleDelRelation(e.id, c.relation_id)} title={t.common.delete}
+                          className="ml-auto shrink-0 text-muted hover:text-red-400 transition-colors"><X size={12} /></button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                {/* 添加关系 */}
+                <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                  <select
+                    value={(relForm[e.id] ?? BLANK_REL).counterpart_role}
+                    onChange={ev => setRel(e.id, { counterpart_role: ev.target.value as RelationCounterpartRole })}
+                    className="bg-elevated border border-default rounded-lg px-2 py-1 text-xs text-primary focus:outline-none focus:border-brand-500"
+                  >
+                    <option value="parent">{tt.roleParent}</option>
+                    <option value="child">{tt.roleChild}</option>
+                  </select>
+                  <select
+                    value={(relForm[e.id] ?? BLANK_REL).counterpart_id}
+                    onChange={ev => setRel(e.id, { counterpart_id: ev.target.value })}
+                    className="bg-elevated border border-default rounded-lg px-2 py-1 text-xs text-primary focus:outline-none focus:border-brand-500 flex-1 min-w-[140px]"
+                  >
+                    <option value="">{tt.relationPickCounterpart}</option>
+                    {entities.filter(o => o.id !== e.id).map(o => (
+                      <option key={o.id} value={o.id}>{o.name}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={(relForm[e.id] ?? BLANK_REL).relation_type}
+                    onChange={ev => setRel(e.id, { relation_type: ev.target.value as PublisherRelationType })}
+                    className="bg-elevated border border-default rounded-lg px-2 py-1 text-xs text-primary focus:outline-none focus:border-brand-500"
+                  >
+                    {RELATION_TYPE_ORDER.map(rt => <option key={rt} value={rt}>{tt.relationTypes[rt]}</option>)}
+                  </select>
+                  <input
+                    type="number" min={0} max={100} step="0.01"
+                    value={(relForm[e.id] ?? BLANK_REL).stake_pct}
+                    onChange={ev => setRel(e.id, { stake_pct: ev.target.value })}
+                    placeholder={tt.stakePlaceholder}
+                    className="bg-elevated border border-default rounded-lg px-2 py-1 text-xs text-primary placeholder:text-muted focus:outline-none focus:border-brand-500 w-20"
+                  />
+                  <button onClick={() => handleAddRelation(e.id)} disabled={addRelationMut.isPending}
+                    className="p-1 text-muted hover:text-accent transition-colors" title={tt.addRelation}>
                     <Plus size={14} />
                   </button>
                 </div>
