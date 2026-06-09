@@ -151,6 +151,10 @@ export const zh = {
     noBaseline: '历史快照不足，还在积累中（至少需 1 期历史快照才能判定新面孔）',
     note: '“新面孔”= 该产品近 N 期榜单从未出现、本期首次进榜；按本地榜单存在性判定（是产品上线的代理信号，非真实发布日），零 Sensor Tower 配额。',
     csvSlg: 'SLG 识别',
+    triage: '建档',
+    triageConfirm: (name: string) => `把「${name}」建档为待调研厂商主体？会在「厂商主体」页创建一条档案并钉住该 app_id（建档后即识别为 SLG）。`,
+    triaged: (name: string) => `已建档：${name} · 去「厂商主体」补股权 / 溯源`,
+    triageBrief: (game: string, market: string) => `由新品监测建档 · ${market} · ${game}`,
   },
   materials: {
     title: '素材库',

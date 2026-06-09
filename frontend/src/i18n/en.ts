@@ -146,6 +146,10 @@ export const en: Translations = {
     noBaseline: 'Not enough snapshot history yet (need at least 1 prior snapshot to flag newcomers)',
     note: 'A "newcomer" is a title unseen in the last N snapshots that just entered the chart; detected by local chart presence (a proxy for launch, not the actual release date), at zero Sensor Tower quota.',
     csvSlg: 'SLG match',
+    triage: 'Add to research',
+    triageConfirm: (name: string) => `Create a research dossier for "${name}" and pin this app_id? (it will be recognized as SLG after).`,
+    triaged: (name: string) => `Dossier created: ${name} · add ownership / sources in Publishers`,
+    triageBrief: (game: string, market: string) => `From New Releases · ${market} · ${game}`,
   },
   materials: {
     title: 'Materials',
