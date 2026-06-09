@@ -123,6 +123,17 @@ class Settings(BaseSettings):
     # 收入环比 |变化%| ≥ 该值才报（两日都需有收入数据）。
     COMPETITOR_REVENUE_PCT: int = 50
 
+    # ── 新品监测（newcomers）：本地零配额「新面孔」检测 ─────────────────
+    # 「新面孔」= 某 app_id 在过去 NEWCOMER_WINDOW 个同步快照里从没出现过、却在
+    # 最近一次同步进入 Top NEWCOMER_TOPN 的产品。纯读 game_rankings，零 ST 配额。
+    # 与 COMPETITOR_*(movement 今日 vs 昨日 TopN 进退、且只看 SLG 白名单) 互补：
+    # 那个抓"老熟人进退"，这个抓"全新面孔"且**故意不走 is_slg**——全新产品的发行商
+    # 往往还没进 SLG 白名单(白名单滞后维护)，过滤会把最该看的新厂商新品筛掉。
+    # 回看多少个同步快照作"见过"基线。同步周级化后 ≈ 4 周历史。
+    NEWCOMER_WINDOW: int = 4
+    # 最近一次同步里名次 ≤ 该值才算"新进榜"，过滤榜尾噪声。
+    NEWCOMER_TOPN: int = 50
+
     # 素材库上传文件落盘根目录。容器内走已挂载的 ./data:/app/data 卷，
     # 宿主机即 /opt/slg-research-dashboard/data/materials，与 DB 同一备份域。
     MEDIA_ROOT: str = "./data/materials"
