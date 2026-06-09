@@ -51,7 +51,6 @@ export default function PublishersManage() {
   const [newAppId, setNewAppId] = useState<Record<number, string>>({})
   const [srcForm, setSrcForm] = useState<Record<number, SrcForm>>({})
   const [relForm, setRelForm] = useState<Record<number, RelForm>>({})
-  const [expanded, setExpanded] = useState<Record<number, boolean>>({})
   // 卡片默认收起：只看摘要，点开才显示管理区
   const [cardOpen, setCardOpen] = useState<Record<number, boolean>>({})
   const [search, setSearch] = useState('')
@@ -374,7 +373,24 @@ export default function PublishersManage() {
 
               {open && (
               <div className="px-4 pb-4 space-y-3">
-              {e.brief && <p className="text-xs text-muted border-t border-default pt-3">{e.brief}</p>}
+              {/* 公司介绍（业务最先看）*/}
+              <div className="border-t border-default pt-3">
+                <div className="text-[11px] text-secondary mb-1">{tt.briefSectionLabel}</div>
+                {e.brief
+                  ? <p className="text-sm text-primary/90 leading-relaxed whitespace-pre-wrap">{e.brief}</p>
+                  : <p className="text-xs text-muted">{tt.briefEmpty}</p>}
+              </div>
+
+              {/* 旗下 SLG 产品（展开即自动加载·零 ST 配额）*/}
+              <div className="border-t border-default pt-3 space-y-1.5">
+                <div className="text-[11px] text-secondary">
+                  {tt.productsSectionLabel}{e.product_count != null ? `（${e.product_count}）` : ''}
+                </div>
+                <PublisherProducts entityId={e.id} />
+              </div>
+
+              {/* ↓ 以下为调研维护字段（业务可略）*/}
+              <div className="pt-1 text-[10px] uppercase tracking-wider text-muted/60">{tt.maintLabel}</div>
 
               {/* 海外发行马甲 */}
               <div className="border-t border-default pt-3 space-y-2">
@@ -589,18 +605,6 @@ export default function PublishersManage() {
                 </div>
               </div>
 
-              {/* 旗下产品（按需展开聚合） */}
-              <div className="border-t border-default pt-3">
-                <button
-                  onClick={() => setExpanded(s => ({ ...s, [e.id]: !s[e.id] }))}
-                  className="flex items-center gap-1.5 text-[11px] text-secondary hover:text-primary transition-colors"
-                >
-                  {expanded[e.id] ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                  {expanded[e.id] ? tt.hideProducts : tt.viewProducts}
-                  {e.product_count != null && <span className="text-muted">（{e.product_count}）</span>}
-                </button>
-                {expanded[e.id] && <PublisherProducts entityId={e.id} />}
-              </div>
               </div>
               )}
             </div>
