@@ -14,14 +14,16 @@ from sqlalchemy import select, func, delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db, utcnow_naive
-from app.models.publisher import PublisherEntity, PublisherAlias, PublisherAppId
+from app.models.publisher import PublisherEntity, PublisherAlias, PublisherAppId, PublisherSource
 from app.models.game import GameRanking
 from app.schemas import (
     PublisherEntityOut, PublisherEntityCreate, PublisherEntityUpdate,
     PublisherAliasOut, PublisherAliasCreate,
-    PublisherAppIdOut, PublisherAppIdCreate, PublisherProductOut,
+    PublisherAppIdOut, PublisherAppIdCreate,
+    PublisherSourceOut, PublisherSourceCreate, PublisherProductOut,
 )
 from app.services.slg_publishers import load_index_from_db
+from app.services.provenance import is_primary, provenance_tier
 
 router = APIRouter(prefix="/api/publishers", tags=["publishers"])
 
@@ -64,6 +66,21 @@ async def _children(entity_id: int, db: AsyncSession):
     return aliases, app_ids
 
 
+async def _sources(entity_id: int, db: AsyncSession):
+    return (await db.execute(
+        select(PublisherSource).where(PublisherSource.entity_id == entity_id)
+        .order_by(PublisherSource.id)
+    )).scalars().all()
+
+
+def _source_out(s: PublisherSource) -> PublisherSourceOut:
+    return PublisherSourceOut(
+        id=s.id, url=s.url, title=s.title, source_type=s.source_type,
+        is_primary=is_primary(s.source_type), confidence=s.confidence,
+        as_of=s.as_of, note=s.note,
+    )
+
+
 async def _ranking_pairs(db: AsyncSession) -> list[tuple[str, str | None]]:
     """全部曾上榜 app 的 (app_id, 代表 publisher)，用于批量算各主体旗下产品数。"""
     res = await db.execute(
@@ -85,12 +102,14 @@ def _count_for_entity(pairs, alias_kw_tokens, app_id_set) -> int:
     return n
 
 
-def _build_out(e: PublisherEntity, aliases, app_ids, product_count: int | None) -> PublisherEntityOut:
+def _build_out(e: PublisherEntity, aliases, app_ids, sources, product_count: int | None) -> PublisherEntityOut:
     return PublisherEntityOut(
         id=e.id, name=e.name, name_en=e.name_en, hq_region=e.hq_region,
         is_slg=e.is_slg, brief=e.brief, sort_order=e.sort_order,
         aliases=[PublisherAliasOut.model_validate(a) for a in aliases],
         app_ids=[PublisherAppIdOut.model_validate(a) for a in app_ids],
+        sources=[_source_out(s) for s in sources],
+        provenance_tier=provenance_tier([s.source_type for s in sources]),
         product_count=product_count,
         created_at=e.created_at, updated_at=e.updated_at,
     )
@@ -104,6 +123,7 @@ async def list_publishers(db: AsyncSession = Depends(get_db)):
     )).scalars().all()
     all_aliases = (await db.execute(select(PublisherAlias).order_by(PublisherAlias.id))).scalars().all()
     all_app_ids = (await db.execute(select(PublisherAppId).order_by(PublisherAppId.id))).scalars().all()
+    all_sources = (await db.execute(select(PublisherSource).order_by(PublisherSource.id))).scalars().all()
     pairs = await _ranking_pairs(db)
 
     by_alias: dict[int, list[PublisherAlias]] = {}
@@ -112,14 +132,18 @@ async def list_publishers(db: AsyncSession = Depends(get_db)):
     by_appid: dict[int, list[PublisherAppId]] = {}
     for a in all_app_ids:
         by_appid.setdefault(a.entity_id, []).append(a)
+    by_source: dict[int, list[PublisherSource]] = {}
+    for s in all_sources:
+        by_source.setdefault(s.entity_id, []).append(s)
 
     out = []
     for e in entities:
         aliases = by_alias.get(e.id, [])
         app_ids = by_appid.get(e.id, [])
+        sources = by_source.get(e.id, [])
         kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
         app_id_set = {a.app_id for a in app_ids}
-        out.append(_build_out(e, aliases, app_ids, _count_for_entity(pairs, kw_tokens, app_id_set)))
+        out.append(_build_out(e, aliases, app_ids, sources, _count_for_entity(pairs, kw_tokens, app_id_set)))
     return out
 
 
@@ -139,18 +163,20 @@ async def create_publisher(data: PublisherEntityCreate, db: AsyncSession = Depen
     await db.refresh(e)
     await load_index_from_db()
     aliases, app_ids = await _children(e.id, db)
+    sources = await _sources(e.id, db)
     pairs = await _ranking_pairs(db)
     kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
-    return _build_out(e, aliases, app_ids, _count_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids}))
+    return _build_out(e, aliases, app_ids, sources, _count_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids}))
 
 
 @router.get("/{entity_id}", response_model=PublisherEntityOut)
 async def get_publisher(entity_id: int, db: AsyncSession = Depends(get_db)):
     e = await _get_entity_or_404(entity_id, db)
     aliases, app_ids = await _children(entity_id, db)
+    sources = await _sources(entity_id, db)
     pairs = await _ranking_pairs(db)
     kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
-    return _build_out(e, aliases, app_ids, _count_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids}))
+    return _build_out(e, aliases, app_ids, sources, _count_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids}))
 
 
 @router.put("/{entity_id}", response_model=PublisherEntityOut)
@@ -162,9 +188,10 @@ async def update_publisher(entity_id: int, data: PublisherEntityUpdate, db: Asyn
     await db.refresh(e)
     await load_index_from_db()  # is_slg 字段虽不入索引，统一刷新保持简单
     aliases, app_ids = await _children(entity_id, db)
+    sources = await _sources(entity_id, db)
     pairs = await _ranking_pairs(db)
     kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
-    return _build_out(e, aliases, app_ids, _count_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids}))
+    return _build_out(e, aliases, app_ids, sources, _count_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids}))
 
 
 @router.delete("/{entity_id}")
@@ -173,6 +200,7 @@ async def delete_publisher(entity_id: int, db: AsyncSession = Depends(get_db)):
     # SQLite 默认不强制 FK 级联，应用层显式删子行。
     await db.execute(sa_delete(PublisherAlias).where(PublisherAlias.entity_id == entity_id))
     await db.execute(sa_delete(PublisherAppId).where(PublisherAppId.entity_id == entity_id))
+    await db.execute(sa_delete(PublisherSource).where(PublisherSource.entity_id == entity_id))
     await db.delete(e)
     await db.commit()
     await load_index_from_db()
@@ -230,6 +258,37 @@ async def delete_app_id(entity_id: int, app_id_row_id: int, db: AsyncSession = D
         await db.delete(a)
         await db.commit()
         await load_index_from_db()
+    return {"message": "deleted"}
+
+
+# ── 子资源：调研出处（一手源溯源）─────────────────────────────────────────
+
+@router.post("/{entity_id}/sources", response_model=PublisherSourceOut, status_code=201)
+async def add_source(entity_id: int, data: PublisherSourceCreate, db: AsyncSession = Depends(get_db)):
+    """给主体加一条调研出处。source_type 非法 → 422（pydantic 校验）。
+    溯源源不影响 is_slg 判定，故不刷新内存索引。"""
+    await _get_entity_or_404(entity_id, db)
+    s = PublisherSource(
+        entity_id=entity_id, url=data.url.strip(), title=data.title,
+        source_type=data.source_type, confidence=data.confidence,
+        as_of=data.as_of, note=data.note,
+    )
+    db.add(s)
+    await db.commit()
+    await db.refresh(s)
+    return _source_out(s)
+
+
+@router.delete("/{entity_id}/sources/{source_id}")
+async def delete_source(entity_id: int, source_id: int, db: AsyncSession = Depends(get_db)):
+    s = (await db.execute(
+        select(PublisherSource).where(
+            PublisherSource.id == source_id, PublisherSource.entity_id == entity_id
+        )
+    )).scalar_one_or_none()
+    if s:
+        await db.delete(s)
+        await db.commit()
     return {"message": "deleted"}
 
 

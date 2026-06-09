@@ -62,3 +62,28 @@ class PublisherAppId(Base):
     app_id: Mapped[str] = mapped_column(String(100), index=True)
     note: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class PublisherSource(Base):
+    """主体调研出处（溯源）：一条支撑「该主体身份 / 归属 / 股权」判断的来源。
+
+    source_type 决定一手/二手分级（见 services/provenance），是「调研沉淀可信度」的依据：
+    工商登记 / 官方备案 / 商店开发者字段 / 受控域名 = 一手；媒体 / 百科 / 分析 / 厂商
+    自述 = 二手。让档案能沉淀得住、可回溯，而不是只有一段自由文本 brief。
+    """
+    __tablename__ = "publisher_sources"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entity_id: Mapped[int] = mapped_column(
+        ForeignKey("publisher_entities.id", ondelete="CASCADE"), index=True
+    )
+    url: Mapped[str] = mapped_column(String(1000))
+    title: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    # provenance.SOURCE_TYPES 之一（registry / official_filing / official_platform /
+    # official_domain / media / reference / analysis / self_report）
+    source_type: Mapped[str] = mapped_column(String(50))
+    # high / medium / low / unverified（自由填，查不到一手源就标 unverified）
+    confidence: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    as_of: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # 核验日期 YYYY-MM-DD
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
