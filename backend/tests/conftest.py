@@ -47,6 +47,7 @@ async def app(tmp_db_url, monkeypatch):
     monkeypatch.setattr(app_main, "shutdown_scheduler", lambda: None)
     monkeypatch.setattr(app_main, "sync_seed_games_if_empty", _noop_async)
     monkeypatch.setattr(app_main, "seed_tag_dimensions_if_empty", _noop_async)
+    monkeypatch.setattr(app_main, "seed_publishers_if_empty", _noop_async)
 
     yield fastapi_app
 
