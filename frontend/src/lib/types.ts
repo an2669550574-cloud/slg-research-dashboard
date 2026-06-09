@@ -614,6 +614,34 @@ export interface PublisherAppId {
   note: string | null
 }
 
+/** 调研出处类型。前四类 = 一手（primary），后四类 = 二手（secondary）。 */
+export type PublisherSourceType =
+  | 'registry' | 'official_filing' | 'official_platform' | 'official_domain'
+  | 'media' | 'reference' | 'analysis' | 'self_report'
+
+/** 主体溯源档位：有一手源 / 仅二手 / 未溯源。 */
+export type ProvenanceTier = 'primary' | 'secondary' | 'none'
+
+export interface PublisherSource {
+  id: number
+  url: string
+  title: string | null
+  source_type: PublisherSourceType
+  is_primary: boolean
+  confidence: string | null
+  as_of: string | null
+  note: string | null
+}
+
+export interface PublisherSourceCreate {
+  url: string
+  title?: string | null
+  source_type: PublisherSourceType
+  confidence?: string | null
+  as_of?: string | null
+  note?: string | null
+}
+
 export interface PublisherEntity {
   id: number
   name: string
@@ -624,6 +652,8 @@ export interface PublisherEntity {
   sort_order: number
   aliases: PublisherAlias[]
   app_ids: PublisherAppId[]
+  sources: PublisherSource[]
+  provenance_tier: ProvenanceTier
   /** 旗下产品数；列表 / 详情视图均填 */
   product_count: number | null
   created_at: IsoDateString

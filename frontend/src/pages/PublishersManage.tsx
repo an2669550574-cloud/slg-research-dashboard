@@ -2,12 +2,15 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { Plus, Trash2, Pencil, X, Building2, Globe, Boxes, ChevronDown, ChevronRight } from 'lucide-react'
+import { Plus, Trash2, Pencil, X, Building2, Globe, Boxes, ChevronDown, ChevronRight, Link2, ShieldCheck } from 'lucide-react'
 import { publishersApi } from '../lib/api'
 import { useT } from '../i18n'
 import { PageHeader } from '../components/PageHeader'
 import { QueryError } from '../components/QueryError'
-import type { PublisherEntity, PublisherEntityCreate, PublisherEntityUpdate } from '../lib/types'
+import type {
+  PublisherEntity, PublisherEntityCreate, PublisherEntityUpdate,
+  PublisherSourceCreate, PublisherSourceType,
+} from '../lib/types'
 
 type EntityForm = {
   name: string
@@ -21,6 +24,14 @@ type Mode = { kind: 'closed' } | { kind: 'create' } | { kind: 'edit'; id: number
 
 const QK = ['publishers'] as const
 
+// 一手在前、二手在后，select 里分组直观
+const SOURCE_TYPE_ORDER: PublisherSourceType[] = [
+  'registry', 'official_filing', 'official_platform', 'official_domain',
+  'media', 'reference', 'analysis', 'self_report',
+]
+type SrcForm = { title: string; url: string; source_type: PublisherSourceType; confidence: string; as_of: string }
+const BLANK_SRC: SrcForm = { title: '', url: '', source_type: 'registry', confidence: '', as_of: '' }
+
 const fmtNum = (n: number) => n.toLocaleString('en-US')
 const fmtMoney = (n: number) => `$${Math.round(n).toLocaleString('en-US')}`
 
@@ -33,6 +44,7 @@ export default function PublishersManage() {
   // 每张卡片下「新增马甲 / app_id」输入框各自独立
   const [newAlias, setNewAlias] = useState<Record<number, string>>({})
   const [newAppId, setNewAppId] = useState<Record<number, string>>({})
+  const [srcForm, setSrcForm] = useState<Record<number, SrcForm>>({})
   const [expanded, setExpanded] = useState<Record<number, boolean>>({})
 
   const isEditing = mode.kind === 'edit'
@@ -72,6 +84,14 @@ export default function PublishersManage() {
   const delAppIdMut = useMutation({
     mutationFn: ({ id, rowId }: { id: number; rowId: number }) => publishersApi.deleteAppId(id, rowId),
     onSuccess: () => { invalidate(); toast.success(tt.appIdDeleted) },
+  })
+  const addSourceMut = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: PublisherSourceCreate }) => publishersApi.addSource(id, data),
+    onSuccess: (_o, { id }) => { invalidate(); setSrcForm(s => ({ ...s, [id]: BLANK_SRC })); toast.success(tt.sourceAdded) },
+  })
+  const delSourceMut = useMutation({
+    mutationFn: ({ id, sourceId }: { id: number; sourceId: number }) => publishersApi.deleteSource(id, sourceId),
+    onSuccess: () => { invalidate(); toast.success(tt.sourceDeleted) },
   })
 
   function closeForm() { setMode({ kind: 'closed' }); setForm(EMPTY_FORM) }
@@ -120,6 +140,21 @@ export default function PublishersManage() {
   const handleDelAppId = (id: number, rowId: number, aid: string) => {
     if (!window.confirm(tt.confirmDeleteAppId(aid))) return
     delAppIdMut.mutate({ id, rowId })
+  }
+  const setSrc = (id: number, patch: Partial<SrcForm>) =>
+    setSrcForm(s => ({ ...s, [id]: { ...(s[id] ?? BLANK_SRC), ...patch } }))
+  const handleAddSource = (id: number) => {
+    const f = srcForm[id] ?? BLANK_SRC
+    const url = f.url.trim()
+    if (!url) return
+    addSourceMut.mutate({ id, data: {
+      url, title: f.title.trim() || null, source_type: f.source_type,
+      confidence: f.confidence || null, as_of: f.as_of || null,
+    } })
+  }
+  const handleDelSource = (id: number, sourceId: number) => {
+    if (!window.confirm(tt.confirmDeleteSource)) return
+    delSourceMut.mutate({ id, sourceId })
   }
 
   const submitting = createMut.isPending || updateMut.isPending
@@ -227,6 +262,19 @@ export default function PublishersManage() {
                       {tt.slgBadge}
                     </span>
                   )}
+                  {e.provenance_tier === 'primary' ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 border border-emerald-500/40 bg-emerald-500/10 rounded px-1.5 py-0.5 shrink-0">
+                      <ShieldCheck size={10} />{tt.provPrimary}
+                    </span>
+                  ) : e.provenance_tier === 'secondary' ? (
+                    <span className="text-[10px] text-amber-500 border border-amber-500/40 bg-amber-500/10 rounded px-1.5 py-0.5 shrink-0">
+                      {tt.provSecondary}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-muted border border-default rounded px-1.5 py-0.5 shrink-0">
+                      {tt.provNone}
+                    </span>
+                  )}
                   {e.product_count != null && e.product_count > 0 && (
                     <span className="inline-flex items-center gap-1 text-[10px] text-muted border border-default rounded px-1.5 py-0.5 shrink-0">
                       <Boxes size={10} />{tt.productCount(e.product_count)}
@@ -302,6 +350,79 @@ export default function PublishersManage() {
                       <Plus size={14} />
                     </button>
                   </span>
+                </div>
+              </div>
+
+              {/* 调研溯源（一手源沉淀） */}
+              <div className="border-t border-default pt-3 space-y-2">
+                <div className="text-[11px] text-secondary" title={tt.sourcesHint}>
+                  {tt.sourcesLabel}（{e.sources.length}）
+                </div>
+                <div className="space-y-1.5">
+                  {e.sources.map(s => (
+                    <div key={s.id} className="flex items-center gap-2 text-xs bg-elevated border border-default rounded-lg px-2.5 py-1.5">
+                      <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded border ${s.is_primary ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30' : 'text-amber-500 bg-amber-500/10 border-amber-500/30'}`}>
+                        {s.is_primary ? tt.primaryTag : tt.secondaryTag}
+                      </span>
+                      <span className="shrink-0 text-[10px] text-secondary">{tt.sourceTypes[s.source_type]}</span>
+                      <a href={s.url} target="_blank" rel="noreferrer"
+                        className="min-w-0 truncate text-brand-400 hover:underline inline-flex items-center gap-1">
+                        <Link2 size={11} className="shrink-0" />{s.title || s.url}
+                      </a>
+                      {s.confidence && (
+                        <span className="shrink-0 text-[10px] text-muted">
+                          {tt.confidenceOptions[s.confidence as keyof typeof tt.confidenceOptions] ?? s.confidence}
+                        </span>
+                      )}
+                      {s.as_of && <span className="shrink-0 text-[10px] text-muted font-data">{s.as_of}</span>}
+                      <button onClick={() => handleDelSource(e.id, s.id)} title={t.common.delete}
+                        className="ml-auto shrink-0 text-muted hover:text-red-400 transition-colors"><X size={12} /></button>
+                    </div>
+                  ))}
+                  {e.sources.length === 0 && <div className="text-[11px] text-muted">{tt.noSources}</div>}
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                  <input
+                    value={(srcForm[e.id] ?? BLANK_SRC).url}
+                    onChange={ev => setSrc(e.id, { url: ev.target.value })}
+                    onKeyDown={ev => { if (ev.key === 'Enter') { ev.preventDefault(); handleAddSource(e.id) } }}
+                    placeholder={tt.sourceUrlPlaceholder}
+                    className="bg-elevated border border-default rounded-lg px-2.5 py-1 text-xs text-primary placeholder:text-muted focus:outline-none focus:border-brand-500 flex-1 min-w-[160px]"
+                  />
+                  <input
+                    value={(srcForm[e.id] ?? BLANK_SRC).title}
+                    onChange={ev => setSrc(e.id, { title: ev.target.value })}
+                    placeholder={tt.sourceTitlePlaceholder}
+                    className={chipInputClass}
+                  />
+                  <select
+                    value={(srcForm[e.id] ?? BLANK_SRC).source_type}
+                    onChange={ev => setSrc(e.id, { source_type: ev.target.value as PublisherSourceType })}
+                    className="bg-elevated border border-default rounded-lg px-2 py-1 text-xs text-primary focus:outline-none focus:border-brand-500"
+                  >
+                    {SOURCE_TYPE_ORDER.map(st => <option key={st} value={st}>{tt.sourceTypes[st]}</option>)}
+                  </select>
+                  <select
+                    value={(srcForm[e.id] ?? BLANK_SRC).confidence}
+                    onChange={ev => setSrc(e.id, { confidence: ev.target.value })}
+                    className="bg-elevated border border-default rounded-lg px-2 py-1 text-xs text-primary focus:outline-none focus:border-brand-500"
+                  >
+                    <option value="">{tt.confidenceOptions.unset}</option>
+                    <option value="high">{tt.confidenceOptions.high}</option>
+                    <option value="medium">{tt.confidenceOptions.medium}</option>
+                    <option value="low">{tt.confidenceOptions.low}</option>
+                    <option value="unverified">{tt.confidenceOptions.unverified}</option>
+                  </select>
+                  <input
+                    type="date"
+                    value={(srcForm[e.id] ?? BLANK_SRC).as_of}
+                    onChange={ev => setSrc(e.id, { as_of: ev.target.value })}
+                    className="bg-elevated border border-default rounded-lg px-2 py-1 text-xs text-primary focus:outline-none focus:border-brand-500"
+                  />
+                  <button onClick={() => handleAddSource(e.id)} disabled={addSourceMut.isPending}
+                    className="p-1 text-muted hover:text-accent transition-colors" title={tt.addSource}>
+                    <Plus size={14} />
+                  </button>
                 </div>
               </div>
 

@@ -1,6 +1,8 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 from datetime import datetime
 from typing import Optional
+
+from app.services.provenance import SOURCE_TYPES
 
 
 class PublisherAliasOut(BaseModel):
@@ -27,6 +29,33 @@ class PublisherAppIdCreate(BaseModel):
     note: Optional[str] = None
 
 
+class PublisherSourceOut(BaseModel):
+    id: int
+    url: str
+    title: Optional[str] = None
+    source_type: str
+    is_primary: bool = False  # 派生：source_type 是否一手（见 services/provenance）
+    confidence: Optional[str] = None
+    as_of: Optional[str] = None
+    note: Optional[str] = None
+
+
+class PublisherSourceCreate(BaseModel):
+    url: str
+    title: Optional[str] = None
+    source_type: str
+    confidence: Optional[str] = None
+    as_of: Optional[str] = None
+    note: Optional[str] = None
+
+    @field_validator("source_type")
+    @classmethod
+    def _valid_source_type(cls, v: str) -> str:
+        if v not in SOURCE_TYPES:
+            raise ValueError(f"source_type must be one of {SOURCE_TYPES}")
+        return v
+
+
 class PublisherEntityOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -38,6 +67,9 @@ class PublisherEntityOut(BaseModel):
     sort_order: int
     aliases: list[PublisherAliasOut] = []
     app_ids: list[PublisherAppIdOut] = []
+    sources: list[PublisherSourceOut] = []
+    # 溯源档位：primary(有一手源) / secondary(仅二手) / none(未溯源)。见 services/provenance。
+    provenance_tier: str = "none"
     product_count: Optional[int] = None  # 旗下产品数；列表视图按需填，详情视图必填
     created_at: datetime
     updated_at: datetime

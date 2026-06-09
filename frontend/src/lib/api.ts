@@ -53,6 +53,8 @@ import type {
   PublisherAliasCreate,
   PublisherAppId,
   PublisherAppIdCreate,
+  PublisherSource,
+  PublisherSourceCreate,
   PublisherProduct,
 } from './types'
 
@@ -331,6 +333,11 @@ export const publishersApi = {
     api.post(`/publishers/${id}/app-ids`, data).then(r => r.data),
   deleteAppId: (id: number, appIdRowId: number): Promise<DeleteResponse> =>
     api.delete(`/publishers/${id}/app-ids/${appIdRowId}`).then(r => r.data),
+  // 调研出处（一手源溯源）：增删；写后档案 provenance_tier 随之刷新。零 ST 配额。
+  addSource: (id: number, data: PublisherSourceCreate): Promise<PublisherSource> =>
+    api.post(`/publishers/${id}/sources`, data).then(r => r.data),
+  deleteSource: (id: number, sourceId: number): Promise<DeleteResponse> =>
+    api.delete(`/publishers/${id}/sources/${sourceId}`).then(r => r.data),
   products: (id: number, days = 30): Promise<PublisherProduct[]> =>
     api.get(`/publishers/${id}/products`, { params: { days } }).then(r => r.data),
 }
