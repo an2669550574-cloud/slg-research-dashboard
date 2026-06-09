@@ -616,6 +616,11 @@ export const zh = {
     sumAliases: (n: number) => `马甲 ${n}`,
     sumSources: (n: number) => `溯源 ${n}`,
     sumEmpty: '待调研（暂无股权 / 溯源）',
+    // 展开后业务优先版面
+    briefSectionLabel: '公司介绍',
+    briefEmpty: '暂无公司介绍，点右上角铅笔补充',
+    productsSectionLabel: '旗下 SLG 产品',
+    maintLabel: '调研维护字段',
     empty: '暂无厂商主体，点击"添加主体"录入第一个',
     slgBadge: 'SLG',
   },
