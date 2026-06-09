@@ -1,6 +1,6 @@
 import { lazy, Suspense, useState } from 'react'
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
-import { LayoutDashboard, Trophy, Gamepad2, BookImage, Sun, Moon, Languages, Settings, GitCompareArrows, Sparkles, Boxes, Tags, Building2, Menu, X } from 'lucide-react'
+import { LayoutDashboard, Trophy, Gamepad2, BookImage, Sun, Moon, Languages, Settings, GitCompareArrows, Sparkles, Boxes, Tags, Building2, Rocket, Menu, X } from 'lucide-react'
 import { cn } from './lib/utils'
 import { useTheme } from './lib/theme'
 import { useLocale, setLocale, useT } from './i18n'
@@ -10,6 +10,7 @@ import { StaleDataAlert } from './components/StaleDataAlert'
 // 路由级拆包：每页（含 recharts 等重依赖）单独 chunk，首屏只下当前页。
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Rankings = lazy(() => import('./pages/Rankings'))
+const NewReleases = lazy(() => import('./pages/NewReleases'))
 const GameDetail = lazy(() => import('./pages/GameDetail'))
 const Materials = lazy(() => import('./pages/Materials'))
 const MaterialAnalysis = lazy(() => import('./pages/MaterialAnalysis'))
@@ -33,6 +34,7 @@ function Sidebar({ open, onNavigate }: { open: boolean; onNavigate: () => void }
   const NAV = [
     { to: '/', icon: LayoutDashboard, label: t.nav.dashboard },
     { to: '/rankings', icon: Trophy, label: t.nav.rankings },
+    { to: '/newcomers', icon: Rocket, label: t.nav.newcomers },
     { to: '/compare', icon: GitCompareArrows, label: t.nav.compare },
     { to: '/materials', icon: BookImage, label: t.nav.materials },
     { to: '/materials/analysis', icon: Sparkles, label: t.nav.analysis },
@@ -139,6 +141,7 @@ export default function App() {
               <Routes>
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/rankings" element={<Rankings />} />
+                <Route path="/newcomers" element={<NewReleases />} />
                 <Route path="/compare" element={<Compare />} />
                 <Route path="/materials" element={<Materials />} />
                 <Route path="/materials/analysis" element={<MaterialAnalysis />} />

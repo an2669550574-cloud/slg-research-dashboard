@@ -24,6 +24,7 @@ import type {
   MetricsCoverage,
   AggregateLeaderboardOut,
   MovementsOut,
+  NewcomersOut,
   PagedResponse,
   QuotaHistoryOut,
   QuotaInfo,
@@ -157,6 +158,13 @@ export const movementsApi = {
   /** 今日大事：可选传 country+platform 限定单组合，否则汇总全部 SYNC_RANKING_COMBOS */
   get: (opts: { country?: string; platform?: string } = {}): Promise<MovementsOut> =>
     api.get('/movements/', { params: opts }).then(r => r.data),
+}
+
+export const newcomersApi = {
+  /** 新品监测：近期首次进榜的新面孔。可选传 country+platform 限定单组合，
+   *  否则汇总全部 SYNC_RANKING_COMBOS。零 ST 配额，纯本地榜单比对。 */
+  get: (opts: { country?: string; platform?: string } = {}): Promise<NewcomersOut> =>
+    api.get('/newcomers/', { params: opts }).then(r => r.data),
 }
 
 export interface MaterialListParams {

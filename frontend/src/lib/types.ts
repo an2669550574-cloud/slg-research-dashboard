@@ -282,6 +282,36 @@ export interface MovementsOut {
   combos_with_stale_today: string[]
 }
 
+// ─── newcomers（新品监测）──────────────────────────────────────────────
+
+/** 一条"新面孔"：过去 W 个快照没出现过、as_of 进 TopN 的产品。零 ST 配额。 */
+export interface NewcomerItem {
+  country: string
+  platform: string
+  as_of: string
+  app_id: string
+  name: string
+  publisher: string | null
+  icon_url: string | null
+  rank: number | null
+  revenue: number | null
+  downloads: number | null
+  /** 发行商命中 SLG 白名单。仅用于前端区分"已识别 SLG"vs"新厂商待识别"。 */
+  is_slg: boolean
+}
+
+export interface NewcomersOut {
+  today: string
+  items: NewcomerItem[]
+  /** 缺历史快照(冷库/首次同步)、无从判断"新面孔"的 combo。 */
+  combos_without_baseline: string[]
+  /** 各 combo 锚定的"最近快照日"，前端显示"数据截至 X"。 */
+  as_of_by_combo: Record<string, string>
+  /** 当次生效的判定口径——回看窗口数 / 名次门槛。 */
+  window: number
+  topn: number
+}
+
 // ─── quota ───────────────────────────────────────────────────────────────
 
 export type DataSource = 'real_api' | 'mock' | 'snapshot_stale'
