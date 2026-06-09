@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { Plus, Trash2, Pencil, X, Building2, Globe, Boxes, ChevronDown, ChevronRight, Link2, ShieldCheck, Network } from 'lucide-react'
+import { Plus, Trash2, Pencil, X, Building2, Globe, Boxes, ChevronDown, ChevronRight, Link2, ShieldCheck, Network, Search } from 'lucide-react'
 import { publishersApi } from '../lib/api'
 import { useT } from '../i18n'
 import { PageHeader } from '../components/PageHeader'
@@ -52,6 +52,10 @@ export default function PublishersManage() {
   const [srcForm, setSrcForm] = useState<Record<number, SrcForm>>({})
   const [relForm, setRelForm] = useState<Record<number, RelForm>>({})
   const [expanded, setExpanded] = useState<Record<number, boolean>>({})
+  // 卡片默认收起：只看摘要，点开才显示管理区
+  const [cardOpen, setCardOpen] = useState<Record<number, boolean>>({})
+  const [search, setSearch] = useState('')
+  const [onlyResearched, setOnlyResearched] = useState(false)
 
   const isEditing = mode.kind === 'edit'
   const isOpen = mode.kind !== 'closed'
@@ -190,6 +194,18 @@ export default function PublishersManage() {
   const inputClass = "bg-elevated border border-default rounded-lg px-3 py-2 text-sm text-primary placeholder:text-muted focus:outline-none focus:border-brand-500"
   const chipInputClass = "bg-elevated border border-default rounded-lg px-2.5 py-1 text-xs text-primary placeholder:text-muted focus:outline-none focus:border-brand-500 w-36"
 
+  // 「有调研数据」= 有溯源源或股权关系（区别于种子里就有的马甲/app_id）
+  const isResearched = (e: PublisherEntity) =>
+    e.sources.length > 0 || e.parents.length > 0 || e.children.length > 0
+  const q = search.trim().toLowerCase()
+  const filtered = entities.filter(e => {
+    if (onlyResearched && !isResearched(e)) return false
+    if (!q) return true
+    return e.name.toLowerCase().includes(q)
+      || (e.name_en || '').toLowerCase().includes(q)
+      || e.aliases.some(a => a.keyword.toLowerCase().includes(q) || (a.label || '').toLowerCase().includes(q))
+  })
+
   return (
     <div className="px-4 sm:px-7 py-5 sm:py-7 max-w-[1500px] mx-auto space-y-5">
       <PageHeader eyebrow="Publishers" title={tt.title} subtitle={tt.subtitle}>
@@ -266,51 +282,89 @@ export default function PublishersManage() {
         </form>
       )}
 
+      {/* 筛选栏：搜索 + 只看有调研数据 + 计数 */}
+      {!isLoading && !isError && entities.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative flex-1 min-w-[180px] max-w-xs">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder={tt.search}
+              className="w-full bg-elevated border border-default rounded-lg pl-9 pr-3 py-2 text-sm text-primary placeholder:text-muted focus:outline-none focus:border-brand-500"
+            />
+          </div>
+          <div className="flex gap-1 bg-elevated rounded-lg p-1">
+            {([false, true] as const).map(v => (
+              <button
+                key={String(v)}
+                onClick={() => setOnlyResearched(v)}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${onlyResearched === v ? 'bg-brand-600 text-white' : 'text-secondary hover:text-primary'}`}
+              >
+                {v ? tt.onlyResearched : tt.showAll}
+              </button>
+            ))}
+          </div>
+          <span className="font-data text-[11px] text-muted">{tt.countShown(filtered.length, entities.length)}</span>
+        </div>
+      )}
+
       {isError ? (
         <QueryError compact onRetry={() => refetch()} />
       ) : isLoading ? (
         <div className="text-center text-muted text-sm py-12">{t.common.loading}</div>
       ) : entities.length === 0 ? (
         <div className="text-center text-muted text-sm py-12 bg-surface border border-default rounded-xl">{tt.empty}</div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center text-muted text-sm py-12 bg-surface border border-default rounded-xl">{tt.emptyFiltered}</div>
       ) : (
-        <div className="space-y-3">
-          {entities.map(e => (
-            <div key={e.id} className="bg-surface border border-default rounded-xl p-4 space-y-3">
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-2 flex-wrap min-w-0">
-                  <Building2 size={15} className="text-accent shrink-0" />
-                  <span className="font-display font-bold text-primary truncate">{e.name}</span>
-                  {e.name_en && <span className="text-xs text-muted truncate">{e.name_en}</span>}
-                  {e.hq_region && (
-                    <span className="inline-flex items-center gap-1 text-[10px] text-secondary border border-default bg-elevated rounded px-1.5 py-0.5 shrink-0">
-                      <Globe size={10} />{e.hq_region}
-                    </span>
-                  )}
-                  {e.is_slg && (
-                    <span className="text-[10px] text-accent border border-accent/40 bg-accent/10 rounded px-1.5 py-0.5 shrink-0">
-                      {tt.slgBadge}
-                    </span>
-                  )}
-                  {e.provenance_tier === 'primary' ? (
-                    <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 border border-emerald-500/40 bg-emerald-500/10 rounded px-1.5 py-0.5 shrink-0">
-                      <ShieldCheck size={10} />{tt.provPrimary}
-                    </span>
-                  ) : e.provenance_tier === 'secondary' ? (
-                    <span className="text-[10px] text-amber-500 border border-amber-500/40 bg-amber-500/10 rounded px-1.5 py-0.5 shrink-0">
-                      {tt.provSecondary}
-                    </span>
-                  ) : (
-                    <span className="text-[10px] text-muted border border-default rounded px-1.5 py-0.5 shrink-0">
-                      {tt.provNone}
-                    </span>
-                  )}
-                  {e.product_count != null && e.product_count > 0 && (
-                    <span className="inline-flex items-center gap-1 text-[10px] text-muted border border-default rounded px-1.5 py-0.5 shrink-0">
-                      <Boxes size={10} />{tt.productCount(e.product_count)}
-                    </span>
-                  )}
+        <div className="space-y-2.5">
+          {filtered.map(e => {
+            const open = !!cardOpen[e.id]
+            const sum: string[] = []
+            if (e.parents.length) {
+              const p = e.parents[0]
+              sum.push(`${tt.sumParent} ${p.name}（${tt.relationTypes[p.relation_type]}${p.stake_pct != null ? ' ' + tt.stakeSuffix(p.stake_pct) : ''}）${e.parents.length > 1 ? ' 等' : ''}`)
+            }
+            if (e.children.length) sum.push(tt.sumChildren(e.children.length))
+            if (e.product_count) sum.push(tt.sumProducts(e.product_count))
+            if (e.aliases.length) sum.push(tt.sumAliases(e.aliases.length))
+            if (e.sources.length) sum.push(tt.sumSources(e.sources.length))
+            const summaryText = sum.length ? sum.join(' · ') : tt.sumEmpty
+            return (
+            <div key={e.id} className="bg-surface border border-default rounded-xl">
+              <div
+                className="flex items-start justify-between gap-2 p-4 cursor-pointer hover:bg-elevated/30 transition-colors rounded-xl"
+                onClick={() => setCardOpen(s => ({ ...s, [e.id]: !s[e.id] }))}
+              >
+                <div className="flex items-start gap-2 min-w-0">
+                  <span className="mt-0.5 text-muted shrink-0">{open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</span>
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap min-w-0">
+                      <Building2 size={15} className="text-accent shrink-0" />
+                      <span className="font-display font-bold text-primary truncate">{e.name}</span>
+                      {e.name_en && <span className="text-xs text-muted truncate">{e.name_en}</span>}
+                      {e.hq_region && (
+                        <span className="inline-flex items-center gap-1 text-[10px] text-secondary border border-default bg-elevated rounded px-1.5 py-0.5 shrink-0">
+                          <Globe size={10} />{e.hq_region}
+                        </span>
+                      )}
+                      {e.is_slg && (
+                        <span className="text-[10px] text-accent border border-accent/40 bg-accent/10 rounded px-1.5 py-0.5 shrink-0">{tt.slgBadge}</span>
+                      )}
+                      {e.provenance_tier === 'primary' ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 border border-emerald-500/40 bg-emerald-500/10 rounded px-1.5 py-0.5 shrink-0"><ShieldCheck size={10} />{tt.provPrimary}</span>
+                      ) : e.provenance_tier === 'secondary' ? (
+                        <span className="text-[10px] text-amber-500 border border-amber-500/40 bg-amber-500/10 rounded px-1.5 py-0.5 shrink-0">{tt.provSecondary}</span>
+                      ) : (
+                        <span className="text-[10px] text-muted border border-default rounded px-1.5 py-0.5 shrink-0">{tt.provNone}</span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-muted truncate">{summaryText}</div>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
+                <div className="flex items-center gap-1 shrink-0" onClick={ev => ev.stopPropagation()}>
                   <button onClick={() => openEdit(e)} title={t.common.edit}
                     className="p-1.5 text-muted hover:text-brand-400 transition-colors"><Pencil size={14} /></button>
                   <button onClick={() => handleDelete(e)} disabled={deleteMut.isPending} title={t.common.delete}
@@ -318,7 +372,9 @@ export default function PublishersManage() {
                 </div>
               </div>
 
-              {e.brief && <p className="text-xs text-muted">{e.brief}</p>}
+              {open && (
+              <div className="px-4 pb-4 space-y-3">
+              {e.brief && <p className="text-xs text-muted border-t border-default pt-3">{e.brief}</p>}
 
               {/* 海外发行马甲 */}
               <div className="border-t border-default pt-3 space-y-2">
@@ -545,8 +601,11 @@ export default function PublishersManage() {
                 </button>
                 {expanded[e.id] && <PublisherProducts entityId={e.id} />}
               </div>
+              </div>
+              )}
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>
