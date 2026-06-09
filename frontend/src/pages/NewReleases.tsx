@@ -1,20 +1,22 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { newcomersApi } from '../lib/api'
+import { newcomersApi, publishersApi } from '../lib/api'
 import { formatRevenue } from '../lib/utils'
 import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
-import { Download as DownloadIcon, Sparkles, Info } from 'lucide-react'
+import { Download as DownloadIcon, Sparkles, Info, FilePlus2 } from 'lucide-react'
 import { COUNTRIES, PLATFORMS, platformLabel, type Country, type Platform } from '../lib/markets'
 import { GameIcon } from '../components/GameIcon'
 import { QueryError } from '../components/QueryError'
 import { PageHeader } from '../components/PageHeader'
 import { useLocalStorageState } from '../lib/hooks'
+import type { NewcomerItem } from '../lib/types'
 
 export default function NewReleases() {
   const navigate = useNavigate()
   const t = useT()
+  const qc = useQueryClient()
   // 与排行榜共享市场选择，跨页切换一致
   const [country, setCountry] = useLocalStorageState<Country>('slg.country', 'US')
   const [platform, setPlatform] = useLocalStorageState<Platform>('slg.platform', 'ios')
@@ -23,6 +25,26 @@ export default function NewReleases() {
     queryKey: ['newcomers', country, platform],
     queryFn: () => newcomersApi.get({ country, platform }),
   })
+
+  // 一键建档：把"新厂商待识别"的新面孔转成待调研厂商主体（钉住该 app_id，建档后即识别为 SLG）。
+  // 复用 POST /publishers/（支持建档时带 app_ids）——零新接口、零迁移。A↔B 闭环。
+  const triageMut = useMutation({
+    mutationFn: (g: NewcomerItem) => publishersApi.create({
+      name: g.publisher?.trim() || g.name,
+      is_slg: true,
+      brief: t.newcomers.triageBrief(g.name, `${g.country}/${g.platform}`),
+      app_ids: [{ app_id: g.app_id, note: g.name }],
+    }),
+    onSuccess: (e) => {
+      qc.invalidateQueries({ queryKey: ['newcomers'] })
+      qc.invalidateQueries({ queryKey: ['publishers'] })
+      toast.success(t.newcomers.triaged(e.name))
+    },
+  })
+  const handleTriage = (g: NewcomerItem) => {
+    if (!window.confirm(t.newcomers.triageConfirm(g.publisher?.trim() || g.name))) return
+    triageMut.mutate(g)
+  }
 
   const items = data?.items ?? []
   const comboKey = `${country}/${platform}`
@@ -154,8 +176,18 @@ export default function NewReleases() {
                                 {t.newcomers.slgKnown}
                               </span>
                             ) : (
-                              <span className="inline-block px-2 py-0.5 rounded-md text-[11px] font-medium bg-amber-500/15 text-amber-500">
-                                {t.newcomers.slgUnknown}
+                              <span className="inline-flex items-center gap-1.5">
+                                <span className="inline-block px-2 py-0.5 rounded-md text-[11px] font-medium bg-amber-500/15 text-amber-500">
+                                  {t.newcomers.slgUnknown}
+                                </span>
+                                <button
+                                  onClick={ev => { ev.stopPropagation(); handleTriage(g) }}
+                                  disabled={triageMut.isPending}
+                                  title={t.newcomers.triage}
+                                  className="inline-flex items-center gap-1 text-[10px] text-brand-400 hover:text-brand-300 border border-brand-500/30 hover:border-brand-500/60 rounded px-1.5 py-0.5 transition-colors disabled:opacity-50"
+                                >
+                                  <FilePlus2 size={11} />{t.newcomers.triage}
+                                </button>
                               </span>
                             )}
                           </td>
