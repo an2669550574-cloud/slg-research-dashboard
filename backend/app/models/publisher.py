@@ -1,4 +1,4 @@
-from sqlalchemy import String, Integer, DateTime, Text, Boolean, ForeignKey
+from sqlalchemy import String, Integer, Float, DateTime, Text, Boolean, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime
 from typing import Optional
@@ -85,5 +85,32 @@ class PublisherSource(Base):
     # high / medium / low / unverified（自由填，查不到一手源就标 unverified）
     confidence: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     as_of: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # 核验日期 YYYY-MM-DD
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class PublisherRelation(Base):
+    """主体间股权/母子关系：parent_id（母公司/投资方）→ child_id（子公司/被投）。
+
+    有向边，relation_type 描述强度（全资 / 控股 / 参股 / 关联），stake_pct 选填持股
+    百分比。UI 在某主体卡片上从两侧看：作为 child → 列它的母公司；作为 parent → 列它的
+    子公司/关联。(parent_id, child_id) 唯一，禁自环（应用层校验）。沿用「提示为主、人工
+    把关」：关系也应挂溯源源佐证（在调研溯源区登记），但本表不做硬绑定。
+    """
+    __tablename__ = "publisher_relations"
+    __table_args__ = (
+        UniqueConstraint("parent_id", "child_id", name="uq_publisher_relation_pair"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    parent_id: Mapped[int] = mapped_column(
+        ForeignKey("publisher_entities.id", ondelete="CASCADE"), index=True
+    )
+    child_id: Mapped[int] = mapped_column(
+        ForeignKey("publisher_entities.id", ondelete="CASCADE"), index=True
+    )
+    # wholly_owned(全资) / controlling(控股) / minority(参股) / affiliate(关联)
+    relation_type: Mapped[str] = mapped_column(String(30))
+    stake_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 持股 %，0-100
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)

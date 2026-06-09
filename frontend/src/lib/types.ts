@@ -642,6 +642,29 @@ export interface PublisherSourceCreate {
   note?: string | null
 }
 
+/** 股权关系强度：全资 / 控股 / 参股 / 关联。 */
+export type PublisherRelationType = 'wholly_owned' | 'controlling' | 'minority' | 'affiliate'
+/** 对方相对本主体的角色：母公司 / 子公司。 */
+export type RelationCounterpartRole = 'parent' | 'child'
+
+/** 从某主体视角看到的一条股权关系（对方主体名已解析）。 */
+export interface PublisherRelationLink {
+  relation_id: number
+  entity_id: number
+  name: string
+  relation_type: PublisherRelationType
+  stake_pct: number | null
+  note: string | null
+}
+
+export interface PublisherRelationCreate {
+  counterpart_id: number
+  counterpart_role: RelationCounterpartRole
+  relation_type: PublisherRelationType
+  stake_pct?: number | null
+  note?: string | null
+}
+
 export interface PublisherEntity {
   id: number
   name: string
@@ -654,6 +677,10 @@ export interface PublisherEntity {
   app_ids: PublisherAppId[]
   sources: PublisherSource[]
   provenance_tier: ProvenanceTier
+  /** 本主体的母公司/投资方 */
+  parents: PublisherRelationLink[]
+  /** 本主体的子公司/关联 */
+  children: PublisherRelationLink[]
   /** 旗下产品数；列表 / 详情视图均填 */
   product_count: number | null
   created_at: IsoDateString
