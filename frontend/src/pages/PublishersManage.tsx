@@ -31,12 +31,12 @@ const SOURCE_TYPE_ORDER: PublisherSourceType[] = [
   'registry', 'official_filing', 'official_platform', 'official_domain',
   'media', 'reference', 'analysis', 'self_report',
 ]
-type SrcForm = { title: string; url: string; source_type: PublisherSourceType; confidence: string; as_of: string }
-const BLANK_SRC: SrcForm = { title: '', url: '', source_type: 'registry', confidence: '', as_of: '' }
+type SrcForm = { title: string; url: string; source_type: PublisherSourceType; confidence: string; as_of: string; note: string }
+const BLANK_SRC: SrcForm = { title: '', url: '', source_type: 'registry', confidence: '', as_of: '', note: '' }
 
 const RELATION_TYPE_ORDER: PublisherRelationType[] = ['wholly_owned', 'controlling', 'minority', 'affiliate']
-type RelForm = { counterpart_id: string; counterpart_role: RelationCounterpartRole; relation_type: PublisherRelationType; stake_pct: string }
-const BLANK_REL: RelForm = { counterpart_id: '', counterpart_role: 'parent', relation_type: 'controlling', stake_pct: '' }
+type RelForm = { counterpart_id: string; counterpart_role: RelationCounterpartRole; relation_type: PublisherRelationType; stake_pct: string; note: string }
+const BLANK_REL: RelForm = { counterpart_id: '', counterpart_role: 'parent', relation_type: 'controlling', stake_pct: '', note: '' }
 
 const fmtNum = (n: number) => n.toLocaleString('en-US')
 const fmtMoney = (n: number) => `$${Math.round(n).toLocaleString('en-US')}`
@@ -170,6 +170,7 @@ export default function PublishersManage() {
     addSourceMut.mutate({ id, data: {
       url, title: f.title.trim() || null, source_type: f.source_type,
       confidence: f.confidence || null, as_of: f.as_of || null,
+      note: f.note.trim() || null,
     } })
   }
   const handleDelSource = (id: number, sourceId: number) => {
@@ -185,6 +186,7 @@ export default function PublishersManage() {
     addRelationMut.mutate({ id, data: {
       counterpart_id: Number(f.counterpart_id), counterpart_role: f.counterpart_role,
       relation_type: f.relation_type, stake_pct: stake === '' ? null : Number(stake),
+      note: f.note.trim() || null,
     } })
   }
   const handleDelRelation = (id: number, relationId: number) => {
@@ -493,23 +495,28 @@ export default function PublishersManage() {
                 </div>
                 <div className="space-y-1.5">
                   {e.sources.map(s => (
-                    <div key={s.id} className="flex items-center gap-2 text-xs bg-elevated border border-default rounded-lg px-2.5 py-1.5">
-                      <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded border ${s.is_primary ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30' : 'text-amber-500 bg-amber-500/10 border-amber-500/30'}`}>
-                        {s.is_primary ? tt.primaryTag : tt.secondaryTag}
-                      </span>
-                      <span className="shrink-0 text-[10px] text-secondary">{tt.sourceTypes[s.source_type]}</span>
-                      <a href={s.url} target="_blank" rel="noreferrer"
-                        className="min-w-0 truncate text-brand-400 hover:underline inline-flex items-center gap-1">
-                        <Link2 size={11} className="shrink-0" />{s.title || s.url}
-                      </a>
-                      {s.confidence && (
-                        <span className="shrink-0 text-[10px] text-muted">
-                          {tt.confidenceOptions[s.confidence as keyof typeof tt.confidenceOptions] ?? s.confidence}
+                    <div key={s.id} className="bg-elevated border border-default rounded-lg px-2.5 py-1.5 space-y-0.5">
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded border ${s.is_primary ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30' : 'text-amber-500 bg-amber-500/10 border-amber-500/30'}`}>
+                          {s.is_primary ? tt.primaryTag : tt.secondaryTag}
                         </span>
+                        <span className="shrink-0 text-[10px] text-secondary">{tt.sourceTypes[s.source_type]}</span>
+                        <a href={s.url} target="_blank" rel="noreferrer"
+                          className="min-w-0 truncate text-brand-400 hover:underline inline-flex items-center gap-1">
+                          <Link2 size={11} className="shrink-0" />{s.title || s.url}
+                        </a>
+                        {s.confidence && (
+                          <span className="shrink-0 text-[10px] text-muted">
+                            {tt.confidenceOptions[s.confidence as keyof typeof tt.confidenceOptions] ?? s.confidence}
+                          </span>
+                        )}
+                        {s.as_of && <span className="shrink-0 text-[10px] text-muted font-data">{s.as_of}</span>}
+                        <button onClick={() => handleDelSource(e.id, s.id)} title={t.common.delete}
+                          className="ml-auto shrink-0 text-muted hover:text-red-400 transition-colors"><X size={12} /></button>
+                      </div>
+                      {s.note && (
+                        <div className="text-[10px] text-muted truncate" title={s.note}>{s.note}</div>
                       )}
-                      {s.as_of && <span className="shrink-0 text-[10px] text-muted font-data">{s.as_of}</span>}
-                      <button onClick={() => handleDelSource(e.id, s.id)} title={t.common.delete}
-                        className="ml-auto shrink-0 text-muted hover:text-red-400 transition-colors"><X size={12} /></button>
                     </div>
                   ))}
                   {e.sources.length === 0 && <div className="text-[11px] text-muted">{tt.noSources}</div>}
@@ -552,6 +559,13 @@ export default function PublishersManage() {
                     onChange={ev => setSrc(e.id, { as_of: ev.target.value })}
                     className="bg-elevated border border-default rounded-lg px-2 py-1 text-xs text-primary focus:outline-none focus:border-brand-500"
                   />
+                  <input
+                    value={(srcForm[e.id] ?? BLANK_SRC).note}
+                    onChange={ev => setSrc(e.id, { note: ev.target.value })}
+                    onKeyDown={ev => { if (ev.key === 'Enter') { ev.preventDefault(); handleAddSource(e.id) } }}
+                    placeholder={tt.noteOptionalPlaceholder}
+                    className={chipInputClass}
+                  />
                   <button onClick={() => handleAddSource(e.id)} disabled={addSourceMut.isPending}
                     className="p-1 text-muted hover:text-accent transition-colors" title={tt.addSource}>
                     <Plus size={14} />
@@ -569,14 +583,19 @@ export default function PublishersManage() {
                     <div className="text-[10px] text-muted">{tt.parentsLabel}</div>
                     {e.parents.length === 0 && <div className="text-[11px] text-muted">{tt.noParents}</div>}
                     {e.parents.map(p => (
-                      <div key={p.relation_id} className="flex items-center gap-2 text-xs bg-elevated border border-default rounded-lg px-2.5 py-1.5">
-                        <Building2 size={11} className="text-accent shrink-0" />
-                        <span className="text-primary truncate">{p.name}</span>
-                        <span className="shrink-0 text-[10px] text-secondary">
-                          {tt.relationTypes[p.relation_type]}{p.stake_pct != null ? ` · ${tt.stakeSuffix(p.stake_pct)}` : ''}
-                        </span>
-                        <button onClick={() => handleDelRelation(e.id, p.relation_id)} title={t.common.delete}
-                          className="ml-auto shrink-0 text-muted hover:text-red-400 transition-colors"><X size={12} /></button>
+                      <div key={p.relation_id} className="bg-elevated border border-default rounded-lg px-2.5 py-1.5 space-y-0.5">
+                        <div className="flex items-center gap-2 text-xs">
+                          <Building2 size={11} className="text-accent shrink-0" />
+                          <span className="text-primary truncate">{p.name}</span>
+                          <span className="shrink-0 text-[10px] text-secondary">
+                            {tt.relationTypes[p.relation_type]}{p.stake_pct != null ? ` · ${tt.stakeSuffix(p.stake_pct)}` : ''}
+                          </span>
+                          <button onClick={() => handleDelRelation(e.id, p.relation_id)} title={t.common.delete}
+                            className="ml-auto shrink-0 text-muted hover:text-red-400 transition-colors"><X size={12} /></button>
+                        </div>
+                        {p.note && (
+                          <div className="text-[10px] text-muted truncate" title={p.note}>{p.note}</div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -584,14 +603,19 @@ export default function PublishersManage() {
                     <div className="text-[10px] text-muted">{tt.childrenLabel}</div>
                     {e.children.length === 0 && <div className="text-[11px] text-muted">{tt.noChildren}</div>}
                     {e.children.map(c => (
-                      <div key={c.relation_id} className="flex items-center gap-2 text-xs bg-elevated border border-default rounded-lg px-2.5 py-1.5">
-                        <Building2 size={11} className="text-secondary shrink-0" />
-                        <span className="text-primary truncate">{c.name}</span>
-                        <span className="shrink-0 text-[10px] text-secondary">
-                          {tt.relationTypes[c.relation_type]}{c.stake_pct != null ? ` · ${tt.stakeSuffix(c.stake_pct)}` : ''}
-                        </span>
-                        <button onClick={() => handleDelRelation(e.id, c.relation_id)} title={t.common.delete}
-                          className="ml-auto shrink-0 text-muted hover:text-red-400 transition-colors"><X size={12} /></button>
+                      <div key={c.relation_id} className="bg-elevated border border-default rounded-lg px-2.5 py-1.5 space-y-0.5">
+                        <div className="flex items-center gap-2 text-xs">
+                          <Building2 size={11} className="text-secondary shrink-0" />
+                          <span className="text-primary truncate">{c.name}</span>
+                          <span className="shrink-0 text-[10px] text-secondary">
+                            {tt.relationTypes[c.relation_type]}{c.stake_pct != null ? ` · ${tt.stakeSuffix(c.stake_pct)}` : ''}
+                          </span>
+                          <button onClick={() => handleDelRelation(e.id, c.relation_id)} title={t.common.delete}
+                            className="ml-auto shrink-0 text-muted hover:text-red-400 transition-colors"><X size={12} /></button>
+                        </div>
+                        {c.note && (
+                          <div className="text-[10px] text-muted truncate" title={c.note}>{c.note}</div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -629,6 +653,13 @@ export default function PublishersManage() {
                     onChange={ev => setRel(e.id, { stake_pct: ev.target.value })}
                     placeholder={tt.stakePlaceholder}
                     className="bg-elevated border border-default rounded-lg px-2 py-1 text-xs text-primary placeholder:text-muted focus:outline-none focus:border-brand-500 w-20"
+                  />
+                  <input
+                    value={(relForm[e.id] ?? BLANK_REL).note}
+                    onChange={ev => setRel(e.id, { note: ev.target.value })}
+                    onKeyDown={ev => { if (ev.key === 'Enter') { ev.preventDefault(); handleAddRelation(e.id) } }}
+                    placeholder={tt.noteOptionalPlaceholder}
+                    className={chipInputClass}
                   />
                   <button onClick={() => handleAddRelation(e.id)} disabled={addRelationMut.isPending}
                     className="p-1 text-muted hover:text-accent transition-colors" title={tt.addRelation}>

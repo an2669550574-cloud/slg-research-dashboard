@@ -18,6 +18,8 @@ export interface EquityEdge {
   childId: number
   relationType: PublisherRelationType
   stakePct: number | null
+  /** 调研备注（如持股来源、退出/回购历史），图谱上 hover 边可见 */
+  note: string | null
 }
 
 export interface EquityComponent {
@@ -40,13 +42,13 @@ function collectEdges(entities: PublisherEntity[]): EquityEdge[] {
     for (const c of e.children) {
       if (known.has(c.entity_id)) byId.set(c.relation_id, {
         relationId: c.relation_id, parentId: e.id, childId: c.entity_id,
-        relationType: c.relation_type, stakePct: c.stake_pct,
+        relationType: c.relation_type, stakePct: c.stake_pct, note: c.note,
       })
     }
     for (const p of e.parents) {
       if (known.has(p.entity_id)) byId.set(p.relation_id, {
         relationId: p.relation_id, parentId: p.entity_id, childId: e.id,
-        relationType: p.relation_type, stakePct: p.stake_pct,
+        relationType: p.relation_type, stakePct: p.stake_pct, note: p.note,
       })
     }
   }

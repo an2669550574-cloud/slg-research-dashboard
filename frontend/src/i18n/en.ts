@@ -593,6 +593,7 @@ export const en: Translations = {
       affiliate: 'Affiliate',
     },
     stakeSuffix: (n: number) => `${n}% stake`,
+    noteOptionalPlaceholder: 'Note (optional, e.g. stake basis / exit history)',
     viewList: 'List',
     viewGraph: 'Equity graph',
     graphHint: 'Only entities with ownership relations · click a node to open its dossier',

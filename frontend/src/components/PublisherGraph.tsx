@@ -102,6 +102,8 @@ function GraphComponent({ component, onSelectEntity }: {
           const dim = isDim(e.parentId, e.childId)
           return (
             <g key={e.relationId} opacity={dim ? 0.18 : 1} className="transition-opacity">
+              {/* 原生 tooltip：hover 边/标签可见调研备注（如回购退出史、持股口径） */}
+              <title>{e.note ? `${label}\n${e.note}` : label}</title>
               <path
                 d={`M ${x0} ${y0} C ${x0} ${y0 + bend}, ${x1} ${y1 - bend}, ${x1} ${y1}`}
                 fill="none"
@@ -122,6 +124,8 @@ function GraphComponent({ component, onSelectEntity }: {
                 style={{
                   fill: 'rgb(var(--text-secondary))',
                   stroke: 'rgb(var(--bg-surface))', strokeWidth: 3, paintOrder: 'stroke',
+                  // 有备注的边：点状下划线提示可 hover
+                  ...(e.note ? { textDecoration: 'underline dotted' } : {}),
                 }}
               >
                 {label}
@@ -143,6 +147,8 @@ function GraphComponent({ component, onSelectEntity }: {
               onMouseLeave={() => setHovered(null)}
               onClick={() => onSelectEntity(n.id)}
             >
+              {/* 节点全名 tooltip（卡片内名称可能被截断） */}
+              <title>{n.nameEn ? `${n.name}\n${n.nameEn}` : n.name}</title>
               <rect
                 width={NODE_W} height={NODE_H} rx="10"
                 className={`transition-all ${TIER_STROKE[n.tier]}`}
