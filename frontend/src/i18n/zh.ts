@@ -604,6 +604,12 @@ export const zh = {
       affiliate: '关联',
     },
     stakeSuffix: (n: number) => `持股 ${n}%`,
+    // 列表 / 股权图谱视图
+    viewList: '列表',
+    viewGraph: '股权图谱',
+    graphHint: '只显示有股权关系的主体 · 点节点回列表看档案',
+    graphLegendNode: '边框 =',
+    graphEmpty: '暂无股权关系。在主体卡片的「股权关联」里添加母子 / 参股关系后，这里会自动生成图谱。',
     // 列表筛选 + 收起卡片的一行摘要
     search: '搜索主体名 / 英文名 / 马甲...',
     onlyResearched: '只看有调研数据',

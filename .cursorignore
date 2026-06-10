@@ -1,0 +1,39 @@
+# .cursorignore — keep secrets out of the agent's view.
+# Reliable layer behind the global beforeReadFile hook (which has known bypass bugs).
+
+# env files (non-secret templates stay visible)
+.env
+.env.*
+*.env
+!.env.example
+!.env.sample
+!.env.template
+!*.example.env
+
+# private keys / certs / keystores
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.jks
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+
+# credential stores
+credentials
+credentials.*
+.netrc
+.npmrc
+.pypirc
+.ssh/
+.aws/
+.gnupg/
+
+# misc secrets
+secrets
+secrets.*
+*.secret
+*.token
