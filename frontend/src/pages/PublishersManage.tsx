@@ -2,11 +2,12 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { Plus, Trash2, Pencil, X, Building2, Globe, Boxes, ChevronDown, ChevronRight, Link2, ShieldCheck, Network, Search } from 'lucide-react'
+import { Plus, Trash2, Pencil, X, Building2, Globe, Boxes, ChevronDown, ChevronRight, Link2, ShieldCheck, Network, Search, List } from 'lucide-react'
 import { publishersApi } from '../lib/api'
 import { useT } from '../i18n'
 import { PageHeader } from '../components/PageHeader'
 import { QueryError } from '../components/QueryError'
+import { PublisherGraph } from '../components/PublisherGraph'
 import type {
   PublisherEntity, PublisherEntityCreate, PublisherEntityUpdate,
   PublisherSourceCreate, PublisherSourceType,
@@ -55,6 +56,8 @@ export default function PublishersManage() {
   const [cardOpen, setCardOpen] = useState<Record<number, boolean>>({})
   const [search, setSearch] = useState('')
   const [onlyResearched, setOnlyResearched] = useState(false)
+  // 列表 / 股权图谱视图切换；图谱画全量（不受搜索/筛选影响）
+  const [view, setView] = useState<'list' | 'graph'>('list')
 
   const isEditing = mode.kind === 'edit'
   const isOpen = mode.kind !== 'closed'
@@ -188,6 +191,17 @@ export default function PublishersManage() {
     if (!window.confirm(tt.confirmDeleteRelation)) return
     delRelationMut.mutate({ id, relationId })
   }
+  // 图谱点节点 → 回列表、展开该卡片并滚动到位
+  const handleSelectFromGraph = (id: number) => {
+    setView('list')
+    setSearch('')
+    setOnlyResearched(false)
+    setCardOpen(s => ({ ...s, [id]: true }))
+    // 双 rAF 等列表视图提交完再滚动；不用 smooth，避免动画被后续渲染打断
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      document.getElementById(`publisher-card-${id}`)?.scrollIntoView({ block: 'center' })
+    }))
+  }
 
   const submitting = createMut.isPending || updateMut.isPending
   const inputClass = "bg-elevated border border-default rounded-lg px-3 py-2 text-sm text-primary placeholder:text-muted focus:outline-none focus:border-brand-500"
@@ -281,31 +295,47 @@ export default function PublishersManage() {
         </form>
       )}
 
-      {/* 筛选栏：搜索 + 只看有调研数据 + 计数 */}
+      {/* 筛选栏：视图切换 + 搜索 + 只看有调研数据 + 计数（搜索/筛选只作用于列表） */}
       {!isLoading && !isError && entities.length > 0 && (
         <div className="flex flex-wrap items-center gap-3">
-          <div className="relative flex-1 min-w-[180px] max-w-xs">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-            <input
-              type="text"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder={tt.search}
-              className="w-full bg-elevated border border-default rounded-lg pl-9 pr-3 py-2 text-sm text-primary placeholder:text-muted focus:outline-none focus:border-brand-500"
-            />
-          </div>
           <div className="flex gap-1 bg-elevated rounded-lg p-1">
-            {([false, true] as const).map(v => (
+            {(['list', 'graph'] as const).map(v => (
               <button
-                key={String(v)}
-                onClick={() => setOnlyResearched(v)}
-                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${onlyResearched === v ? 'bg-brand-600 text-white' : 'text-secondary hover:text-primary'}`}
+                key={v}
+                onClick={() => setView(v)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${view === v ? 'bg-brand-600 text-white' : 'text-secondary hover:text-primary'}`}
               >
-                {v ? tt.onlyResearched : tt.showAll}
+                {v === 'list' ? <List size={12} /> : <Network size={12} />}
+                {v === 'list' ? tt.viewList : tt.viewGraph}
               </button>
             ))}
           </div>
-          <span className="font-data text-[11px] text-muted">{tt.countShown(filtered.length, entities.length)}</span>
+          {view === 'list' && (
+            <>
+              <div className="relative flex-1 min-w-[180px] max-w-xs">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder={tt.search}
+                  className="w-full bg-elevated border border-default rounded-lg pl-9 pr-3 py-2 text-sm text-primary placeholder:text-muted focus:outline-none focus:border-brand-500"
+                />
+              </div>
+              <div className="flex gap-1 bg-elevated rounded-lg p-1">
+                {([false, true] as const).map(v => (
+                  <button
+                    key={String(v)}
+                    onClick={() => setOnlyResearched(v)}
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${onlyResearched === v ? 'bg-brand-600 text-white' : 'text-secondary hover:text-primary'}`}
+                  >
+                    {v ? tt.onlyResearched : tt.showAll}
+                  </button>
+                ))}
+              </div>
+              <span className="font-data text-[11px] text-muted">{tt.countShown(filtered.length, entities.length)}</span>
+            </>
+          )}
         </div>
       )}
 
@@ -315,6 +345,8 @@ export default function PublishersManage() {
         <div className="text-center text-muted text-sm py-12">{t.common.loading}</div>
       ) : entities.length === 0 ? (
         <div className="text-center text-muted text-sm py-12 bg-surface border border-default rounded-xl">{tt.empty}</div>
+      ) : view === 'graph' ? (
+        <PublisherGraph entities={entities} onSelectEntity={handleSelectFromGraph} />
       ) : filtered.length === 0 ? (
         <div className="text-center text-muted text-sm py-12 bg-surface border border-default rounded-xl">{tt.emptyFiltered}</div>
       ) : (
@@ -332,7 +364,7 @@ export default function PublishersManage() {
             if (e.sources.length) sum.push(tt.sumSources(e.sources.length))
             const summaryText = sum.length ? sum.join(' · ') : tt.sumEmpty
             return (
-            <div key={e.id} className="bg-surface border border-default rounded-xl">
+            <div key={e.id} id={`publisher-card-${e.id}`} className="bg-surface border border-default rounded-xl">
               <div
                 className="flex items-start justify-between gap-2 p-4 cursor-pointer hover:bg-elevated/30 transition-colors rounded-xl"
                 onClick={() => setCardOpen(s => ({ ...s, [e.id]: !s[e.id] }))}
