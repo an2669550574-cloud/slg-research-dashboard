@@ -25,6 +25,7 @@ import type {
   AggregateLeaderboardOut,
   MovementsOut,
   NewcomersOut,
+  PublisherNewcomersOut,
   PagedResponse,
   QuotaHistoryOut,
   QuotaInfo,
@@ -169,6 +170,9 @@ export const newcomersApi = {
    *  否则汇总全部 SYNC_RANKING_COMBOS。零 ST 配额，纯本地榜单比对。 */
   get: (opts: { country?: string; platform?: string } = {}): Promise<NewcomersOut> =>
     api.get('/newcomers/', { params: opts }).then(r => r.data),
+  /** 厂商新品：已建档主体的产品首次出现在已监测榜单（任意名次），跨全部 combo 汇总。零配额。 */
+  publishers: (): Promise<PublisherNewcomersOut> =>
+    api.get('/newcomers/publishers').then(r => r.data),
 }
 
 export interface MaterialListParams {

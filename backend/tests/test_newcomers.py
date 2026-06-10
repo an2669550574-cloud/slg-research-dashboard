@@ -207,3 +207,79 @@ async def test_router_reports_combos_without_baseline(client, monkeypatch):
     body = r.json()
     assert "JP/ios" in body["combos_without_baseline"]
     assert "US/ios" not in body["combos_without_baseline"]
+
+
+# ── 厂商主体新品（P1：已建档主体 × 任意名次首次出现）─────────────────────────
+
+async def _mk_entity(client, name, aliases=(), app_ids=()):
+    r = await client.post("/api/publishers/", json={
+        "name": name,
+        "aliases": [{"keyword": k} for k in aliases],
+        "app_ids": [{"app_id": a} for a in app_ids],
+    })
+    assert r.status_code == 201
+    return r.json()
+
+
+@pytest.mark.asyncio
+async def test_publisher_newcomer_alias_match_any_rank(client):
+    """已建档主体的新品在 TopN 之外首次出现 → 命中；无关发行商新品 → 不出现。"""
+    from app.services.newcomers import detect_publisher_newcomers
+    e = await _mk_entity(client, "江娱互动测试", aliases=["river game"])
+
+    await _seed("2026-05-08", [("topwar", 5, None, "River Game HK Limited")])
+    await _seed("2026-05-15", [
+        ("topwar", 5, None, "River Game HK Limited"),          # 老产品：不报
+        ("topheroes", 80, None, "River Game HK Limited"),      # 主体新品、80 名：报
+        ("stranger", 81, None, "Some Unknown Studio"),         # 无关发行商：不报
+    ])
+
+    s = await detect_publisher_newcomers("US", "ios", window=4)
+    assert [n["name"] for n in s["newcomers"]] == ["topheroes"]
+    n = s["newcomers"][0]
+    assert n["entity_id"] == e["id"]
+    assert n["entity_name"] == "江娱互动测试"
+    assert n["matched_by"] == "alias"
+    assert n["rank"] == 80
+
+
+@pytest.mark.asyncio
+async def test_publisher_newcomer_app_id_pin(client):
+    """钉选 app_id 命中（发行商名对不上也能归属）。"""
+    from app.services.newcomers import detect_publisher_newcomers
+    e = await _mk_entity(client, "钉选主体", app_ids=["com.pin.newgame"])
+
+    await _seed("2026-05-08", [("a", 1, None, SLG_PUB)])
+    await _seed("2026-05-15", [
+        ("a", 1, None, SLG_PUB),
+        ("com.pin.newgame", 120, None, "马甲未知发行商"),
+    ])
+
+    s = await detect_publisher_newcomers("US", "ios", window=4)
+    assert len(s["newcomers"]) == 1
+    assert s["newcomers"][0]["entity_id"] == e["id"]
+    assert s["newcomers"][0]["matched_by"] == "app_id"
+
+
+@pytest.mark.asyncio
+async def test_publisher_newcomers_endpoint(client, monkeypatch):
+    """端点跨 combo 汇总 + no_baseline 标记 + 中文主体名。"""
+    from app.config import settings
+    monkeypatch.setattr(settings, "SYNC_RANKING_COMBOS", "US:ios,JP:ios")
+    await _mk_entity(client, "壳木游戏测试", aliases=["camel games"])
+
+    await _seed("2026-05-08", [("old", 1, None, SLG_PUB)], country="US", platform="ios")
+    await _seed("2026-05-15", [
+        ("old", 1, None, SLG_PUB),
+        ("ageofx", 95, None, "Camel Games Limited"),
+    ], country="US", platform="ios")
+    await _seed("2026-05-15", [("jp_only", 1, None, SLG_PUB)], country="JP", platform="ios")  # 冷库
+
+    r = await client.get("/api/newcomers/publishers")
+    assert r.status_code == 200
+    body = r.json()
+    assert [i["name"] for i in body["items"]] == ["ageofx"]
+    assert body["items"][0]["entity_name"] == "壳木游戏测试"
+    assert body["items"][0]["country"] == "US"
+    assert "JP/ios" in body["combos_without_baseline"]
+    assert body["window"] >= 1
