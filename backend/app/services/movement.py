@@ -121,13 +121,15 @@ async def detect_movement(country: str, platform: str, today: str) -> dict:
 
 
 async def detect_and_alert_movement(country: str, platform: str, today: str) -> dict:
-    """定时任务路径专用：检测 + 发 Sentry 告警。手动 refresh / API 拉取不应走这里。"""
+    """定时任务路径专用：检测 + 发 Sentry 告警 + 推钉钉。手动 refresh / API 拉取不应走这里。"""
     summary = await detect_movement(country, platform, today)
     _emit(summary)
+    await _emit_dingtalk(summary)
     return summary
 
 
-def _emit(s: dict) -> None:
+def _format_parts(s: dict) -> list[str]:
+    """异动摘要行——Sentry 日志与钉钉推送共用同一份口径。"""
     parts = []
     for e in s["new_entrants"]:
         frm = "榜外" if e["prev_rank"] is None else f"#{e['prev_rank']}"
@@ -139,6 +141,11 @@ def _emit(s: dict) -> None:
         parts.append(f"[DOWN] {e['name']} 跌出Top榜 (#{e['prev_rank']}->{to})")
     for e in s["revenue_spikes"]:
         parts.append(f"[REV] {e['name']} 收入{e['pct']:+.0f}% (${e['prev_revenue']:,.0f}->${e['cur_revenue']:,.0f})")
+    return parts
+
+
+def _emit(s: dict) -> None:
+    parts = _format_parts(s)
     if not parts:
         logger.info(
             "Competitor movement %s/%s %s vs %s: no significant SLG movement",
@@ -150,3 +157,19 @@ def _emit(s: dict) -> None:
         s["country"], s["platform"], s["today"], s["prev_date"], len(parts),
         "\n".join("  - " + p for p in parts),
     )
+
+
+async def _emit_dingtalk(s: dict) -> None:
+    """异动摘要 → 钉钉（未配 webhook 静默；失败已在 dingtalk 服务里兜住）。"""
+    from app.services import dingtalk
+    if not dingtalk.is_enabled():
+        return
+    parts = _format_parts(s)
+    if not parts:
+        return
+    combo = f"{s['country']}/{s['platform']}"
+    text = "\n\n".join(
+        [f"### 📊 SLG 竞品异动 · {combo}（{s['today']} vs {s['prev_date']}，{len(parts)} 项）"]
+        + [f"- {p}" for p in parts]
+    )
+    await dingtalk.send_markdown(f"竞品异动 {combo}", text)

@@ -134,6 +134,14 @@ class Settings(BaseSettings):
     # 最近一次同步里名次 ≤ 该值才算"新进榜"，过滤榜尾噪声。
     NEWCOMER_TOPN: int = 50
 
+    # ── 钉钉告警（自定义群机器人 webhook）────────────────────────────────
+    # 不配 URL = 整体关闭（所有发送静默 no-op）。值放 backend/.env，不进 git。
+    # DINGTALK_WEBHOOK_URL: 群机器人 webhook 完整地址（含 access_token）。
+    # DINGTALK_SECRET: 机器人「加签」安全设置的 secret（选填；用「自定义关键词」
+    #   模式时留空，关键词建议设 "SLG"——所有消息标题都带该前缀）。
+    DINGTALK_WEBHOOK_URL: str = ""
+    DINGTALK_SECRET: str = ""
+
     # 素材库上传文件落盘根目录。容器内走已挂载的 ./data:/app/data 卷，
     # 宿主机即 /opt/slg-research-dashboard/data/materials，与 DB 同一备份域。
     MEDIA_ROOT: str = "./data/materials"
