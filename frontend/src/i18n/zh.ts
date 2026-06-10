@@ -604,6 +604,7 @@ export const zh = {
       affiliate: '关联',
     },
     stakeSuffix: (n: number) => `持股 ${n}%`,
+    noteOptionalPlaceholder: '备注（可选，如持股口径/退出史）',
     // 列表 / 股权图谱视图
     viewList: '列表',
     viewGraph: '股权图谱',
