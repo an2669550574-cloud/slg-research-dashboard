@@ -3,7 +3,16 @@
 conftest 每个 test 重载 app.*、noop seed_publishers（表起步为空）—— import 放函数内。
 """
 import pytest
-from datetime import date
+
+
+def _today() -> str:
+    """与 /products 端点窗口右界（utcnow_naive().date()）同源的 UTC 当天。
+
+    端点用 UTC 算窗口、若种子用本地 date.today()，北京凌晨（UTC 仍是前一天）
+    种子会落在窗口右界之外 → 查不到任何行。统一走 UTC 消除这个跨午夜偏差。
+    """
+    from app.database import utcnow_naive
+    return utcnow_naive().date().strftime("%Y-%m-%d")
 
 
 async def _seed_rankings(rows):
@@ -47,7 +56,7 @@ async def test_create_publisher_with_children_and_readback(client):
 
 @pytest.mark.asyncio
 async def test_products_aggregate_alias_and_appid_match(client):
-    today = date.today().strftime("%Y-%m-%d")
+    today = _today()
     await _seed_rankings([
         ("p.alias", today, 1, 100, 50.0, "US", "ios", "末日要塞", "Kabam Games Ltd"),
         ("com.foo.pin", today, 2, 80, 40.0, "US", "ios", "钉住的竞品", "Unknown Studio"),
@@ -70,7 +79,7 @@ async def test_products_aggregate_alias_and_appid_match(client):
 
 @pytest.mark.asyncio
 async def test_product_count_in_list(client):
-    today = date.today().strftime("%Y-%m-%d")
+    today = _today()
     await _seed_rankings([
         ("c.1", today, 1, 10, 5.0, "US", "ios", "游戏一", "Kabam Games"),
         ("c.2", today, 2, 10, 5.0, "US", "ios", "游戏二", "Kabam Inc"),
@@ -86,7 +95,7 @@ async def test_product_count_in_list(client):
 @pytest.mark.asyncio
 async def test_add_alias_refreshes_is_slg_index(client):
     """新增 alias 后 is_slg 内存索引即时刷新——经 aggregate-leaderboard（走 is_slg）验证。"""
-    today = date.today().strftime("%Y-%m-%d")
+    today = _today()
     await _seed_rankings([
         ("ref.1", today, 1, 200, 99.0, "US", "ios", "刷新验证", "ZenithPlay Ltd"),
     ])
@@ -105,7 +114,7 @@ async def test_add_alias_refreshes_is_slg_index(client):
 
 @pytest.mark.asyncio
 async def test_delete_alias_refreshes_index(client):
-    today = date.today().strftime("%Y-%m-%d")
+    today = _today()
     await _seed_rankings([
         ("del.1", today, 1, 200, 99.0, "US", "ios", "删除验证", "ZenithPlay Ltd"),
         ("keep.1", today, 2, 150, 88.0, "US", "ios", "保留命中", "Kabam Games"),
