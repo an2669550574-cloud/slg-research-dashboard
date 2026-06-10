@@ -47,9 +47,10 @@ export default function PublishersManage() {
   const qc = useQueryClient()
   const [mode, setMode] = useState<Mode>({ kind: 'closed' })
   const [form, setForm] = useState<EntityForm>(EMPTY_FORM)
-  // 每张卡片下「新增马甲 / app_id」输入框各自独立
+  // 每张卡片下「新增马甲 / app_id / 开发者账号」输入框各自独立
   const [newAlias, setNewAlias] = useState<Record<number, string>>({})
   const [newAppId, setNewAppId] = useState<Record<number, string>>({})
+  const [newArtist, setNewArtist] = useState<Record<number, { artist_id: string; label: string }>>({})
   const [srcForm, setSrcForm] = useState<Record<number, SrcForm>>({})
   const [relForm, setRelForm] = useState<Record<number, RelForm>>({})
   // 卡片默认收起：只看摘要，点开才显示管理区
@@ -96,6 +97,19 @@ export default function PublishersManage() {
   const delAppIdMut = useMutation({
     mutationFn: ({ id, rowId }: { id: number; rowId: number }) => publishersApi.deleteAppId(id, rowId),
     onSuccess: () => { invalidate(); toast.success(tt.appIdDeleted) },
+  })
+  const addArtistMut = useMutation({
+    mutationFn: ({ id, artist_id, label }: { id: number; artist_id: string; label: string }) =>
+      publishersApi.addItunesArtist(id, { artist_id, label: label.trim() || null }),
+    onSuccess: (_o, { id }) => {
+      invalidate()
+      setNewArtist(s => ({ ...s, [id]: { artist_id: '', label: '' } }))
+      toast.success(tt.artistAdded)
+    },
+  })
+  const delArtistMut = useMutation({
+    mutationFn: ({ id, rowId }: { id: number; rowId: number }) => publishersApi.deleteItunesArtist(id, rowId),
+    onSuccess: () => { invalidate(); toast.success(tt.artistDeleted) },
   })
   const addSourceMut = useMutation({
     mutationFn: ({ id, data }: { id: number; data: PublisherSourceCreate }) => publishersApi.addSource(id, data),
@@ -160,6 +174,16 @@ export default function PublishersManage() {
   const handleDelAppId = (id: number, rowId: number, aid: string) => {
     if (!window.confirm(tt.confirmDeleteAppId(aid))) return
     delAppIdMut.mutate({ id, rowId })
+  }
+  const handleAddArtist = (id: number) => {
+    const f = newArtist[id] ?? { artist_id: '', label: '' }
+    const artist_id = f.artist_id.trim()
+    if (!artist_id) return
+    addArtistMut.mutate({ id, artist_id, label: f.label })
+  }
+  const handleDelArtist = (id: number, rowId: number, aid: string) => {
+    if (!window.confirm(tt.confirmDeleteArtist(aid))) return
+    delArtistMut.mutate({ id, rowId })
   }
   const setSrc = (id: number, patch: Partial<SrcForm>) =>
     setSrcForm(s => ({ ...s, [id]: { ...(s[id] ?? BLANK_SRC), ...patch } }))
@@ -482,6 +506,46 @@ export default function PublishersManage() {
                     />
                     <button onClick={() => handleAddAppId(e.id)} disabled={addAppIdMut.isPending}
                       className="p-1 text-muted hover:text-accent transition-colors" title={tt.addAppId}>
+                      <Plus size={14} />
+                    </button>
+                  </span>
+                </div>
+              </div>
+
+              {/* App Store 开发者账号（iTunes artistId，清单 diff 抓未进榜新上架） */}
+              <div className="border-t border-default pt-3 space-y-2">
+                <div className="text-[11px] text-secondary" title={tt.artistsHint}>
+                  {tt.artistsLabel}（{e.itunes_artists.length}）
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {e.itunes_artists.map(a => (
+                    <span key={a.id}
+                      title={a.last_synced_at ? tt.artistSyncedAt(a.last_synced_at.slice(0, 10)) : tt.artistNeverSynced}
+                      className="inline-flex items-center gap-1.5 text-xs text-primary bg-elevated border border-default rounded-lg pl-2.5 pr-1.5 py-1">
+                      <span className="font-data">{a.artist_id}</span>
+                      {a.label && <span className="text-muted">· {a.label}</span>}
+                      <span className={`w-1.5 h-1.5 rounded-full ${a.last_synced_at ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                      <button onClick={() => handleDelArtist(e.id, a.id, a.artist_id)} title={t.common.delete}
+                        className="text-muted hover:text-red-400 transition-colors"><X size={12} /></button>
+                    </span>
+                  ))}
+                  <span className="inline-flex items-center gap-1">
+                    <input
+                      value={(newArtist[e.id] ?? { artist_id: '', label: '' }).artist_id}
+                      onChange={ev => setNewArtist(s => ({ ...s, [e.id]: { ...(s[e.id] ?? { artist_id: '', label: '' }), artist_id: ev.target.value } }))}
+                      onKeyDown={ev => { if (ev.key === 'Enter') { ev.preventDefault(); handleAddArtist(e.id) } }}
+                      placeholder={tt.artistIdPlaceholder}
+                      className={chipInputClass}
+                    />
+                    <input
+                      value={(newArtist[e.id] ?? { artist_id: '', label: '' }).label}
+                      onChange={ev => setNewArtist(s => ({ ...s, [e.id]: { ...(s[e.id] ?? { artist_id: '', label: '' }), label: ev.target.value } }))}
+                      onKeyDown={ev => { if (ev.key === 'Enter') { ev.preventDefault(); handleAddArtist(e.id) } }}
+                      placeholder={tt.artistLabelPlaceholder}
+                      className={chipInputClass}
+                    />
+                    <button onClick={() => handleAddArtist(e.id)} disabled={addArtistMut.isPending}
+                      className="p-1 text-muted hover:text-accent transition-colors" title={tt.addArtist}>
                       <Plus size={14} />
                     </button>
                   </span>

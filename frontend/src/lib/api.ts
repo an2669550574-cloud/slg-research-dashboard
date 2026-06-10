@@ -26,6 +26,9 @@ import type {
   MovementsOut,
   NewcomersOut,
   PublisherNewcomersOut,
+  AppstoreReleasesOut,
+  PublisherItunesArtist,
+  PublisherItunesArtistCreate,
   PagedResponse,
   QuotaHistoryOut,
   QuotaInfo,
@@ -173,6 +176,12 @@ export const newcomersApi = {
   /** 厂商新品：已建档主体的产品首次出现在已监测榜单（任意名次），跨全部 combo 汇总。零配额。 */
   publishers: (): Promise<PublisherNewcomersOut> =>
     api.get('/newcomers/publishers').then(r => r.data),
+  /** App Store 新上架：开发者账号清单 diff（免费 iTunes API），不依赖进榜。 */
+  appstore: (days = 60): Promise<AppstoreReleasesOut> =>
+    api.get('/newcomers/appstore', { params: { days } }).then(r => r.data),
+  /** 手动触发一轮清单同步（首次挂账号建基线用；平时靠周级调度）。 */
+  appstoreSync: (): Promise<{ message: string; synced: number; failed: number; baselined: number; new_apps: number }> =>
+    api.post('/newcomers/appstore/sync').then(r => r.data),
 }
 
 export interface MaterialListParams {
@@ -339,6 +348,11 @@ export const publishersApi = {
     api.post(`/publishers/${id}/app-ids`, data).then(r => r.data),
   deleteAppId: (id: number, appIdRowId: number): Promise<DeleteResponse> =>
     api.delete(`/publishers/${id}/app-ids/${appIdRowId}`).then(r => r.data),
+  // App Store 开发者账号（iTunes artistId）：清单 diff 抓未进榜新上架。免费 API、零 ST 配额。
+  addItunesArtist: (id: number, data: PublisherItunesArtistCreate): Promise<PublisherItunesArtist> =>
+    api.post(`/publishers/${id}/itunes-artists`, data).then(r => r.data),
+  deleteItunesArtist: (id: number, artistRowId: number): Promise<DeleteResponse> =>
+    api.delete(`/publishers/${id}/itunes-artists/${artistRowId}`).then(r => r.data),
   // 调研出处（一手源溯源）：增删；写后档案 provenance_tier 随之刷新。零 ST 配额。
   addSource: (id: number, data: PublisherSourceCreate): Promise<PublisherSource> =>
     api.post(`/publishers/${id}/sources`, data).then(r => r.data),

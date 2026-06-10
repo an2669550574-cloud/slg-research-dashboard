@@ -89,6 +89,53 @@ class PublisherSource(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 
 
+class PublisherItunesArtist(Base):
+    """主体的 App Store 开发者账号（iTunes artistId）。
+
+    一个主体可有多个开发者账号（如元趣系 = First Fun HK 与 FUNFLY PTE. LTD. 两个
+    账号）。artist_id 全局唯一——一个开发者账号只归属一个主体。
+    iTunes lookup API（免费、非 Sensor Tower）按 artistId 拉账号下全部 app 清单，
+    周级 diff 出"新上架"——不依赖产品进榜，软启动期即可抓到。
+    """
+    __tablename__ = "publisher_itunes_artists"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entity_id: Mapped[int] = mapped_column(
+        ForeignKey("publisher_entities.id", ondelete="CASCADE"), index=True
+    )
+    artist_id: Mapped[str] = mapped_column(String(30), unique=True)  # 如 "1717022676"
+    label: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)  # 如 "River Game HK Limited"
+    last_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class PublisherItunesApp(Base):
+    """开发者账号下见过的 app 清单快照——「App Store 新上架」diff 的基线与结果。
+
+    首次同步某账号时全量落库并标 is_baseline=True（无从判断"新"，与 newcomers 的
+    no_baseline 同语义）；此后出现的新 track_id 落库为 is_baseline=False = 新上架。
+    """
+    __tablename__ = "publisher_itunes_apps"
+    __table_args__ = (
+        UniqueConstraint("artist_row_id", "track_id", name="uq_itunes_app_per_artist"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entity_id: Mapped[int] = mapped_column(
+        ForeignKey("publisher_entities.id", ondelete="CASCADE"), index=True
+    )
+    artist_row_id: Mapped[int] = mapped_column(
+        ForeignKey("publisher_itunes_artists.id", ondelete="CASCADE"), index=True
+    )
+    track_id: Mapped[str] = mapped_column(String(30))
+    name: Mapped[str] = mapped_column(String(300))
+    bundle_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    release_date: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)  # ISO 日期
+    track_view_url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+    is_baseline: Mapped[bool] = mapped_column(Boolean, default=False)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
 class PublisherRelation(Base):
     """主体间股权/母子关系：parent_id（母公司/投资方）→ child_id（子公司/被投）。
 

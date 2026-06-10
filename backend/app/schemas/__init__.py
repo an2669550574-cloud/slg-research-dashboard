@@ -21,6 +21,7 @@ from app.schemas.publisher import (
     PublisherAliasOut, PublisherAliasCreate,
     PublisherAppIdOut, PublisherAppIdCreate,
     PublisherSourceOut, PublisherSourceCreate,
+    PublisherItunesArtistOut, PublisherItunesArtistCreate,
     PublisherRelationCreate, PublisherRelationLinkOut,
     PublisherProductOut,
 )
@@ -70,6 +71,8 @@ __all__ = [
     "PublisherAliasCreate",
     "PublisherAppIdOut",
     "PublisherAppIdCreate",
+    "PublisherItunesArtistOut",
+    "PublisherItunesArtistCreate",
     "PublisherSourceOut",
     "PublisherSourceCreate",
     "PublisherRelationCreate",

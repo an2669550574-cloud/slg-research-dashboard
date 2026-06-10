@@ -29,6 +29,27 @@ class PublisherAppIdCreate(BaseModel):
     note: Optional[str] = None
 
 
+class PublisherItunesArtistOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    artist_id: str
+    label: Optional[str] = None
+    last_synced_at: Optional[datetime] = None
+
+
+class PublisherItunesArtistCreate(BaseModel):
+    artist_id: str
+    label: Optional[str] = None
+
+    @field_validator("artist_id")
+    @classmethod
+    def _valid_artist_id(cls, v: str) -> str:
+        v = v.strip()
+        if not v.isdigit():
+            raise ValueError("artist_id must be the numeric iTunes artistId, e.g. 1717022676")
+        return v
+
+
 class PublisherSourceOut(BaseModel):
     id: int
     url: str
@@ -116,6 +137,7 @@ class PublisherEntityOut(BaseModel):
     sort_order: int
     aliases: list[PublisherAliasOut] = []
     app_ids: list[PublisherAppIdOut] = []
+    itunes_artists: list[PublisherItunesArtistOut] = []
     sources: list[PublisherSourceOut] = []
     # 溯源档位：primary(有一手源) / secondary(仅二手) / none(未溯源)。见 services/provenance。
     provenance_tier: str = "none"

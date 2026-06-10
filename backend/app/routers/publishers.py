@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db, utcnow_naive
 from app.models.publisher import (
     PublisherEntity, PublisherAlias, PublisherAppId, PublisherSource, PublisherRelation,
+    PublisherItunesArtist,
 )
 from app.models.game import GameRanking
 from app.schemas import (
@@ -23,6 +24,7 @@ from app.schemas import (
     PublisherAliasOut, PublisherAliasCreate,
     PublisherAppIdOut, PublisherAppIdCreate,
     PublisherSourceOut, PublisherSourceCreate,
+    PublisherItunesArtistOut, PublisherItunesArtistCreate,
     PublisherRelationCreate, PublisherRelationLinkOut, PublisherProductOut,
 )
 from app.services.slg_publishers import load_index_from_db
@@ -67,6 +69,13 @@ async def _children(entity_id: int, db: AsyncSession):
         .order_by(PublisherAppId.id)
     )).scalars().all()
     return aliases, app_ids
+
+
+async def _itunes_artists(entity_id: int, db: AsyncSession):
+    return (await db.execute(
+        select(PublisherItunesArtist).where(PublisherItunesArtist.entity_id == entity_id)
+        .order_by(PublisherItunesArtist.id)
+    )).scalars().all()
 
 
 async def _sources(entity_id: int, db: AsyncSession):
@@ -135,12 +144,14 @@ def _count_for_entity(pairs, alias_kw_tokens, app_id_set) -> int:
     return n
 
 
-def _build_out(e: PublisherEntity, aliases, app_ids, sources, parents, children, product_count: int | None) -> PublisherEntityOut:
+def _build_out(e: PublisherEntity, aliases, app_ids, sources, parents, children,
+               product_count: int | None, itunes_artists=()) -> PublisherEntityOut:
     return PublisherEntityOut(
         id=e.id, name=e.name, name_en=e.name_en, hq_region=e.hq_region,
         is_slg=e.is_slg, brief=e.brief, sort_order=e.sort_order,
         aliases=[PublisherAliasOut.model_validate(a) for a in aliases],
         app_ids=[PublisherAppIdOut.model_validate(a) for a in app_ids],
+        itunes_artists=[PublisherItunesArtistOut.model_validate(a) for a in itunes_artists],
         sources=[_source_out(s) for s in sources],
         provenance_tier=provenance_tier([s.source_type for s in sources]),
         parents=parents, children=children,
@@ -157,6 +168,7 @@ async def list_publishers(db: AsyncSession = Depends(get_db)):
     )).scalars().all()
     all_aliases = (await db.execute(select(PublisherAlias).order_by(PublisherAlias.id))).scalars().all()
     all_app_ids = (await db.execute(select(PublisherAppId).order_by(PublisherAppId.id))).scalars().all()
+    all_artists = (await db.execute(select(PublisherItunesArtist).order_by(PublisherItunesArtist.id))).scalars().all()
     all_sources = (await db.execute(select(PublisherSource).order_by(PublisherSource.id))).scalars().all()
     all_relations = (await db.execute(select(PublisherRelation).order_by(PublisherRelation.id))).scalars().all()
     pairs = await _ranking_pairs(db)
@@ -167,6 +179,9 @@ async def list_publishers(db: AsyncSession = Depends(get_db)):
     by_appid: dict[int, list[PublisherAppId]] = {}
     for a in all_app_ids:
         by_appid.setdefault(a.entity_id, []).append(a)
+    by_artist: dict[int, list[PublisherItunesArtist]] = {}
+    for a in all_artists:
+        by_artist.setdefault(a.entity_id, []).append(a)
     by_source: dict[int, list[PublisherSource]] = {}
     for s in all_sources:
         by_source.setdefault(s.entity_id, []).append(s)
@@ -189,6 +204,7 @@ async def list_publishers(db: AsyncSession = Depends(get_db)):
             e, aliases, app_ids, sources,
             by_parents.get(e.id, []), by_children.get(e.id, []),
             _count_for_entity(pairs, kw_tokens, app_id_set),
+            itunes_artists=by_artist.get(e.id, []),
         ))
     return out
 
@@ -213,7 +229,9 @@ async def create_publisher(data: PublisherEntityCreate, db: AsyncSession = Depen
     parents, children = await _relations(e.id, db)
     pairs = await _ranking_pairs(db)
     kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
-    return _build_out(e, aliases, app_ids, sources, parents, children, _count_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids}))
+    return _build_out(e, aliases, app_ids, sources, parents, children,
+                      _count_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids}),
+                      itunes_artists=await _itunes_artists(e.id, db))
 
 
 @router.get("/{entity_id}", response_model=PublisherEntityOut)
@@ -224,7 +242,9 @@ async def get_publisher(entity_id: int, db: AsyncSession = Depends(get_db)):
     parents, children = await _relations(entity_id, db)
     pairs = await _ranking_pairs(db)
     kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
-    return _build_out(e, aliases, app_ids, sources, parents, children, _count_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids}))
+    return _build_out(e, aliases, app_ids, sources, parents, children,
+                      _count_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids}),
+                      itunes_artists=await _itunes_artists(e.id, db))
 
 
 @router.put("/{entity_id}", response_model=PublisherEntityOut)
@@ -240,16 +260,21 @@ async def update_publisher(entity_id: int, data: PublisherEntityUpdate, db: Asyn
     parents, children = await _relations(entity_id, db)
     pairs = await _ranking_pairs(db)
     kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
-    return _build_out(e, aliases, app_ids, sources, parents, children, _count_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids}))
+    return _build_out(e, aliases, app_ids, sources, parents, children,
+                      _count_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids}),
+                      itunes_artists=await _itunes_artists(e.id, db))
 
 
 @router.delete("/{entity_id}")
 async def delete_publisher(entity_id: int, db: AsyncSession = Depends(get_db)):
     e = await _get_entity_or_404(entity_id, db)
     # SQLite 默认不强制 FK 级联，应用层显式删子行。
+    from app.models.publisher import PublisherItunesApp
     await db.execute(sa_delete(PublisherAlias).where(PublisherAlias.entity_id == entity_id))
     await db.execute(sa_delete(PublisherAppId).where(PublisherAppId.entity_id == entity_id))
     await db.execute(sa_delete(PublisherSource).where(PublisherSource.entity_id == entity_id))
+    await db.execute(sa_delete(PublisherItunesApp).where(PublisherItunesApp.entity_id == entity_id))
+    await db.execute(sa_delete(PublisherItunesArtist).where(PublisherItunesArtist.entity_id == entity_id))
     await db.execute(sa_delete(PublisherRelation).where(
         or_(PublisherRelation.parent_id == entity_id, PublisherRelation.child_id == entity_id)
     ))
@@ -310,6 +335,43 @@ async def delete_app_id(entity_id: int, app_id_row_id: int, db: AsyncSession = D
         await db.delete(a)
         await db.commit()
         await load_index_from_db()
+    return {"message": "deleted"}
+
+
+# ── 子资源：App Store 开发者账号（iTunes artistId）────────────────────────
+
+@router.post("/{entity_id}/itunes-artists", response_model=PublisherItunesArtistOut, status_code=201)
+async def add_itunes_artist(entity_id: int, data: PublisherItunesArtistCreate, db: AsyncSession = Depends(get_db)):
+    """给主体挂一个 App Store 开发者账号。artist_id 全局唯一（一个账号只归一个主体）。
+    不影响 is_slg 判定，不刷新内存索引；清单同步由周级 job / 手动端点负责。"""
+    await _get_entity_or_404(entity_id, db)
+    dup = (await db.execute(
+        select(PublisherItunesArtist).where(PublisherItunesArtist.artist_id == data.artist_id)
+    )).scalar_one_or_none()
+    if dup:
+        raise HTTPException(status_code=409, detail="该 artist_id 已挂在某主体下")
+    a = PublisherItunesArtist(entity_id=entity_id, artist_id=data.artist_id, label=data.label)
+    db.add(a)
+    await db.commit()
+    await db.refresh(a)
+    return PublisherItunesArtistOut.model_validate(a)
+
+
+@router.delete("/{entity_id}/itunes-artists/{artist_row_id}")
+async def delete_itunes_artist(entity_id: int, artist_row_id: int, db: AsyncSession = Depends(get_db)):
+    from app.models.publisher import PublisherItunesApp
+    a = (await db.execute(
+        select(PublisherItunesArtist).where(
+            PublisherItunesArtist.id == artist_row_id,
+            PublisherItunesArtist.entity_id == entity_id,
+        )
+    )).scalar_one_or_none()
+    if a:
+        # 连带删清单快照（SQLite 不强制 FK 级联）
+        await db.execute(sa_delete(PublisherItunesApp).where(
+            PublisherItunesApp.artist_row_id == artist_row_id))
+        await db.delete(a)
+        await db.commit()
     return {"message": "deleted"}
 
 
