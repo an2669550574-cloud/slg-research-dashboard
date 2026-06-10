@@ -14,7 +14,9 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.database import utcnow_naive
-from app.services.newcomers import detect_newcomers
+from app.services.newcomers import (
+    detect_newcomers, detect_publisher_newcomers, _load_entity_matchers,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +49,68 @@ class NewcomersOut(BaseModel):
     # 当次生效的判定口径（窗口 / 名次门槛），前端展示给用户看清"新"的定义。
     window: int
     topn: int
+
+
+class PublisherNewcomerItem(BaseModel):
+    """已建档厂商主体的一条新品——首次出现在已监测榜单（任意名次）。"""
+    country: str
+    platform: str
+    as_of: str
+    app_id: str
+    name: str
+    publisher: Optional[str] = None
+    icon_url: Optional[str] = None
+    rank: Optional[int] = None
+    revenue: Optional[float] = None
+    downloads: Optional[float] = None
+    entity_id: int
+    entity_name: str
+    matched_by: str  # 'alias' = 发行马甲命中 / 'app_id' = 钉选命中
+
+
+class PublisherNewcomersOut(BaseModel):
+    today: str
+    items: list[PublisherNewcomerItem]
+    combos_without_baseline: list[str] = []
+    as_of_by_combo: dict[str, str] = {}
+    window: int
+
+
+@router.get("/publishers", response_model=PublisherNewcomersOut)
+async def get_publisher_newcomers(
+    window: Optional[int] = Query(None, ge=1, le=20, description="回看多少个同步快照作基线；缺省用 NEWCOMER_WINDOW"),
+):
+    """已建档厂商主体的新品（跨全部已监测 combo 汇总，**不限名次**）。
+
+    与「全市场新面孔」互补：主体可信，新品在任意名次首次出现都值得提示——
+    解决慢慢爬榜的产品被基线"见过"而永不触发 Top N 口径的漏报。零 ST 配额。
+    """
+    today = utcnow_naive().strftime("%Y-%m-%d")
+    eff_window = window if window is not None else settings.NEWCOMER_WINDOW
+    matchers = await _load_entity_matchers()
+
+    items: list[PublisherNewcomerItem] = []
+    no_baseline: list[str] = []
+    as_of_by_combo: dict[str, str] = {}
+    for c, p in settings.sync_combos_list:
+        summary = await detect_publisher_newcomers(c, p, window=window, matchers=matchers)
+        key = f"{c}/{p}"
+        if summary["as_of"]:
+            as_of_by_combo[key] = summary["as_of"]
+        if summary["no_baseline"]:
+            no_baseline.append(key)
+            continue
+        for n in summary["newcomers"]:
+            items.append(PublisherNewcomerItem(country=c, platform=p, as_of=summary["as_of"], **n))
+
+    items.sort(key=lambda e: (e.entity_name, e.rank if e.rank is not None else 999))
+    return PublisherNewcomersOut(
+        today=today,
+        items=items,
+        combos_without_baseline=no_baseline,
+        as_of_by_combo=as_of_by_combo,
+        window=eff_window,
+    )
 
 
 @router.get("/", response_model=NewcomersOut)

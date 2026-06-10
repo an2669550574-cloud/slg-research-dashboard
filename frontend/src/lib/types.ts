@@ -312,6 +312,32 @@ export interface NewcomersOut {
   topn: number
 }
 
+/** 已建档厂商主体的一条新品：首次出现在已监测榜单（任意名次，不设 TopN 门槛）。 */
+export interface PublisherNewcomerItem {
+  country: string
+  platform: string
+  as_of: string
+  app_id: string
+  name: string
+  publisher: string | null
+  icon_url: string | null
+  rank: number | null
+  revenue: number | null
+  downloads: number | null
+  entity_id: number
+  entity_name: string
+  /** 'alias' = 发行马甲命中 / 'app_id' = 钉选命中 */
+  matched_by: 'alias' | 'app_id'
+}
+
+export interface PublisherNewcomersOut {
+  today: string
+  items: PublisherNewcomerItem[]
+  combos_without_baseline: string[]
+  as_of_by_combo: Record<string, string>
+  window: number
+}
+
 // ─── quota ───────────────────────────────────────────────────────────────
 
 export type DataSource = 'real_api' | 'mock' | 'snapshot_stale'
