@@ -168,6 +168,16 @@ async def _run_rank_backfill() -> None:
         logger.exception("Rank backfill job crashed")
 
 
+async def _run_itunes_releases_sync() -> None:
+    """定时任务包装：App Store 开发者清单 diff（免费 iTunes API、零 ST 配额）。
+    任务自身已含 mock/空账号护栏，异常不拖垮 scheduler。"""
+    from app.services.itunes_releases import sync_itunes_releases
+    try:
+        await sync_itunes_releases()
+    except Exception:
+        logger.exception("iTunes releases sync job crashed")
+
+
 async def sync_seed_games_if_empty() -> None:
     """若 games 表为空则从 mock 数据建立一个起始集，避免 dashboard 空数据。"""
     from app.services.sensor_tower import MOCK_SLG_GAMES
@@ -268,6 +278,16 @@ def start_scheduler() -> None:
         id="rank_backfill",
         replace_existing=True,
         misfire_grace_time=3600,
+    )
+
+    # App Store 开发者清单 diff：周一 05:00 UTC（DB 备份 04:00 之后）。
+    # 免费 iTunes lookup API、零 ST 配额；任务自带 mock/空账号护栏，空跑无害。
+    scheduler.add_job(
+        _run_itunes_releases_sync,
+        CronTrigger(day_of_week="mon", hour=5, minute=0, timezone="UTC"),
+        id="itunes_releases_sync",
+        replace_existing=True,
+        misfire_grace_time=3600 * 6,
     )
     scheduler.start()
     logger.info(

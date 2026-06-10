@@ -338,6 +338,28 @@ export interface PublisherNewcomersOut {
   window: number
 }
 
+/** 一条「App Store 新上架」：开发者账号清单 diff 出的新 app（不依赖进榜）。 */
+export interface AppstoreReleaseItem {
+  entity_id: number
+  entity_name: string
+  artist_label: string | null
+  track_id: string
+  name: string
+  bundle_id: string | null
+  release_date: string | null
+  track_view_url: string | null
+  first_seen_at: IsoDateString
+}
+
+export interface AppstoreReleasesOut {
+  today: string
+  items: AppstoreReleaseItem[]
+  /** 已挂账号数 / 已完成首次基线同步的账号数。 */
+  artists_total: number
+  artists_synced: number
+  days: number
+}
+
 // ─── quota ───────────────────────────────────────────────────────────────
 
 export type DataSource = 'real_api' | 'mock' | 'snapshot_stale'
@@ -640,6 +662,19 @@ export interface PublisherAppId {
   note: string | null
 }
 
+/** 主体的 App Store 开发者账号（iTunes artistId）。清单 diff 抓"未进榜新上架"。 */
+export interface PublisherItunesArtist {
+  id: number
+  artist_id: string
+  label: string | null
+  last_synced_at: IsoDateString | null
+}
+
+export interface PublisherItunesArtistCreate {
+  artist_id: string
+  label?: string | null
+}
+
 /** 调研出处类型。前四类 = 一手（primary），后四类 = 二手（secondary）。 */
 export type PublisherSourceType =
   | 'registry' | 'official_filing' | 'official_platform' | 'official_domain'
@@ -701,6 +736,7 @@ export interface PublisherEntity {
   sort_order: number
   aliases: PublisherAlias[]
   app_ids: PublisherAppId[]
+  itunes_artists: PublisherItunesArtist[]
   sources: PublisherSource[]
   provenance_tier: ProvenanceTier
   /** 本主体的母公司/投资方 */

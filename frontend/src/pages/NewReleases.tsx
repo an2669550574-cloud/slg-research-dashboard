@@ -6,7 +6,7 @@ import { newcomersApi, publishersApi } from '../lib/api'
 import { formatRevenue } from '../lib/utils'
 import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
-import { Download as DownloadIcon, Sparkles, Info, FilePlus2, Globe2, Building2 } from 'lucide-react'
+import { Download as DownloadIcon, Sparkles, Info, FilePlus2, Globe2, Building2, Store, RefreshCw } from 'lucide-react'
 import { COUNTRIES, PLATFORMS, platformLabel, type Country, type Platform } from '../lib/markets'
 import { GameIcon } from '../components/GameIcon'
 import { QueryError } from '../components/QueryError'
@@ -163,7 +163,10 @@ export default function NewReleases() {
       </div>
 
       {view === 'publisher' ? (
-        <PublisherNewcomersTable query={pubQuery} />
+        <>
+          <AppstoreReleasesSection />
+          <PublisherNewcomersTable query={pubQuery} />
+        </>
       ) : (
       <div className="bg-surface border border-default rounded-xl overflow-hidden">
         {isError ? (
@@ -272,6 +275,91 @@ export default function NewReleases() {
         <Info size={13} className="mt-0.5 shrink-0" />
         <span>{view === 'market' ? t.newcomers.note : t.newcomers.publisherNote}</span>
       </div>
+    </div>
+  )
+}
+
+function AppstoreReleasesSection() {
+  const t = useT()
+  const qc = useQueryClient()
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: ['appstoreReleases'],
+    queryFn: () => newcomersApi.appstore(60),
+  })
+  const syncMut = useMutation({
+    mutationFn: () => newcomersApi.appstoreSync(),
+    onSuccess: (s) => {
+      qc.invalidateQueries({ queryKey: ['appstoreReleases'] })
+      qc.invalidateQueries({ queryKey: ['publishers'] })
+      toast.success(t.newcomers.appstoreSynced(s.synced, s.baselined, s.new_apps))
+    },
+    onError: () => toast.error(t.newcomers.appstoreSyncFailed),
+  })
+
+  const items = data?.items ?? []
+
+  return (
+    <div className="bg-surface border border-default rounded-xl overflow-hidden">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-5 py-3 border-b border-default">
+        <Store size={14} className="text-accent shrink-0" />
+        <span className="text-sm font-semibold text-primary">{t.newcomers.appstoreTitle}</span>
+        <span className="font-data text-[11px] text-muted">{t.newcomers.appstoreHint(data?.days ?? 60)}</span>
+        {data && data.artists_total > 0 && (
+          <span className="font-data text-[11px] text-muted">· {t.newcomers.appstoreArtists(data.artists_synced, data.artists_total)}</span>
+        )}
+        <button
+          onClick={() => syncMut.mutate()}
+          disabled={syncMut.isPending}
+          className="ml-auto inline-flex items-center gap-1.5 text-[11px] text-secondary hover:text-primary border border-default hover:border-strong rounded-lg px-2.5 py-1 transition-colors disabled:opacity-50"
+        >
+          <RefreshCw size={11} className={syncMut.isPending ? 'animate-spin' : ''} />
+          {t.newcomers.appstoreSyncNow}
+        </button>
+      </div>
+      {isError ? (
+        <QueryError compact onRetry={() => refetch()} />
+      ) : isLoading ? (
+        <div className="py-8 text-center text-muted text-sm">{t.common.loading}</div>
+      ) : (data?.artists_total ?? 0) === 0 ? (
+        <div className="py-8 px-6 text-center text-muted text-sm">{t.newcomers.appstoreNoArtists}</div>
+      ) : data!.artists_synced === 0 ? (
+        <div className="py-8 px-6 text-center text-muted text-sm">{t.newcomers.appstoreNoBaseline(data!.artists_total)}</div>
+      ) : items.length === 0 ? (
+        <div className="py-8 px-6 text-center text-muted text-sm">{t.newcomers.appstoreEmpty}</div>
+      ) : (
+        <div className="divide-y divide-default">
+          {items.map(it => (
+            <div key={`${it.entity_id}-${it.track_id}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-5 py-3">
+              <span className="inline-flex items-center gap-1.5 text-xs text-primary w-40 shrink-0">
+                <Building2 size={12} className="text-accent shrink-0" />
+                <span className="truncate">{it.entity_name}</span>
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium text-primary flex items-center gap-1.5">
+                  <Sparkles size={13} className="text-accent shrink-0" />
+                  {it.track_view_url ? (
+                    <a href={it.track_view_url} target="_blank" rel="noreferrer"
+                      className="truncate hover:underline" onClick={ev => ev.stopPropagation()}>
+                      {it.name}
+                    </a>
+                  ) : <span className="truncate">{it.name}</span>}
+                </div>
+                <div className="text-[11px] text-muted truncate font-data">
+                  {it.bundle_id}{it.artist_label ? ` · ${it.artist_label}` : ''}
+                </div>
+              </div>
+              {it.release_date && (
+                <span className="text-[11px] text-secondary font-data shrink-0">
+                  {t.newcomers.appstoreReleasedAt(it.release_date)}
+                </span>
+              )}
+              <span className="text-[11px] text-muted font-data shrink-0">
+                {t.newcomers.appstoreFirstSeen(String(it.first_seen_at).slice(0, 10))}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
