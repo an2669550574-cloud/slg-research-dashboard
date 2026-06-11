@@ -434,42 +434,91 @@ async def test_cached_get_serves_stale_snapshot_when_quota_exhausted(client):
     assert svc._get.await_count == 0
 
 
-def test_parse_featured_impacts_known_shapes():
-    """_parse_featured_impacts 可解析 list 型和 dict 包裹型响应。"""
+# 真实 /v1/ios/featured/impacts 形状（2026-06-11 HK 实测裁剪）：
+# countries/types 是聚合，features 是 国家×栏目 露出明细。
+_FEATURED_REAL_SHAPE = {
+    "countries": [
+        {"country": "AU", "name": "Australia", "occurrences": 222},
+        {"country": "US", "name": "United States", "occurrences": 570},
+        {"country": "JP", "name": "Japan", "occurrences": 130},
+    ],
+    "types": [
+        {"type": "list", "name": "List", "occurrences": 60285, "downloads": 820492},
+        {"type": "story", "name": "Story", "occurrences": 58, "downloads": 447},
+        {"type": "hero", "name": "Hero", "occurrences": 685, "downloads": 38899},
+    ],
+    "features": [
+        {"country_name": "Australia", "country": "AU", "type": "list",
+         "path": ["Games", "Must-Play Games"], "creatives": [], "first_seen_at": None,
+         "positions": [["2025-08-03", [5]], ["2025-08-04", [5]]]},
+        {"country_name": "United States", "country": "US", "type": "list",
+         "path": ["Games", "Top Games"],
+         "positions": [["2025-07-01", [3]], ["2025-07-02", [3]]]},
+        {"country_name": "Japan", "country": "JP", "type": "story",
+         "path": ["Today", "ゲームの世界"],
+         "positions": [["2025-09-10", [1]]]},
+        {"country_name": "United States", "country": "US", "type": "hero",
+         "path": ["Games"],
+         "positions": [["2025-12-25", [1]]]},
+    ],
+}
+
+
+def test_parse_featured_impacts_real_shape_distills_per_type():
+    """每个推荐位类型只出一条「窗口内首次」事件，按日期升序，统计取 types 聚合。"""
     from app.services.sensor_tower import _parse_featured_impacts
 
-    # 裸列表形式
-    raw_list = [
-        {"date": "2024-03-01", "slot_name": "Today Story", "country": "US", "downloads": 18000},
-        {"date": "2023-11-10", "slot_name": "Apps & Games", "country": "CN"},
-    ]
-    events = _parse_featured_impacts(raw_list)
-    assert len(events) == 2
-    assert events[0]["event_type"] == "featuring"
-    assert events[0]["event_date"] == "2024-03-01"
-    assert "Today Story" in events[0]["description"]
-    assert "18,000" in events[0]["description"]
-    assert events[0]["title"] == "App Store Today 故事推荐"
+    events = _parse_featured_impacts(_FEATURED_REAL_SHAPE)
+    assert [e["event_type"] for e in events] == ["featuring"] * 3
+    assert [e["event_date"] for e in events] == ["2025-07-01", "2025-09-10", "2025-12-25"]
+    # list 类型取两条 feature 里更早的 US 2025-07-01，而非 AU 2025-08-03
+    assert events[0]["title"] == "获App Store 精选列表推荐"
+    assert "United States" in events[0]["description"]
+    assert "Top Games" in events[0]["description"]
+    assert "60,285" in events[0]["description"]      # 类型聚合露出次数
+    assert "820,492" in events[0]["description"]     # 类型聚合关联下载
+    assert "3 个国家/地区" in events[0]["description"]  # 全局概况只挂最早一条
+    assert "个国家/地区" not in events[1]["description"]
+    # CJK path 原样保留
+    assert "ゲームの世界" in events[1]["description"]
+    assert events[1]["title"] == "获App Store Today 编辑故事推荐"
+    assert events[2]["title"] == "获App Store Hero 大图推荐"
 
-    # dict 包裹形式
-    wrapped = {"featured_impacts": raw_list}
-    assert _parse_featured_impacts(wrapped) == events
+    # data 包裹层也可解析（api_usage 端点见过此包裹，防御性兼容）
+    assert _parse_featured_impacts({"data": _FEATURED_REAL_SHAPE}) == events
 
-    # 未知响应 → 空
+
+def test_parse_featured_impacts_unknown_type_kept_verbatim():
+    from app.services.sensor_tower import _parse_featured_impacts
+    data = {
+        "types": [],
+        "features": [{"country_name": "France", "country": "FR", "type": "banner",
+                      "path": ["Jeux"], "positions": [["2026-01-05", [2]]]}],
+    }
+    events = _parse_featured_impacts(data)
+    assert len(events) == 1
+    assert events[0]["title"] == "获App Store banner 推荐位推荐"
+    assert "France" in events[0]["description"]
+
+
+def test_parse_featured_impacts_defensive_on_garbage():
+    """未知形状/坏行 → [] 或跳过，不抛。"""
+    from app.services.sensor_tower import _parse_featured_impacts
+
     assert _parse_featured_impacts({}) == []
     assert _parse_featured_impacts([]) == []
     assert _parse_featured_impacts({"data": []}) == []
-
-
-def test_parse_featured_impacts_unknown_slot_kept_as_is():
-    from app.services.sensor_tower import _parse_featured_impacts
-    rows = [{"date": "2025-06-01", "slot_name": "New Games We Love", "country": "US"}]
-    events = _parse_featured_impacts(rows)
+    assert _parse_featured_impacts({"features": "oops"}) == []
+    # positions 缺失/畸形的 feature 被跳过，但好行仍出事件
+    data = {
+        "features": [
+            {"type": "list", "positions": []},
+            {"type": "list", "positions": [["bad", [1]]]},
+            "not-a-dict",
+            {"country_name": "Korea", "country": "KR", "type": "list",
+             "path": ["Games"], "positions": [["2026-02-01", [7]]]},
+        ],
+    }
+    events = _parse_featured_impacts(data)
     assert len(events) == 1
-    assert events[0]["title"] == "New Games We Love"
-
-
-def test_parse_featured_impacts_missing_date_skipped():
-    from app.services.sensor_tower import _parse_featured_impacts
-    rows = [{"slot_name": "Today Story", "country": "US", "downloads": 5000}]
-    assert _parse_featured_impacts(rows) == []
+    assert events[0]["event_date"] == "2026-02-01"
