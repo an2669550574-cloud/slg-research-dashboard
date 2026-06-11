@@ -11,7 +11,7 @@ function entity(id: number, name: string, extra: Partial<PublisherEntity> = {}):
   return {
     id, name, name_en: null, hq_region: null, is_slg: true, brief: null, sort_order: 0,
     aliases: [], app_ids: [], itunes_artists: [], sources: [], provenance_tier: 'none',
-    parents: [], children: [], product_count: 0,
+    parents: [], children: [], product_count: 0, top_products: [],
     created_at: '2026-06-10T00:00:00', updated_at: '2026-06-10T00:00:00',
     ...extra,
   }
