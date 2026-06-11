@@ -432,3 +432,44 @@ async def test_cached_get_serves_stale_snapshot_when_quota_exhausted(client):
 
     assert result == stale_payload, "配额耗尽时应回退到任意快照（即使过期）"
     assert svc._get.await_count == 0
+
+
+def test_parse_featured_impacts_known_shapes():
+    """_parse_featured_impacts 可解析 list 型和 dict 包裹型响应。"""
+    from app.services.sensor_tower import _parse_featured_impacts
+
+    # 裸列表形式
+    raw_list = [
+        {"date": "2024-03-01", "slot_name": "Today Story", "country": "US", "downloads": 18000},
+        {"date": "2023-11-10", "slot_name": "Apps & Games", "country": "CN"},
+    ]
+    events = _parse_featured_impacts(raw_list)
+    assert len(events) == 2
+    assert events[0]["event_type"] == "featuring"
+    assert events[0]["event_date"] == "2024-03-01"
+    assert "Today Story" in events[0]["description"]
+    assert "18,000" in events[0]["description"]
+    assert events[0]["title"] == "App Store Today 故事推荐"
+
+    # dict 包裹形式
+    wrapped = {"featured_impacts": raw_list}
+    assert _parse_featured_impacts(wrapped) == events
+
+    # 未知响应 → 空
+    assert _parse_featured_impacts({}) == []
+    assert _parse_featured_impacts([]) == []
+    assert _parse_featured_impacts({"data": []}) == []
+
+
+def test_parse_featured_impacts_unknown_slot_kept_as_is():
+    from app.services.sensor_tower import _parse_featured_impacts
+    rows = [{"date": "2025-06-01", "slot_name": "New Games We Love", "country": "US"}]
+    events = _parse_featured_impacts(rows)
+    assert len(events) == 1
+    assert events[0]["title"] == "New Games We Love"
+
+
+def test_parse_featured_impacts_missing_date_skipped():
+    from app.services.sensor_tower import _parse_featured_impacts
+    rows = [{"slot_name": "Today Story", "country": "US", "downloads": 5000}]
+    assert _parse_featured_impacts(rows) == []

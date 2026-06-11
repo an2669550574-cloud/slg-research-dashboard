@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.game import GameRanking
 from app.services.appstore import fetch_app_info
 from app.services.sibling_match import find_sibling_app_ids
+from app.services.sensor_tower import sensor_tower_service
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +141,16 @@ async def build_history(app_id: str, db: AsyncSession) -> list[dict]:
             "title": f"单日收入峰值 ${top.revenue:,.0f}",
             "description": f"{_market(top)}{rk}{dl}（{span_all}）。",
         })
+
+    # ST featured/impacts：只对 iOS 数字 id 调用（1次配额/app，TTL 48h）。
+    # 失败静默忽略，保留已有事件。
+    featured_id = app_id if app_id.isdigit() else info_borrowed_from
+    if featured_id:
+        try:
+            featuring = await sensor_tower_service.get_featured_impacts(featured_id)
+            events.extend(featuring)
+        except Exception as e:
+            logger.warning("Featured impacts fetch failed for %s: %s", featured_id, e)
 
     events.sort(key=lambda e: e["event_date"])
     return events

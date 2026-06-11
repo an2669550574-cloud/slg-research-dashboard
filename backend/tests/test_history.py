@@ -3,7 +3,7 @@
 conftest 每个 test 重载 app.* —— app.* import 放函数内。iTunes 查询用
 AsyncMock 打桩，保持 hermetic（不打真实网络、不 flaky）。
 """
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, MagicMock
 
 
 async def test_create_get_delete_history(client):
@@ -138,6 +138,71 @@ async def test_sync_android_borrows_itunes_from_ios_sibling(client):
         ios_titles = [e["title"] for e in (await client.get("/api/history/6448786147")).json()]
         assert any("更新至 v1.0.230" in t for t in ios_titles)
         assert not any("iOS 更新至" in t for t in ios_titles), ios_titles
+
+
+async def test_sync_includes_featuring_events_for_ios_app(client):
+    """iOS 数字 app_id 同步时，featured/impacts 返回的推荐事件写入历程；
+    Android 包名跳过（get_featured_impacts 从不被调）。"""
+    await _seed_rankings("1234567890")
+    featured_data = [
+        {"date": "2024-03-01", "slot_name": "Today Story", "country": "US", "downloads": 18000},
+        {"date": "2023-11-10", "slot_name": "Apps & Games", "country": "CN", "downloads": None},
+    ]
+    with (
+        patch("app.services.history_builder.fetch_app_info", new=AsyncMock(return_value=None)),
+        patch(
+            "app.services.history_builder.sensor_tower_service.get_featured_impacts",
+            new=AsyncMock(return_value=[
+                {"event_date": "2024-03-01", "event_type": "featuring",
+                 "title": "App Store Today 故事推荐",
+                 "description": "US App Store 推荐位：Today Story，期间下载增益约 18,000。"},
+                {"event_date": "2023-11-10", "event_type": "featuring",
+                 "title": "App Store 精选推荐",
+                 "description": "CN App Store 推荐位：Apps & Games。"},
+            ]),
+        ),
+    ):
+        r = await client.post("/api/history/sync/1234567890")
+    assert r.status_code == 200
+    events = (await client.get("/api/history/1234567890")).json()
+    featuring = [e for e in events if e["event_type"] == "featuring"]
+    assert len(featuring) == 2
+    assert any("Today Story" in e["description"] for e in featuring)
+    # 事件按日期升序
+    dates = [e["event_date"] for e in events]
+    assert dates == sorted(dates)
+
+
+async def test_featuring_silently_skipped_on_failure(client):
+    """featured/impacts 失败时不抛，已有历程事件不受影响。"""
+    await _seed_rankings("9999000001")
+    with (
+        patch("app.services.history_builder.fetch_app_info", new=AsyncMock(return_value=None)),
+        patch(
+            "app.services.history_builder.sensor_tower_service.get_featured_impacts",
+            new=AsyncMock(side_effect=Exception("ST down")),
+        ),
+    ):
+        r = await client.post("/api/history/sync/9999000001")
+    assert r.status_code == 200
+    events = (await client.get("/api/history/9999000001")).json()
+    assert all(e["event_type"] != "featuring" for e in events)
+    assert any(e["event_type"] == "ranking" for e in events)
+
+
+async def test_featuring_skipped_for_android_package(client):
+    """Android 包名不调 get_featured_impacts（包名非纯数字）。"""
+    mock_featured = AsyncMock(return_value=[])
+    with (
+        patch("app.services.history_builder.fetch_app_info", new=AsyncMock(return_value=None)),
+        patch(
+            "app.services.history_builder.sensor_tower_service.get_featured_impacts",
+            new=mock_featured,
+        ),
+    ):
+        r = await client.post("/api/history/sync/com.android.example")
+    assert r.status_code == 200
+    mock_featured.assert_not_called()
 
 
 async def test_sync_preserves_manual_events(client):

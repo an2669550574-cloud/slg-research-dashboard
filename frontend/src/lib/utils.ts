@@ -40,11 +40,12 @@ export function formatRelativeAge(raw: string): string {
 }
 
 export const EVENT_TYPE_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
-  launch:    { label: '发布上线', color: 'text-emerald-400', bg: 'bg-emerald-500' },
-  version:   { label: '版本更新', color: 'text-blue-400',    bg: 'bg-blue-500' },
-  ranking:   { label: '排名突破', color: 'text-yellow-400',  bg: 'bg-yellow-500' },
-  revenue:   { label: '收入里程碑', color: 'text-purple-400', bg: 'bg-purple-500' },
-  marketing: { label: '营销事件', color: 'text-rose-400',    bg: 'bg-rose-500' },
+  launch:     { label: '发布上线',   color: 'text-emerald-400', bg: 'bg-emerald-500' },
+  version:    { label: '版本更新',   color: 'text-blue-400',    bg: 'bg-blue-500' },
+  ranking:    { label: '排名突破',   color: 'text-yellow-400',  bg: 'bg-yellow-500' },
+  revenue:    { label: '收入里程碑', color: 'text-purple-400',  bg: 'bg-purple-500' },
+  marketing:  { label: '营销事件',   color: 'text-rose-400',    bg: 'bg-rose-500' },
+  featuring:  { label: '官方推荐',   color: 'text-sky-400',     bg: 'bg-sky-500' },
 }
 
 export const PLATFORM_CONFIG: Record<string, { label: string; color: string }> = {

@@ -413,6 +413,7 @@ export const zh = {
     ranking: '排名突破',
     revenue: '收入里程碑',
     marketing: '营销事件',
+    featuring: '官方推荐',
   },
   gamesManage: {
     title: '游戏管理',
