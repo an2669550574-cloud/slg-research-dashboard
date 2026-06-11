@@ -156,6 +156,16 @@ async def _scheduled_sync(country: str = "US", platform: str = "ios") -> None:
             "Competitor movement check failed for %s/%s on %s (sync itself succeeded)",
             country, platform, today,
         )
+    # 新品两层（全市场空降 + 厂商任意名次）→ 钉钉。新快照落库的这次同步正好是
+    # 新面孔的"首报"窗口，天然去重；未配 webhook 时函数内静默 no-op。
+    from app.services.release_alerts import alert_chart_newcomers
+    try:
+        await alert_chart_newcomers(country, platform)
+    except Exception:
+        logger.exception(
+            "Newcomer DingTalk alert failed for %s/%s (sync itself succeeded)",
+            country, platform,
+        )
 
 
 async def _run_rank_backfill() -> None:

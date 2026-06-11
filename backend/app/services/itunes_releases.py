@@ -69,6 +69,7 @@ async def sync_itunes_releases() -> dict:
     if not artists:
         return summary
 
+    started_at = utcnow_naive()
     for i, artist in enumerate(artists):
         if i > 0:
             await asyncio.sleep(_POLITE_DELAY_S)
@@ -85,6 +86,13 @@ async def sync_itunes_releases() -> dict:
         summary["new_apps"] += result["new_apps"]
 
     logger.info("itunes releases sync done: %s", summary)
+    if summary["new_apps"] > 0:
+        # 本轮 diff 出新上架 → 钉钉汇总。告警是旁路，失败不影响同步结果。
+        from app.services.release_alerts import alert_appstore_releases
+        try:
+            await alert_appstore_releases(since=started_at)
+        except Exception:
+            logger.exception("App Store releases DingTalk alert failed (sync itself succeeded)")
     return summary
 
 
