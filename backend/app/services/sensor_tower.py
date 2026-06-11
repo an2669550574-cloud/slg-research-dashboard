@@ -139,6 +139,60 @@ def _parse_sales_series(data, platform: str) -> dict:
     return out
 
 
+# App Store 推荐位名映射（英文→中文）；未匹配保留原英文。
+_FEATURED_SLOT_ZH: dict[str, str] = {
+    "today story": "App Store Today 故事推荐",
+    "apps & games": "App Store 精选推荐",
+    "featured": "App Store 精选推荐",
+    "game of the day": "App Store 年度游戏",
+    "app of the day": "App Store 年度 App",
+    "top free": "免费榜推荐",
+    "top grossing": "畅销榜推荐",
+    "top paid": "付费榜推荐",
+    "category": "类目专题推荐",
+}
+
+
+def _slot_zh(slot_name: str) -> str:
+    key = slot_name.lower().strip()
+    for k, v in _FEATURED_SLOT_ZH.items():
+        if k in key:
+            return v
+    return slot_name
+
+
+def _parse_featured_impacts(data: dict | list) -> list[dict]:
+    """把 ST /v1/ios/featured/impacts 的响应解析成历史事件列表。
+    防御性：未知字段/空列表 → []，不抛。"""
+    rows = data if isinstance(data, list) else (
+        data.get("featured_impacts")
+        or data.get("featured_data")
+        or data.get("data")
+        or []
+    )
+    if not isinstance(rows, list):
+        return []
+    events: list[dict] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        date = (r.get("date") or r.get("start_date") or r.get("featured_date") or "")[:10]
+        if not date or len(date) < 10:
+            continue
+        slot = r.get("slot_name") or r.get("featured_slot") or r.get("store_position") or "Featured"
+        country = (r.get("country") or r.get("country_code") or "").upper()
+        downloads = r.get("downloads") or r.get("downloads_delta") or r.get("total_downloads")
+        dl_text = f"，期间下载增益约 {int(downloads):,}" if downloads else ""
+        country_text = f"{country} " if country else ""
+        events.append({
+            "event_date": date,
+            "event_type": "featuring",
+            "title": _slot_zh(slot),
+            "description": f"{country_text}App Store 推荐位：{slot}{dl_text}。",
+        })
+    return events
+
+
 def _mock_today_rankings() -> list[dict]:
     today = datetime.now().strftime("%Y-%m-%d")
     return [
@@ -399,6 +453,30 @@ class SensorTowerService:
         )
         return [{"app_id": str(aid), "rank": i + 1}
                 for i, aid in enumerate(data.get("ranking") or [])]
+
+    async def get_featured_impacts(self, app_id: str, country: str = "US") -> list[dict]:
+        """拉取该 iOS app 被 App Store 推荐过的历史事件（TTL 48h，省配额）。
+
+        只接受 iOS 数字 app_id（包名返回 []）。失败 / mock → [] 静默回退，
+        不影响 build_history 已有事件。
+        `featured/impacts` 是否计入月度配额待实测确认（测前按 1 次保守处理）。
+        """
+        if self.use_mock or not app_id.isdigit():
+            return []
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        key = f"featured:ios:{country}:{app_id}"
+        data = await self._cached_get(
+            key,
+            "/v1/ios/featured/impacts",
+            {"app_id": app_id, "country": country,
+             "start_date": "2010-01-01", "end_date": today},
+            fallback=lambda: [],
+        )
+        try:
+            return _parse_featured_impacts(data)
+        except Exception as e:
+            logger.warning("Failed to parse featured impacts for %s: %s", app_id, e)
+            return []
 
     async def force_refresh_today_rankings(self, country: str = "US", platform: str = "ios") -> list[dict]:
         """绕过 L1+L2 缓存，强制重新拉取今日榜单。会消耗一次月度配额。

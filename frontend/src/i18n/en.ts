@@ -406,6 +406,7 @@ export const en: Translations = {
     ranking: 'Rank',
     revenue: 'Revenue',
     marketing: 'Marketing',
+    featuring: 'Featured',
   },
   gamesManage: {
     title: 'Games',
