@@ -85,14 +85,41 @@ def test_chart_digest_contains_cjk_items():
 def test_appstore_digest():
     from app.services.release_alerts import build_appstore_digest
     assert build_appstore_digest([]) is None
+    assert build_appstore_digest([], []) is None
 
     class App:
         name = "测试新游：远古纪元"
         release_date = "2026-06-12"
         track_view_url = "https://apps.apple.com/us/app/id123"
+        genre = "Strategy"
+        storefronts = "ph,ca"  # 无 us → 软启动措辞
     title, text = build_appstore_digest([(App(), "壳木游戏 Camel Games", "Camel HK")])
     assert "壳木游戏 Camel Games：测试新游：远古纪元（上架 2026-06-12）" in text
+    assert "Strategy" in text
+    assert "仅 PH/CA 可见（疑似软启动）" in text
     assert "[App Store](https://apps.apple.com/us/app/id123)" in text
+
+    # us 在列 → 普通可见区措辞
+    class GlobalApp(App):
+        storefronts = "us,ph,ca"
+    _, text2 = build_appstore_digest([(GlobalApp(), "壳木游戏 Camel Games", "Camel HK")])
+    assert "可见区 US/PH/CA" in text2 and "软启动" not in text2
+
+
+def test_appstore_digest_expanded_section():
+    """扩区上线（软启动 → 新增区域）单独成段，可与新上架并存或单独触发。"""
+    from app.services.release_alerts import build_appstore_digest
+
+    class App:
+        name = "寒霜远征"
+        release_date = "2026-05-01"
+        track_view_url = None
+        genre = None
+        storefronts = "us,ph,ca"
+    title, text = build_appstore_digest([], [(App(), "点点互动测试", ["us"])])
+    assert title == "App Store 雷达"
+    assert "扩区上线" in text
+    assert "点点互动测试：寒霜远征 新增 US（现 US/PH/CA）" in text
 
 
 # ── 挂钩链路 ────────────────────────────────────────────────────────────────

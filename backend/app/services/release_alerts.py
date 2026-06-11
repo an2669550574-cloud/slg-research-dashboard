@@ -65,23 +65,53 @@ async def alert_chart_newcomers(country: str, platform: str) -> bool:
     return await dingtalk.send_markdown(*msg)
 
 
-def build_appstore_digest(rows: list[tuple]) -> Optional[tuple[str, str]]:
-    """rows: [(PublisherItunesApp, entity_name, artist_label)] → (title, markdown)。"""
-    if not rows:
+def _sf_text(app) -> str:
+    """可见区描述：软启动（无 us）时明示，这是最关键的一行情报。"""
+    sfs = [s for s in (app.storefronts or "").split(",") if s]
+    if not sfs:
+        return ""
+    label = "/".join(s.upper() for s in sfs)
+    return f" · 仅 {label} 可见（疑似软启动）" if "us" not in sfs else f" · 可见区 {label}"
+
+
+def build_appstore_digest(
+    rows: list[tuple],
+    expanded: Optional[list[tuple]] = None,
+) -> Optional[tuple[str, str]]:
+    """rows: [(PublisherItunesApp, entity_name, artist_label)]；
+    expanded: [(PublisherItunesApp, entity_name, added_storefronts)] → (title, markdown)。"""
+    expanded = expanded or []
+    if not rows and not expanded:
         return None
-    lines = [f"### 📱 SLG · App Store 新上架（开发者清单 diff，{len(rows)} 款）"]
-    for app, entity_name, _label in rows[:15]:
-        released = f"（上架 {app.release_date}）" if app.release_date else ""
-        link = f" [App Store]({app.track_view_url})" if app.track_view_url else ""
-        lines.append(f"- {entity_name}：{app.name}{released}{link}")
-    if len(rows) > 15:
-        lines.append(f"- …等共 {len(rows)} 款")
+    lines = [f"### 📱 SLG · App Store 雷达（开发者清单 diff）"]
+    if rows:
+        lines.append(f"**新上架（{len(rows)} 款）**")
+        for app, entity_name, _label in rows[:15]:
+            released = f"（上架 {app.release_date}）" if app.release_date else ""
+            genre = f" · {app.genre}" if app.genre else ""
+            link = f" [App Store]({app.track_view_url})" if app.track_view_url else ""
+            lines.append(f"- {entity_name}：{app.name}{released}{genre}{_sf_text(app)}{link}")
+        if len(rows) > 15:
+            lines.append(f"- …等共 {len(rows)} 款")
+    if expanded:
+        lines.append(f"**扩区上线（{len(expanded)} 款，软启动 → 新增区域）**")
+        for app, entity_name, added in expanded[:15]:
+            added_label = "/".join(s.upper() for s in added)
+            now_label = "/".join(s.upper() for s in (app.storefronts or "").split(",") if s)
+            link = f" [App Store]({app.track_view_url})" if app.track_view_url else ""
+            lines.append(f"- {entity_name}：{app.name} 新增 {added_label}（现 {now_label}）{link}")
+        if len(expanded) > 15:
+            lines.append(f"- …等共 {len(expanded)} 款")
     lines.append("> 未进榜也能抓到；详见看板「新品监测 → 厂商新品」")
-    return "App Store 新上架", "\n\n".join(lines)
+    return "App Store 雷达", "\n\n".join(lines)
 
 
-async def alert_appstore_releases(since: datetime) -> bool:
-    """iTunes 清单同步后调用：推送本轮（first_seen_at >= since）的非基线新上架。"""
+async def alert_appstore_releases(
+    since: datetime,
+    expanded: Optional[list[tuple[int, list[str]]]] = None,
+) -> bool:
+    """iTunes 清单同步后调用：推送本轮（first_seen_at >= since）的非基线新上架
+    与扩区上线（expanded = [(app row id, 新增区列表)]）。"""
     if not dingtalk.is_enabled():
         return False
     async with AsyncSessionLocal() as db:
@@ -95,7 +125,19 @@ async def alert_appstore_releases(since: datetime) -> bool:
             )
             .order_by(PublisherItunesApp.id)
         )).all()
-    msg = build_appstore_digest(list(rows))
+
+        expanded_rows: list[tuple] = []
+        if expanded:
+            added_by_id = {rid: added for rid, added in expanded}
+            for app, entity_name in (await db.execute(
+                select(PublisherItunesApp, PublisherEntity.name)
+                .join(PublisherEntity, PublisherEntity.id == PublisherItunesApp.entity_id)
+                .where(PublisherItunesApp.id.in_(list(added_by_id)))
+                .order_by(PublisherItunesApp.id)
+            )).all():
+                expanded_rows.append((app, entity_name, added_by_id[app.id]))
+
+    msg = build_appstore_digest(list(rows), expanded_rows)
     if msg is None:
         return False
     return await dingtalk.send_markdown(*msg)

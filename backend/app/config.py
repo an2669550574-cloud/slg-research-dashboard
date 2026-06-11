@@ -134,6 +134,17 @@ class Settings(BaseSettings):
     # 最近一次同步里名次 ≤ 该值才算"新进榜"，过滤榜尾噪声。
     NEWCOMER_TOPN: int = 50
 
+    # ── App Store 清单雷达（免费 iTunes lookup，零 ST 配额）──────────────
+    # 每轮对每个开发者账号扫这些 storefront（逗号小写）。SLG 几乎都先软启动：
+    # ph/ca/au/sg 是经典测试区，us 单区扫描会在软启动期完全失明。每加一区 =
+    # 每轮每账号多 1 个免费请求，与 ST 配额无关。
+    ITUNES_RELEASES_STOREFRONTS: str = "us,ph,ca,au,sg"
+    # 基线之后首次见到、但 iTunes release_date 早于 N 天前的 app → 静默入基线
+    # 不报"新上架"。两个作用：①新增扫描区首轮会捞出一堆历史区域限定 app（老的
+    # 区域变体/死掉的测试包），不是"新品"，不该刷屏；②防止下架老 app 重新上架
+    # 被误报。N 天内的才是真新品。
+    ITUNES_RELEASES_OLD_RELEASE_DAYS: int = 180
+
     # ── 钉钉告警（自定义群机器人 webhook）────────────────────────────────
     # 不配 URL = 整体关闭（所有发送静默 no-op）。值放 backend/.env，不进 git。
     # DINGTALK_WEBHOOK_URL: 群机器人 webhook 完整地址（含 access_token）。

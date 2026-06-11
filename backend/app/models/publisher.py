@@ -139,6 +139,13 @@ class PublisherItunesApp(Base):
     rating: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # averageUserRating 0-5
     rating_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     price: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # formattedPrice，如 "Free"
+    # 该 app 在哪些 storefront 可见（逗号小写，如 "ph,ca"）。每轮同步取并集刷新——
+    # 「PH/CA 可见、us 不在列」= 软启动中；后补上 us = 扩区/全球上线（触发扩区提示）。
+    storefronts: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    # 检出详情（同一免费 lookup 响应）：描述截断 / 截图 URL JSON 数组（≤5）/ 支持语言码。
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    screenshot_urls: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    languages: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
     is_baseline: Mapped[bool] = mapped_column(Boolean, default=False)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 

@@ -165,6 +165,8 @@ export const zh = {
     appstoreFirstSeen: (d: string) => `发现 ${d}`,
     appstoreRatingCount: (n: string) => `${n} 评价`,
     appstorePrice: (p: string) => (/^(free|免费|0)/i.test(p.trim()) ? '免费' : p),
+    appstoreSoftLaunch: (regions: string) => `软启动 ${regions}`,
+    appstoreRegions: (regions: string) => `可见区 ${regions}`,
     asOf: (date: string) => `数据截至 ${date}`,
     rank: '名次',
     game: '游戏',

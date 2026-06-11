@@ -290,11 +290,13 @@ def start_scheduler() -> None:
         misfire_grace_time=3600,
     )
 
-    # App Store 开发者清单 diff：周一 05:00 UTC（DB 备份 04:00 之后）。
-    # 免费 iTunes lookup API、零 ST 配额；任务自带 mock/空账号护栏，空跑无害。
+    # App Store 开发者清单 diff：每日 05:00 UTC（DB 备份 04:00 之后）。
+    # 免费 iTunes lookup API、零 ST 配额——日级 + 多区扫描（软启动区）把
+    # 「厂商上新 → 我们知道」的滞后从 ≤7 天压到 ≤1 天；任务自带 mock/空账号
+    # 护栏，空跑无害。21 账号 × 5 区 × 3s 礼貌间隔 ≈ 5 分钟/轮。
     scheduler.add_job(
         _run_itunes_releases_sync,
-        CronTrigger(day_of_week="mon", hour=5, minute=0, timezone="UTC"),
+        CronTrigger(hour=5, minute=0, timezone="UTC"),
         id="itunes_releases_sync",
         replace_existing=True,
         misfire_grace_time=3600 * 6,
