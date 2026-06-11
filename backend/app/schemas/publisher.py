@@ -126,6 +126,13 @@ class PublisherRelationLinkOut(BaseModel):
     note: Optional[str] = None
 
 
+class PublisherTopProductOut(BaseModel):
+    """折叠行的产品图标锚点：只要 app_id / 名字 / icon，用于一眼认主体。"""
+    app_id: str
+    name: Optional[str] = None
+    icon_url: Optional[str] = None
+
+
 class PublisherEntityOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -144,6 +151,8 @@ class PublisherEntityOut(BaseModel):
     parents: list[PublisherRelationLinkOut] = []   # 本主体的母公司/投资方
     children: list[PublisherRelationLinkOut] = []  # 本主体的子公司/关联
     product_count: Optional[int] = None  # 旗下产品数；列表视图按需填，详情视图必填
+    # 折叠态产品图标锚点：旗下产品按收入降序的前 3 个（icon 来自 game_rankings，零 ST 配额）。
+    top_products: list[PublisherTopProductOut] = []
     created_at: datetime
     updated_at: datetime
 

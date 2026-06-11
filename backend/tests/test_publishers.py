@@ -93,6 +93,29 @@ async def test_product_count_in_list(client):
 
 
 @pytest.mark.asyncio
+async def test_top_products_in_list(client):
+    """折叠态图标锚点：旗下产品按收入降序取前 3，带 icon_url。"""
+    today = _today()
+    from app.database import AsyncSessionLocal
+    from app.models.game import GameRanking
+    async with AsyncSessionLocal() as db:
+        for aid, rev, name in [("t.1", 30.0, "高收入"), ("t.2", 10.0, "中收入"),
+                               ("t.3", 50.0, "最高收入"), ("t.4", 1.0, "低收入")]:
+            db.add(GameRanking(app_id=aid, date=today, rank=1, downloads=10, revenue=rev,
+                               country="US", platform="ios", name=name, publisher="Tako Games",
+                               icon_url=f"https://icon/{aid}.png"))
+        await db.commit()
+    await client.post("/api/publishers/", json={
+        "name": "图标主体", "aliases": [{"keyword": "tako"}], "app_ids": [],
+    })
+    e = next(x for x in (await client.get("/api/publishers/")).json() if x["name"] == "图标主体")
+    assert e["product_count"] == 4
+    # 收入降序的前 3：最高(50)/高(30)/中(10)；低(1)被截掉
+    assert [p["name"] for p in e["top_products"]] == ["最高收入", "高收入", "中收入"]
+    assert e["top_products"][0]["icon_url"] == "https://icon/t.3.png"
+
+
+@pytest.mark.asyncio
 async def test_add_alias_refreshes_is_slg_index(client):
     """新增 alias 后 is_slg 内存索引即时刷新——经 aggregate-leaderboard（走 is_slg）验证。"""
     today = _today()
