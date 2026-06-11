@@ -156,6 +156,8 @@ export const en: Translations = {
     appstoreEmpty: 'No new apps since baseline',
     appstoreReleasedAt: (d: string) => `released ${d}`,
     appstoreFirstSeen: (d: string) => `seen ${d}`,
+    appstoreRatingCount: (n: string) => `${n} ratings`,
+    appstorePrice: (p: string) => (/^(free|0)/i.test(p.trim()) ? 'Free' : p),
     asOf: (date: string) => `As of ${date}`,
     rank: 'Rank',
     game: 'Game',

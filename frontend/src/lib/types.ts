@@ -348,6 +348,12 @@ export interface AppstoreReleaseItem {
   bundle_id: string | null
   release_date: string | null
   track_view_url: string | null
+  /** 以下展示字段来自免费 iTunes lookup 同响应，零增量 ST 配额。 */
+  artwork_url: string | null
+  genre: string | null
+  rating: number | null
+  rating_count: number | null
+  price: string | null
   first_seen_at: IsoDateString
 }
 

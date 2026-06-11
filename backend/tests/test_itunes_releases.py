@@ -26,6 +26,13 @@ def _app(track_id, name, bundle_id=None, release_date="2026-06-01"):
         "bundleId": bundle_id or f"com.test.{track_id}",
         "releaseDate": f"{release_date}T00:00:00Z",
         "trackViewUrl": f"https://apps.apple.com/us/app/id{track_id}",
+        # 免费 lookup 同响应里的展示字段（零增量 ST）
+        "artworkUrl512": f"https://is1-ssl.mzstatic.com/image/{track_id}/512x512bb.jpg",
+        "genres": ["Games", "Strategy", "Simulation"],
+        "primaryGenreName": "Games",
+        "averageUserRating": 4.6,
+        "userRatingCount": 12345,
+        "formattedPrice": "Free",
     }
 
 
@@ -54,6 +61,12 @@ async def test_baseline_then_new_release(client):
     assert item["entity_name"] == "江娱互动测试"
     assert item["artist_label"] == "River Game HK"
     assert item["release_date"] == "2026-06-01"
+    # 免费 iTunes 展示字段随同响应落库并回显；genre 取 genres[] 第一个非 "Games" 子品类
+    assert item["genre"] == "Strategy"
+    assert item["rating"] == 4.6
+    assert item["rating_count"] == 12345
+    assert item["price"] == "Free"
+    assert item["artwork_url"].endswith("512x512bb.jpg")
     assert body["artists_total"] == 1 and body["artists_synced"] == 1
 
 

@@ -45,12 +45,22 @@ async def fetch_artist_apps(artist_id: str) -> list[dict]:
 
 
 def _app_fields(r: dict) -> dict:
+    # genre：genres[] 第一个非 "Games" 的子品类（Strategy/Puzzle…）比 primaryGenreName
+    # ("Games") 有信息量，便于分级新上架是否 SLG；都没有时回退 primaryGenreName。
+    genres = r.get("genres") or []
+    genre = next((g for g in genres if g and g != "Games"), None) or r.get("primaryGenreName")
     return {
         "track_id": str(r.get("trackId", "")),
         "name": (r.get("trackName") or "")[:300],
         "bundle_id": r.get("bundleId"),
         "release_date": (r.get("releaseDate") or "")[:10] or None,  # ISO → 日期部分
         "track_view_url": r.get("trackViewUrl"),
+        # 以下 5 个均出自同一免费 lookup 响应，零增量 ST 配额（纯展示）
+        "artwork_url": r.get("artworkUrl512") or r.get("artworkUrl100"),
+        "genre": genre,
+        "rating": r.get("averageUserRating"),
+        "rating_count": r.get("userRatingCount"),
+        "price": r.get("formattedPrice"),
     }
 
 

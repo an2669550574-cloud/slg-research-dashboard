@@ -91,6 +91,12 @@ class AppstoreReleaseItem(BaseModel):
     bundle_id: Optional[str] = None
     release_date: Optional[str] = None
     track_view_url: Optional[str] = None
+    # 免费 iTunes lookup 同响应里的展示字段（零增量 ST）。
+    artwork_url: Optional[str] = None
+    genre: Optional[str] = None
+    rating: Optional[float] = None
+    rating_count: Optional[int] = None
+    price: Optional[str] = None
     first_seen_at: datetime
 
 
@@ -134,6 +140,8 @@ async def get_appstore_releases(
                 entity_id=app.entity_id, entity_name=entity_name, artist_label=artist_label,
                 track_id=app.track_id, name=app.name, bundle_id=app.bundle_id,
                 release_date=app.release_date, track_view_url=app.track_view_url,
+                artwork_url=app.artwork_url, genre=app.genre, rating=app.rating,
+                rating_count=app.rating_count, price=app.price,
                 first_seen_at=app.first_seen_at,
             )
             for app, entity_name, artist_label in rows
