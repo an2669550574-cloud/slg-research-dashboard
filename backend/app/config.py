@@ -58,12 +58,12 @@ class Settings(BaseSettings):
     # 不超过这个时长的快照，直接返回不消耗配额。设成跟 CACHE_TTL 一致即可。
     SENSOR_TOWER_SNAPSHOT_FRESH_HOURS: int = 24
 
-    # 拉 ST /v1/api_usage（公司账户级用量）的缓存窗口。⚠️ 本接口每次大概率让
-    # 服务端 organization.usage +1 且**绕过本地月度计数**（裸 httpx，见 quota
-    # ._fetch_account_usage_live）——它是隐形的公司池消费者，不受 MONTHLY_LIMIT
-    # 约束，只能靠这个 TTL 限频。本项目自身用量本地实时计数、无需靠它；它只为
-    # 看「跨团队公司池水位」。故设 14 天：≈2 次/月，双周刷新够用，几乎不吃池。
-    SENSOR_TOWER_ACCOUNT_USAGE_TTL_HOURS: int = 336
+    # 拉 ST /v1/api_usage（公司账户级用量）的缓存窗口。2026-06-11 实锤：本接口
+    # **不计公司池**（连打两次 org.usage 纹丝不动；同窗口 featured/impacts 每次
+    # +1 形成对照）——此前按「大概率 +1」保守设 336h，副作用是月初重置后拉到的
+    # 0/3000 快照"新鲜"半个月，仪表盘公司池水位整月冻结看不见真实消耗。刷新
+    # 既然免费，小时级即可：水位及时、TTL 仍挡住前端轮询打爆 ST。
+    SENSOR_TOWER_ACCOUNT_USAGE_TTL_HOURS: int = 1
     # 公司账户池软预留：池剩余 ≤ 此值时本项目 try_consume 主动返 False，让出最后
     # 几次给其他团队（避免我们一夜把池子拼光，导致他们的业务全断）。3000 池里留
     # 30 缓冲，本项目日均同步约 12 次，相当于 2~3 天的安全余量。设 0 = 仅硬限。

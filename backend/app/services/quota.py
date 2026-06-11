@@ -209,9 +209,9 @@ def _percent(used: int | None, limit: int | None) -> float:
 async def _fetch_account_usage_live() -> Optional[dict]:
     """直连 ST /v1/api_usage 取账户级用量。失败返回 None。
 
-    本端点本身大概率会让 ST 服务端 organization.usage +1（swagger 无说明，
-    探测时观察到的现实），但**不计本地 api_quota_monthly**——故意走裸 httpx
-    不走 try_consume。用一次"自查询"换全局可见度，TTL 控制频率即可。
+    2026-06-11 实锤：本端点**不计公司池**（连打两次 org.usage 不动，同窗口
+    featured/impacts 每次 +1 形成对照），也**不计本地 api_quota_monthly**
+    ——故意走裸 httpx 不走 try_consume。TTL 仅用于挡住前端轮询打爆 ST。
     返回外层有 {data: {...}} 包裹（swagger 没标），剥一层再解析。
     """
     if settings.USE_MOCK_DATA or not settings.SENSOR_TOWER_API_KEY:
