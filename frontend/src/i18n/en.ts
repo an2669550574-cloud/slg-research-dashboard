@@ -158,6 +158,8 @@ export const en: Translations = {
     appstoreFirstSeen: (d: string) => `seen ${d}`,
     appstoreRatingCount: (n: string) => `${n} ratings`,
     appstorePrice: (p: string) => (/^(free|0)/i.test(p.trim()) ? 'Free' : p),
+    appstoreSoftLaunch: (regions: string) => `Soft launch ${regions}`,
+    appstoreRegions: (regions: string) => `Regions ${regions}`,
     asOf: (date: string) => `As of ${date}`,
     rank: 'Rank',
     game: 'Game',

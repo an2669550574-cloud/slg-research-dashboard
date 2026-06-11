@@ -349,6 +349,17 @@ function AppstoreReleasesSection() {
                       {it.genre}
                     </span>
                   )}
+                  {it.storefronts.length > 0 && (
+                    it.storefronts.includes('us') ? (
+                      <span className="shrink-0 text-[10px] font-medium text-secondary bg-elevated rounded px-1.5 py-0.5 font-data">
+                        {t.newcomers.appstoreRegions(it.storefronts.map(s => s.toUpperCase()).join('/'))}
+                      </span>
+                    ) : (
+                      <span className="shrink-0 text-[10px] font-semibold text-amber-400 bg-amber-400/10 border border-amber-400/30 rounded px-1.5 py-0.5 font-data">
+                        {t.newcomers.appstoreSoftLaunch(it.storefronts.map(s => s.toUpperCase()).join('/'))}
+                      </span>
+                    )
+                  )}
                 </div>
                 <div className="text-[11px] text-muted truncate font-data flex items-center gap-x-2">
                   {it.rating != null && it.rating > 0 && (
@@ -363,6 +374,11 @@ function AppstoreReleasesSection() {
                   {it.price && <span className="shrink-0">{t.newcomers.appstorePrice(it.price)}</span>}
                   <span className="truncate">{it.bundle_id}{it.artist_label ? ` · ${it.artist_label}` : ''}</span>
                 </div>
+                {it.description && (
+                  <p className="mt-1 text-[11px] leading-snug text-muted line-clamp-2">
+                    {it.description}
+                  </p>
+                )}
               </div>
               {it.release_date && (
                 <span className="text-[11px] text-secondary font-data shrink-0">

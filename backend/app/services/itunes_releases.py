@@ -1,18 +1,27 @@
 """「厂商新品 P2」：iTunes 开发者账号 app 清单 diff——不进榜也能抓到新上架。
 
 数据源 = Apple iTunes lookup API（免费、公开、**非 Sensor Tower**，零 ST 配额）：
-GET https://itunes.apple.com/lookup?id=<artistId>&entity=software&country=us&limit=200
-返回该开发者账号下全部上架 app（US 商店可见的）。
+GET https://itunes.apple.com/lookup?id=<artistId>&entity=software&country=<sf>&limit=200
+返回该开发者账号下、**该 storefront 可见**的全部 app。
+
+多区扫描（2026-06-11 升级）：SLG 几乎都先软启动（PH/CA/AU/SG 等区先上、美区
+后上），单扫 us 在软启动期完全失明。每轮按 ITUNES_RELEASES_STOREFRONTS 逐区
+拉取、按 track_id 合并，storefronts 列记录可见区并每轮取并集刷新：
+- 新 track_id 且 release_date 在 ITUNES_RELEASES_OLD_RELEASE_DAYS 内 → 新上架；
+- 新 track_id 但 release_date 太老 → 静默入基线（新增扫描区首轮的历史区域
+  限定 app / 重新上架的老包，不是"新品"，不刷屏）；
+- 已有非基线行**新增**了可见区 → 「扩区上线」（软启动 → 更大范围/美区），
+  随同轮 digest 一并推送。
 
 diff 语义与 newcomers 一致：
 - 某账号**首次**同步 → 全量落库标 is_baseline=True，不报"新"（无从判断）。
-- 此后同步出现的新 track_id → is_baseline=False = 「App Store 新上架」。
-- 已见过的 app 不更新不删除（清单是"见过即留痕"，下架不回收——与素材 cosfs 同哲学）。
+- 已见过的 app 不删除（清单是"见过即留痕"，下架不回收——与素材 cosfs 同哲学）。
 
-节奏：周级调度（scheduler）+ 手动触发端点。账号间 sleep 礼貌限速（Apple 文档口径
-约 20 req/min，我们十来个账号、周级，远在红线内）。
+节奏：日级调度（scheduler）+ 手动触发端点。请求间 sleep 礼貌限速（Apple 口径
+约 20 req/min；21 账号 × 5 区 × 3s ≈ 5 分钟/轮，日级远在红线内）。
 """
 import asyncio
+import json
 import logging
 from typing import Optional
 
@@ -26,22 +35,72 @@ from app.models.publisher import PublisherItunesArtist, PublisherItunesApp
 logger = logging.getLogger(__name__)
 
 ITUNES_LOOKUP_URL = "https://itunes.apple.com/lookup"
-# 账号间停顿（秒）。十来个账号 × 周级，3s 已极保守。
+# 请求间停顿（秒）。多区扫描后是「每请求」不是「每账号」。
 _POLITE_DELAY_S = 3.0
+# 合并多区结果时 storefront 的稳定排序（us 永远排最前，便于一眼看「美区是否可见」）。
+_SF_SEEN_KEY = "_seen_storefronts"
 
 
-async def fetch_artist_apps(artist_id: str) -> list[dict]:
-    """拉某开发者账号下全部 app。返回 software 结果列表（不含 artist 头记录）。
+def _configured_storefronts() -> list[str]:
+    out = []
+    for raw in (settings.ITUNES_RELEASES_STOREFRONTS or "us").split(","):
+        sf = raw.strip().lower()
+        if sf and sf not in out:
+            out.append(sf)
+    return out or ["us"]
+
+
+def _sf_sorted(storefronts: set[str]) -> list[str]:
+    order = {sf: i for i, sf in enumerate(_configured_storefronts())}
+    return sorted(storefronts, key=lambda s: (order.get(s, 99), s))
+
+
+async def fetch_artist_apps(artist_id: str, country: str = "us") -> list[dict]:
+    """拉某开发者账号下、某 storefront 可见的全部 app。
 
     失败抛异常由调用方决定跳过还是上抛——sync 循环里单账号失败不拖垮整批。
     """
     async with httpx.AsyncClient(timeout=20) as client:
         resp = await client.get(ITUNES_LOOKUP_URL, params={
-            "id": artist_id, "entity": "software", "country": "us", "limit": 200,
+            "id": artist_id, "entity": "software", "country": country, "limit": 200,
         })
         resp.raise_for_status()
         data = resp.json()
     return [r for r in data.get("results", []) if r.get("wrapperType") == "software"]
+
+
+async def fetch_artist_apps_multi(artist_id: str) -> list[dict]:
+    """逐 storefront 拉取并按 trackId 合并；每条记录带 _seen_storefronts。
+
+    单区失败只丢那一区的可见性（记 warning），不拖垮整账号——「在哪些区可见」
+    本来就是逐区采样，缺一区等于那一区暂时失明，下一轮自然补回。
+    全部区都失败才向上抛（整账号计 failed）。
+    """
+    merged: dict[str, dict] = {}
+    ok_any = False
+    last_err: Optional[Exception] = None
+    for i, sf in enumerate(_configured_storefronts()):
+        if i > 0:
+            await asyncio.sleep(_POLITE_DELAY_S)
+        try:
+            apps = await fetch_artist_apps(artist_id, country=sf)
+        except Exception as e:
+            last_err = e
+            logger.warning("itunes lookup failed for artist %s storefront %s", artist_id, sf)
+            continue
+        ok_any = True
+        for r in apps:
+            tid = str(r.get("trackId", ""))
+            if not tid:
+                continue
+            if tid in merged:
+                merged[tid][_SF_SEEN_KEY].add(sf)
+            else:
+                r[_SF_SEEN_KEY] = {sf}
+                merged[tid] = r
+    if not ok_any:
+        raise last_err or RuntimeError(f"all storefront lookups failed for {artist_id}")
+    return list(merged.values())
 
 
 def _app_fields(r: dict) -> dict:
@@ -49,27 +108,43 @@ def _app_fields(r: dict) -> dict:
     # ("Games") 有信息量，便于分级新上架是否 SLG；都没有时回退 primaryGenreName。
     genres = r.get("genres") or []
     genre = next((g for g in genres if g and g != "Games"), None) or r.get("primaryGenreName")
+    shots = [u for u in (r.get("screenshotUrls") or []) if isinstance(u, str)][:5]
+    langs = [c for c in (r.get("languageCodesISO2A") or []) if isinstance(c, str)][:30]
     return {
         "track_id": str(r.get("trackId", "")),
         "name": (r.get("trackName") or "")[:300],
         "bundle_id": r.get("bundleId"),
         "release_date": (r.get("releaseDate") or "")[:10] or None,  # ISO → 日期部分
         "track_view_url": r.get("trackViewUrl"),
-        # 以下 5 个均出自同一免费 lookup 响应，零增量 ST 配额（纯展示）
+        # 以下字段均出自同一免费 lookup 响应，零增量 ST 配额（纯展示/详情）
         "artwork_url": r.get("artworkUrl512") or r.get("artworkUrl100"),
         "genre": genre,
         "rating": r.get("averageUserRating"),
         "rating_count": r.get("userRatingCount"),
         "price": r.get("formattedPrice"),
+        "description": ((r.get("description") or "").strip()[:1500]) or None,
+        "screenshot_urls": json.dumps(shots) if shots else None,
+        "languages": ",".join(langs) or None,
     }
 
 
-async def sync_itunes_releases() -> dict:
-    """对全部已挂账号跑一轮清单 diff。返回 {synced, failed, baselined, new_apps}。
+def _is_old_release(release_date: Optional[str]) -> bool:
+    """release_date 早于 OLD_RELEASE_DAYS 天前 → 不算"新上架"。缺失按新处理（不丢信号）。"""
+    if not release_date:
+        return False
+    from datetime import timedelta
+    cutoff = (utcnow_naive() - timedelta(days=settings.ITUNES_RELEASES_OLD_RELEASE_DAYS))
+    return release_date < cutoff.strftime("%Y-%m-%d")
 
+
+async def sync_itunes_releases() -> dict:
+    """对全部已挂账号跑一轮多区清单 diff。
+
+    返回 {synced, failed, baselined, new_apps, backfilled_old, expanded}。
     mock 模式不出外网（本地开发用手动端点 + monkeypatch 测试）。
     """
-    summary = {"synced": 0, "failed": 0, "baselined": 0, "new_apps": 0}
+    summary = {"synced": 0, "failed": 0, "baselined": 0,
+               "new_apps": 0, "backfilled_old": 0, "expanded": 0}
     if settings.USE_MOCK_DATA:
         logger.info("itunes releases sync skipped (mock mode)")
         return summary
@@ -80,11 +155,12 @@ async def sync_itunes_releases() -> dict:
         return summary
 
     started_at = utcnow_naive()
+    expanded_rows: list[tuple[int, list[str]]] = []  # (app row id, 新增的区)
     for i, artist in enumerate(artists):
         if i > 0:
             await asyncio.sleep(_POLITE_DELAY_S)
         try:
-            apps = await fetch_artist_apps(artist.artist_id)
+            apps = await fetch_artist_apps_multi(artist.artist_id)
         except Exception:
             summary["failed"] += 1
             logger.warning("itunes lookup failed for artist %s (%s)",
@@ -92,23 +168,29 @@ async def sync_itunes_releases() -> dict:
             continue
         result = await ingest_artist_apps(artist.id, apps)
         summary["synced"] += 1
-        summary["baselined"] += result["baselined"]
-        summary["new_apps"] += result["new_apps"]
+        for k in ("baselined", "new_apps", "backfilled_old", "expanded"):
+            summary[k] += result[k]
+        expanded_rows.extend(result["expanded_rows"])
 
     logger.info("itunes releases sync done: %s", summary)
-    if summary["new_apps"] > 0:
-        # 本轮 diff 出新上架 → 钉钉汇总。告警是旁路，失败不影响同步结果。
+    if summary["new_apps"] > 0 or expanded_rows:
+        # 本轮有新上架或扩区 → 钉钉汇总。告警是旁路，失败不影响同步结果。
         from app.services.release_alerts import alert_appstore_releases
         try:
-            await alert_appstore_releases(since=started_at)
+            await alert_appstore_releases(since=started_at, expanded=expanded_rows)
         except Exception:
             logger.exception("App Store releases DingTalk alert failed (sync itself succeeded)")
     return summary
 
 
 async def ingest_artist_apps(artist_row_id: int, apps: list[dict]) -> dict:
-    """把一次 lookup 结果落库（diff 核心，可单测）。返回 {baselined, new_apps}。"""
-    out = {"baselined": 0, "new_apps": 0}
+    """把一次（多区合并后的）lookup 结果落库（diff 核心，可单测）。
+
+    返回 {baselined, new_apps, backfilled_old, expanded, expanded_rows}。
+    输入记录可带 _seen_storefronts（set）；不带视作 {"us"}（兼容单区调用/旧测试）。
+    """
+    out = {"baselined": 0, "new_apps": 0, "backfilled_old": 0,
+           "expanded": 0, "expanded_rows": []}
     async with AsyncSessionLocal() as db:
         artist: Optional[PublisherItunesArtist] = (await db.execute(
             select(PublisherItunesArtist).where(PublisherItunesArtist.id == artist_row_id)
@@ -116,22 +198,51 @@ async def ingest_artist_apps(artist_row_id: int, apps: list[dict]) -> dict:
         if artist is None:
             return out
 
-        known = set((await db.execute(
-            select(PublisherItunesApp.track_id).where(
-                PublisherItunesApp.artist_row_id == artist_row_id)
-        )).scalars().all())
-        first_sync = len(known) == 0
+        existing: dict[str, PublisherItunesApp] = {
+            row.track_id: row
+            for row in (await db.execute(
+                select(PublisherItunesApp).where(
+                    PublisherItunesApp.artist_row_id == artist_row_id)
+            )).scalars().all()
+        }
+        first_sync = len(existing) == 0
 
         for r in apps:
+            seen_sfs: set[str] = set(r.get(_SF_SEEN_KEY) or {"us"})
             f = _app_fields(r)
-            if not f["track_id"] or f["track_id"] in known:
+            tid = f["track_id"]
+            if not tid:
                 continue
-            known.add(f["track_id"])
-            db.add(PublisherItunesApp(
+
+            row = existing.get(tid)
+            if row is not None:
+                # 已见过：只做可见区并集刷新；非基线行新增了区 = 扩区上线。
+                old_sfs = set((row.storefronts or "").split(",")) - {""}
+                added = seen_sfs - old_sfs
+                if added:
+                    row.storefronts = ",".join(_sf_sorted(old_sfs | seen_sfs))
+                    if not row.is_baseline and old_sfs:
+                        out["expanded"] += 1
+                        out["expanded_rows"].append((row.id, _sf_sorted(added)))
+                continue
+
+            # 基线之后首次见到、但上架日期太老 → 静默入基线（新增扫描区首轮的
+            # 历史区域限定 app / 重新上架的老包，不是"新品"）。
+            silent_old = (not first_sync) and _is_old_release(f["release_date"])
+            new_row = PublisherItunesApp(
                 entity_id=artist.entity_id, artist_row_id=artist_row_id,
-                is_baseline=first_sync, **f,
-            ))
-            out["baselined" if first_sync else "new_apps"] += 1
+                is_baseline=first_sync or silent_old,
+                storefronts=",".join(_sf_sorted(seen_sfs)),
+                **f,
+            )
+            db.add(new_row)
+            existing[tid] = new_row
+            if first_sync:
+                out["baselined"] += 1
+            elif silent_old:
+                out["backfilled_old"] += 1
+            else:
+                out["new_apps"] += 1
 
         artist.last_synced_at = utcnow_naive()
         await db.commit()

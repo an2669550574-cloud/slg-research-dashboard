@@ -354,6 +354,10 @@ export interface AppstoreReleaseItem {
   rating: number | null
   rating_count: number | null
   price: string | null
+  /** 可见 storefront 小写码（us 不在列 = 疑似软启动）与检出详情。 */
+  storefronts: string[]
+  description: string | null
+  screenshots: string[]
   first_seen_at: IsoDateString
 }
 
