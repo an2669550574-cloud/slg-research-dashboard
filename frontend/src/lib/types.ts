@@ -751,16 +751,8 @@ export interface PublisherEntity {
   children: PublisherRelationLink[]
   /** 旗下产品数；列表 / 详情视图均填 */
   product_count: number | null
-  /** 折叠态图标锚点：旗下产品按收入降序的前 3 个（icon 来自 game_rankings，零 ST） */
-  top_products: PublisherTopProduct[]
   created_at: IsoDateString
   updated_at: IsoDateString
-}
-
-export interface PublisherTopProduct {
-  app_id: string
-  name: string | null
-  icon_url: string | null
 }
 
 export interface PublisherAliasCreate {

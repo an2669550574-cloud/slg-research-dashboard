@@ -26,7 +26,6 @@ from app.schemas import (
     PublisherSourceOut, PublisherSourceCreate,
     PublisherItunesArtistOut, PublisherItunesArtistCreate,
     PublisherRelationCreate, PublisherRelationLinkOut, PublisherProductOut,
-    PublisherTopProductOut,
 )
 from app.services.slg_publishers import load_index_from_db
 from app.services.provenance import is_primary, provenance_tier
@@ -124,40 +123,29 @@ async def _relations(entity_id: int, db: AsyncSession):
     return parents, children
 
 
-async def _ranking_pairs(db: AsyncSession):
-    """全部曾上榜 app 的 (app_id, 代表 publisher, 名字, icon, 收入分) —— 一次 GROUP BY
-    供批量算各主体旗下产品数 + 取折叠态图标锚点（按收入降序的 top3）。零 ST 配额。"""
+async def _ranking_pairs(db: AsyncSession) -> list[tuple[str, str | None]]:
+    """全部曾上榜 app 的 (app_id, 代表 publisher)，用于批量算各主体旗下产品数。"""
     res = await db.execute(
-        select(
-            GameRanking.app_id,
-            func.max(GameRanking.publisher),
-            func.max(GameRanking.name),
-            func.max(GameRanking.icon_url),
-            func.max(GameRanking.revenue),
-        ).group_by(GameRanking.app_id)
+        select(GameRanking.app_id, func.max(GameRanking.publisher)).group_by(GameRanking.app_id)
     )
-    return [(app_id, pub, name, icon, rev) for app_id, pub, name, icon, rev in res.all()]
+    return [(app_id, pub) for app_id, pub in res.all()]
 
 
-def _match_for_entity(pairs, alias_kw_tokens, app_id_set):
-    """返回 (旗下产品数, 按收入降序的 top3 PublisherTopProductOut)。命中规则同 count：
-    app_id 精确钉 或 alias token 命中代表 publisher。"""
-    matched = []  # (revenue, app_id, name, icon)
-    for app_id, pub, name, icon, rev in pairs:
+def _count_for_entity(pairs, alias_kw_tokens, app_id_set) -> int:
+    n = 0
+    for app_id, pub in pairs:
         if app_id in app_id_set:
-            matched.append((rev or 0, app_id, name, icon))
+            n += 1
             continue
         if alias_kw_tokens:
             pt = _toks(pub)
             if any(_kw_hit(pt, kt) for kt in alias_kw_tokens):
-                matched.append((rev or 0, app_id, name, icon))
-    matched.sort(key=lambda m: -m[0])
-    top = [PublisherTopProductOut(app_id=m[1], name=m[2], icon_url=m[3]) for m in matched[:3]]
-    return len(matched), top
+                n += 1
+    return n
 
 
 def _build_out(e: PublisherEntity, aliases, app_ids, sources, parents, children,
-               product_count: int | None, itunes_artists=(), top_products=()) -> PublisherEntityOut:
+               product_count: int | None, itunes_artists=()) -> PublisherEntityOut:
     return PublisherEntityOut(
         id=e.id, name=e.name, name_en=e.name_en, hq_region=e.hq_region,
         is_slg=e.is_slg, brief=e.brief, sort_order=e.sort_order,
@@ -167,7 +155,7 @@ def _build_out(e: PublisherEntity, aliases, app_ids, sources, parents, children,
         sources=[_source_out(s) for s in sources],
         provenance_tier=provenance_tier([s.source_type for s in sources]),
         parents=parents, children=children,
-        product_count=product_count, top_products=list(top_products),
+        product_count=product_count,
         created_at=e.created_at, updated_at=e.updated_at,
     )
 
@@ -212,11 +200,11 @@ async def list_publishers(db: AsyncSession = Depends(get_db)):
         sources = by_source.get(e.id, [])
         kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
         app_id_set = {a.app_id for a in app_ids}
-        count, top = _match_for_entity(pairs, kw_tokens, app_id_set)
         out.append(_build_out(
             e, aliases, app_ids, sources,
             by_parents.get(e.id, []), by_children.get(e.id, []),
-            count, itunes_artists=by_artist.get(e.id, []), top_products=top,
+            _count_for_entity(pairs, kw_tokens, app_id_set),
+            itunes_artists=by_artist.get(e.id, []),
         ))
     return out
 
@@ -241,9 +229,9 @@ async def create_publisher(data: PublisherEntityCreate, db: AsyncSession = Depen
     parents, children = await _relations(e.id, db)
     pairs = await _ranking_pairs(db)
     kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
-    count, top = _match_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids})
-    return _build_out(e, aliases, app_ids, sources, parents, children, count,
-                      itunes_artists=await _itunes_artists(e.id, db), top_products=top)
+    return _build_out(e, aliases, app_ids, sources, parents, children,
+                      _count_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids}),
+                      itunes_artists=await _itunes_artists(e.id, db))
 
 
 @router.get("/{entity_id}", response_model=PublisherEntityOut)
@@ -254,9 +242,9 @@ async def get_publisher(entity_id: int, db: AsyncSession = Depends(get_db)):
     parents, children = await _relations(entity_id, db)
     pairs = await _ranking_pairs(db)
     kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
-    count, top = _match_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids})
-    return _build_out(e, aliases, app_ids, sources, parents, children, count,
-                      itunes_artists=await _itunes_artists(e.id, db), top_products=top)
+    return _build_out(e, aliases, app_ids, sources, parents, children,
+                      _count_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids}),
+                      itunes_artists=await _itunes_artists(e.id, db))
 
 
 @router.put("/{entity_id}", response_model=PublisherEntityOut)
@@ -272,9 +260,9 @@ async def update_publisher(entity_id: int, data: PublisherEntityUpdate, db: Asyn
     parents, children = await _relations(entity_id, db)
     pairs = await _ranking_pairs(db)
     kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
-    count, top = _match_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids})
-    return _build_out(e, aliases, app_ids, sources, parents, children, count,
-                      itunes_artists=await _itunes_artists(e.id, db), top_products=top)
+    return _build_out(e, aliases, app_ids, sources, parents, children,
+                      _count_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids}),
+                      itunes_artists=await _itunes_artists(e.id, db))
 
 
 @router.delete("/{entity_id}")

@@ -2,23 +2,17 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { Plus, Trash2, Pencil, X, Building2, Globe, Boxes, ChevronDown, ChevronRight, Link2, ShieldCheck, Network, Search, List, Landmark, CornerDownRight, Coins } from 'lucide-react'
+import { Plus, Trash2, Pencil, X, Building2, Globe, Boxes, ChevronDown, ChevronRight, Link2, ShieldCheck, Network, Search, List } from 'lucide-react'
 import { publishersApi } from '../lib/api'
 import { useT } from '../i18n'
 import { PageHeader } from '../components/PageHeader'
 import { QueryError } from '../components/QueryError'
 import { PublisherGraph } from '../components/PublisherGraph'
-import { GameIcon } from '../components/GameIcon'
-import { useLocalStorageState } from '../lib/hooks'
 import type {
   PublisherEntity, PublisherEntityCreate, PublisherEntityUpdate,
   PublisherSourceCreate, PublisherSourceType,
   PublisherRelationCreate, PublisherRelationType, RelationCounterpartRole,
 } from '../lib/types'
-
-type Segment = 'all' | 'operator' | 'capital'
-type SortKey = 'default' | 'products' | 'provenance'
-const PROV_RANK: Record<string, number> = { primary: 0, secondary: 1, none: 2 }
 
 type EntityForm = {
   name: string
@@ -63,10 +57,6 @@ export default function PublishersManage() {
   const [cardOpen, setCardOpen] = useState<Record<number, boolean>>({})
   const [search, setSearch] = useState('')
   const [onlyResearched, setOnlyResearched] = useState(false)
-  // 分段（全部/运营体/资本方）、排序、按股权分组——持久化用户偏好
-  const [segment, setSegment] = useLocalStorageState<Segment>('pub.segment', 'all')
-  const [sortKey, setSortKey] = useLocalStorageState<SortKey>('pub.sort', 'default')
-  const [grouped, setGrouped] = useLocalStorageState<boolean>('pub.grouped', false)
   // 列表 / 股权图谱视图切换；图谱画全量（不受搜索/筛选影响）
   const [view, setView] = useState<'list' | 'graph'>('list')
 
@@ -246,49 +236,14 @@ export default function PublishersManage() {
   // 「有调研数据」= 有溯源源或股权关系（区别于种子里就有的马甲/app_id）
   const isResearched = (e: PublisherEntity) =>
     e.sources.length > 0 || e.parents.length > 0 || e.children.length > 0
-  // 资本方 = 非 SLG 运营体（is_slg=0 的纯控股/投资节点，如世纪华通/腾讯）
-  const isCapital = (e: PublisherEntity) => !e.is_slg
   const q = search.trim().toLowerCase()
   const filtered = entities.filter(e => {
-    if (segment === 'operator' && isCapital(e)) return false
-    if (segment === 'capital' && !isCapital(e)) return false
     if (onlyResearched && !isResearched(e)) return false
     if (!q) return true
     return e.name.toLowerCase().includes(q)
       || (e.name_en || '').toLowerCase().includes(q)
       || e.aliases.some(a => a.keyword.toLowerCase().includes(q) || (a.label || '').toLowerCase().includes(q))
   })
-
-  // 展示序列：分组（按股权嵌套）或扁平排序，统一产出 {e, depth}
-  const displayList: { e: PublisherEntity; depth: number }[] = (() => {
-    if (grouped) {
-      const visibleIds = new Set(filtered.map(e => e.id))
-      const childrenOf = new Map<number, PublisherEntity[]>()
-      filtered.forEach(e => e.parents.forEach(p => {
-        if (visibleIds.has(p.entity_id)) {
-          if (!childrenOf.has(p.entity_id)) childrenOf.set(p.entity_id, [])
-          childrenOf.get(p.entity_id)!.push(e)
-        }
-      }))
-      const hasVisibleParent = (e: PublisherEntity) => e.parents.some(p => visibleIds.has(p.entity_id))
-      const out: { e: PublisherEntity; depth: number }[] = []
-      const seen = new Set<number>()
-      const visit = (e: PublisherEntity, depth: number) => {
-        if (seen.has(e.id)) return  // 防环 / 防多母公司重复
-        seen.add(e.id)
-        out.push({ e, depth: Math.min(depth, 3) })
-        ;(childrenOf.get(e.id) || []).forEach(c => visit(c, depth + 1))
-      }
-      filtered.filter(e => !hasVisibleParent(e)).forEach(r => visit(r, 0))
-      filtered.forEach(e => { if (!seen.has(e.id)) out.push({ e, depth: 0 }) })  // 环残留兜底
-      return out
-    }
-    const sorted = [...filtered]
-    if (sortKey === 'products') sorted.sort((a, b) => (b.product_count ?? 0) - (a.product_count ?? 0))
-    else if (sortKey === 'provenance') sorted.sort((a, b) =>
-      (PROV_RANK[a.provenance_tier] ?? 9) - (PROV_RANK[b.provenance_tier] ?? 9) || a.name.localeCompare(b.name))
-    return sorted.map(e => ({ e, depth: 0 }))
-  })()
 
   return (
     <div className="px-4 sm:px-7 py-5 sm:py-7 max-w-[1500px] mx-auto space-y-5">
@@ -393,18 +348,6 @@ export default function PublishersManage() {
                   className="w-full bg-elevated border border-default rounded-lg pl-9 pr-3 py-2 text-sm text-primary placeholder:text-muted focus:outline-none focus:border-brand-500"
                 />
               </div>
-              {/* 分段：全部 / 运营体 / 资本方 */}
-              <div className="flex gap-1 bg-elevated rounded-lg p-1">
-                {(['all', 'operator', 'capital'] as const).map(v => (
-                  <button
-                    key={v}
-                    onClick={() => setSegment(v)}
-                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${segment === v ? 'bg-brand-600 text-white' : 'text-secondary hover:text-primary'}`}
-                  >
-                    {tt.segments[v]}
-                  </button>
-                ))}
-              </div>
               <div className="flex gap-1 bg-elevated rounded-lg p-1">
                 {([false, true] as const).map(v => (
                   <button
@@ -416,24 +359,6 @@ export default function PublishersManage() {
                   </button>
                 ))}
               </div>
-              {/* 按股权分组（开则忽略排序、按母子嵌套）*/}
-              <button
-                onClick={() => setGrouped(!grouped)}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${grouped ? 'bg-brand-600 text-white border-transparent' : 'bg-elevated text-secondary hover:text-primary border-default'}`}
-              >
-                <Network size={12} />{tt.groupByEquity}
-              </button>
-              {/* 排序（分组态禁用，因层级即序）*/}
-              <select
-                value={sortKey}
-                onChange={e => setSortKey(e.target.value as SortKey)}
-                disabled={grouped}
-                className="bg-elevated border border-default rounded-lg px-2.5 py-1.5 text-xs text-primary focus:outline-none focus:border-brand-500 disabled:opacity-40"
-              >
-                <option value="default">{tt.sortDefault}</option>
-                <option value="products">{tt.sortProducts}</option>
-                <option value="provenance">{tt.sortProvenance}</option>
-              </select>
               <span className="font-data text-[11px] text-muted">{tt.countShown(filtered.length, entities.length)}</span>
             </>
           )}
@@ -452,37 +377,38 @@ export default function PublishersManage() {
         <div className="text-center text-muted text-sm py-12 bg-surface border border-default rounded-xl">{tt.emptyFiltered}</div>
       ) : (
         <div className="space-y-2.5">
-          {displayList.map(({ e, depth }) => {
+          {filtered.map(e => {
             const open = !!cardOpen[e.id]
-            const cap = isCapital(e)
-            const chipCls = "text-[10px] text-secondary bg-elevated rounded px-1.5 py-0.5 shrink-0"
+            const sum: string[] = []
+            if (e.parents.length) {
+              const p = e.parents[0]
+              sum.push(`${tt.sumParent} ${p.name}（${tt.relationTypes[p.relation_type]}${p.stake_pct != null ? ' ' + tt.stakeSuffix(p.stake_pct) : ''}）${e.parents.length > 1 ? ' 等' : ''}`)
+            }
+            if (e.children.length) sum.push(tt.sumChildren(e.children.length))
+            if (e.product_count) sum.push(tt.sumProducts(e.product_count))
+            if (e.aliases.length) sum.push(tt.sumAliases(e.aliases.length))
+            if (e.sources.length) sum.push(tt.sumSources(e.sources.length))
+            const summaryText = sum.length ? sum.join(' · ') : tt.sumEmpty
             return (
-            <div key={e.id} id={`publisher-card-${e.id}`}
-              className={`border border-default rounded-xl ${cap ? 'bg-elevated' : 'bg-surface'}`}
-              style={depth ? { marginLeft: depth * 20 } : undefined}>
+            <div key={e.id} id={`publisher-card-${e.id}`} className="bg-surface border border-default rounded-xl">
               <div
                 className="flex items-start justify-between gap-2 p-4 cursor-pointer hover:bg-elevated/30 transition-colors rounded-xl"
                 onClick={() => setCardOpen(s => ({ ...s, [e.id]: !s[e.id] }))}
               >
-                <div className="flex items-start gap-2 min-w-0 flex-1">
+                <div className="flex items-start gap-2 min-w-0">
                   <span className="mt-0.5 text-muted shrink-0">{open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</span>
-                  <div className="min-w-0 space-y-1.5 flex-1">
+                  <div className="min-w-0 space-y-1">
                     <div className="flex items-center gap-2 flex-wrap min-w-0">
-                      {depth > 0 && <CornerDownRight size={12} className="text-muted shrink-0 -ml-0.5" />}
-                      {cap
-                        ? <Landmark size={15} className="text-amber-500 shrink-0" />
-                        : <Building2 size={15} className="text-accent shrink-0" />}
-                      <span className={`font-display font-bold truncate ${cap ? 'text-secondary' : 'text-primary'}`}>{e.name}</span>
+                      <Building2 size={15} className="text-accent shrink-0" />
+                      <span className="font-display font-bold text-primary truncate">{e.name}</span>
                       {e.name_en && <span className="text-xs text-muted truncate">{e.name_en}</span>}
                       {e.hq_region && (
                         <span className="inline-flex items-center gap-1 text-[10px] text-secondary border border-default bg-elevated rounded px-1.5 py-0.5 shrink-0">
                           <Globe size={10} />{e.hq_region}
                         </span>
                       )}
-                      {e.is_slg ? (
+                      {e.is_slg && (
                         <span className="text-[10px] text-accent border border-accent/40 bg-accent/10 rounded px-1.5 py-0.5 shrink-0">{tt.slgBadge}</span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-[10px] text-amber-500 border border-amber-500/40 bg-amber-500/10 rounded px-1.5 py-0.5 shrink-0"><Coins size={10} />{tt.capitalBadge}</span>
                       )}
                       {e.provenance_tier === 'primary' ? (
                         <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 border border-emerald-500/40 bg-emerald-500/10 rounded px-1.5 py-0.5 shrink-0"><ShieldCheck size={10} />{tt.provPrimary}</span>
@@ -492,33 +418,7 @@ export default function PublishersManage() {
                         <span className="text-[10px] text-muted border border-default rounded px-1.5 py-0.5 shrink-0">{tt.provNone}</span>
                       )}
                     </div>
-                    {/* 第二行：左=产品图标锚点 + 母公司注；右=数据条 */}
-                    <div className="flex items-center gap-x-3 gap-y-1 flex-wrap">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        {e.top_products.length > 0 && (
-                          <div className="flex items-center gap-1 shrink-0">
-                            {e.top_products.map(p => (
-                              <GameIcon key={p.app_id} src={p.icon_url} name={p.name ?? p.app_id} className="w-5 h-5 rounded" />
-                            ))}
-                          </div>
-                        )}
-                        {e.parents.length > 0 && (
-                          <span className="inline-flex items-center gap-1 text-[11px] text-muted truncate min-w-0">
-                            <CornerDownRight size={11} className="shrink-0" />
-                            <span className="truncate">{tt.sumParent} {e.parents[0].name}（{tt.relationTypes[e.parents[0].relation_type]}{e.parents[0].stake_pct != null ? ' ' + tt.stakeSuffix(e.parents[0].stake_pct) : ''}）{e.parents.length > 1 ? ' 等' : ''}</span>
-                          </span>
-                        )}
-                        {e.top_products.length === 0 && e.parents.length === 0 && (
-                          <span className="text-[11px] text-muted">{cap ? tt.capitalNoProducts : tt.sumEmpty}</span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1.5 ml-auto shrink-0">
-                        {!!e.product_count && <span className={chipCls}>{tt.statProducts} <b className="text-primary font-medium">{e.product_count}</b></span>}
-                        {e.aliases.length > 0 && <span className={chipCls}>{tt.statAliases} <b className="text-primary font-medium">{e.aliases.length}</b></span>}
-                        {e.children.length > 0 && <span className={chipCls}>{tt.statChildren} <b className="text-primary font-medium">{e.children.length}</b></span>}
-                        {e.sources.length > 0 && <span className={chipCls}>{tt.statSources} <b className="text-primary font-medium">{e.sources.length}</b></span>}
-                      </div>
-                    </div>
+                    <div className="text-[11px] text-muted truncate">{summaryText}</div>
                   </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0" onClick={ev => ev.stopPropagation()}>
