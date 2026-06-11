@@ -163,6 +163,8 @@ export const zh = {
     appstoreEmpty: '基线之后暂无新上架 app',
     appstoreReleasedAt: (d: string) => `上架 ${d}`,
     appstoreFirstSeen: (d: string) => `发现 ${d}`,
+    appstoreRatingCount: (n: string) => `${n} 评价`,
+    appstorePrice: (p: string) => (/^(free|免费|0)/i.test(p.trim()) ? '免费' : p),
     asOf: (date: string) => `数据截至 ${date}`,
     rank: '名次',
     game: '游戏',

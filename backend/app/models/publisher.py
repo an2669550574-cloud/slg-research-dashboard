@@ -132,6 +132,13 @@ class PublisherItunesApp(Base):
     bundle_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     release_date: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)  # ISO 日期
     track_view_url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+    # 以下展示字段全部来自 fetch_artist_apps 那一次免费 iTunes lookup 的同一响应——
+    # 零增量 ST 配额。genre 取 genres[] 里第一个非 "Games" 的子品类（Strategy/Puzzle…）。
+    artwork_url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+    genre: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    rating: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # averageUserRating 0-5
+    rating_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    price: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # formattedPrice，如 "Free"
     is_baseline: Mapped[bool] = mapped_column(Boolean, default=False)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 

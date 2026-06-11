@@ -3,10 +3,10 @@ import { useQuery, useMutation, useQueryClient, type UseQueryResult } from '@tan
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { newcomersApi, publishersApi } from '../lib/api'
-import { formatRevenue } from '../lib/utils'
+import { formatRevenue, formatNumber } from '../lib/utils'
 import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
-import { Download as DownloadIcon, Sparkles, Info, FilePlus2, Globe2, Building2, Store, RefreshCw } from 'lucide-react'
+import { Download as DownloadIcon, Sparkles, Info, FilePlus2, Globe2, Building2, Store, RefreshCw, Star } from 'lucide-react'
 import { COUNTRIES, PLATFORMS, platformLabel, type Country, type Platform } from '../lib/markets'
 import { GameIcon } from '../components/GameIcon'
 import { QueryError } from '../components/QueryError'
@@ -334,6 +334,7 @@ function AppstoreReleasesSection() {
                 <Building2 size={12} className="text-accent shrink-0" />
                 <span className="truncate">{it.entity_name}</span>
               </span>
+              <GameIcon src={it.artwork_url} name={it.name} className="w-9 h-9 rounded-lg" />
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium text-primary flex items-center gap-1.5">
                   <Sparkles size={13} className="text-accent shrink-0" />
@@ -343,9 +344,24 @@ function AppstoreReleasesSection() {
                       {it.name}
                     </a>
                   ) : <span className="truncate">{it.name}</span>}
+                  {it.genre && (
+                    <span className="shrink-0 text-[10px] font-medium text-secondary bg-elevated rounded px-1.5 py-0.5">
+                      {it.genre}
+                    </span>
+                  )}
                 </div>
-                <div className="text-[11px] text-muted truncate font-data">
-                  {it.bundle_id}{it.artist_label ? ` · ${it.artist_label}` : ''}
+                <div className="text-[11px] text-muted truncate font-data flex items-center gap-x-2">
+                  {it.rating != null && it.rating > 0 && (
+                    <span className="inline-flex items-center gap-0.5 text-amber-400 shrink-0">
+                      <Star size={10} className="fill-current" />
+                      {it.rating.toFixed(1)}
+                      {it.rating_count != null && it.rating_count > 0 && (
+                        <span className="text-muted">· {t.newcomers.appstoreRatingCount(formatNumber(it.rating_count))}</span>
+                      )}
+                    </span>
+                  )}
+                  {it.price && <span className="shrink-0">{t.newcomers.appstorePrice(it.price)}</span>}
+                  <span className="truncate">{it.bundle_id}{it.artist_label ? ` · ${it.artist_label}` : ''}</span>
                 </div>
               </div>
               {it.release_date && (
