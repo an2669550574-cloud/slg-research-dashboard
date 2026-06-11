@@ -139,56 +139,82 @@ def _parse_sales_series(data, platform: str) -> dict:
     return out
 
 
-# App Store 推荐位名映射（英文→中文）；未匹配保留原英文。
-_FEATURED_SLOT_ZH: dict[str, str] = {
-    "today story": "App Store Today 故事推荐",
-    "apps & games": "App Store 精选推荐",
-    "featured": "App Store 精选推荐",
-    "game of the day": "App Store 年度游戏",
-    "app of the day": "App Store 年度 App",
-    "top free": "免费榜推荐",
-    "top grossing": "畅销榜推荐",
-    "top paid": "付费榜推荐",
-    "category": "类目专题推荐",
+# App Store 推荐位类型映射（ST type 值→中文；2026-06 HK 实测共 4 种）。
+_FEATURED_TYPE_ZH: dict[str, str] = {
+    "story": "App Store Today 编辑故事",
+    "story_list": "App Store Today 故事列表",
+    "hero": "App Store Hero 大图",
+    "list": "App Store 精选列表",
 }
 
 
-def _slot_zh(slot_name: str) -> str:
-    key = slot_name.lower().strip()
-    for k, v in _FEATURED_SLOT_ZH.items():
-        if k in key:
-            return v
-    return slot_name
-
-
 def _parse_featured_impacts(data: dict | list) -> list[dict]:
-    """把 ST /v1/ios/featured/impacts 的响应解析成历史事件列表。
-    防御性：未知字段/空列表 → []，不抛。"""
-    rows = data if isinstance(data, list) else (
-        data.get("featured_impacts")
-        or data.get("featured_data")
-        or data.get("data")
-        or []
-    )
-    if not isinstance(rows, list):
+    """把 ST /v1/ios/featured/impacts 的响应蒸馏成少量 featuring 里程碑。
+
+    真实形状（2026-06-11 HK 实测，swagger 文档在登录墙后）：
+      {"countries": [国家级聚合], "types": [推荐位类型聚合],
+       "features": [{country, type, path: [面包屑], positions: [["YYYY-MM-DD", [位次..]], ..]}, ..]}
+    一年窗口 features 可达 700+ 条，逐条转事件会刷屏时间线 → 每个推荐位
+    类型只出一条「窗口内首次露出」事件（≤4 条），统计取 types 聚合，
+    最早一条附全局覆盖概况。防御性：未知形状 → []，不抛。
+    """
+    if not isinstance(data, dict):
         return []
+    inner = data.get("data") if isinstance(data.get("data"), dict) else data
+    feats = inner.get("features")
+    if not isinstance(feats, list) or not feats:
+        return []
+
+    # 每类型窗口内首次露出：(date, country_name, path)
+    first_by_type: dict[str, tuple[str, str, str]] = {}
+    for f in feats:
+        if not isinstance(f, dict):
+            continue
+        dates = [
+            p[0][:10]
+            for p in (f.get("positions") or [])
+            if isinstance(p, (list, tuple)) and p and isinstance(p[0], str) and len(p[0]) >= 10
+        ]
+        if not dates:
+            continue
+        ty = str(f.get("type") or "list")
+        first = min(dates)
+        cur = first_by_type.get(ty)
+        if cur is None or first < cur[0]:
+            path = f.get("path")
+            path_text = " / ".join(str(s) for s in path) if isinstance(path, list) and path else ""
+            first_by_type[ty] = (first, str(f.get("country_name") or f.get("country") or ""), path_text)
+    if not first_by_type:
+        return []
+
+    type_stats: dict[str, dict] = {
+        str(t.get("type")): t
+        for t in (inner.get("types") or [])
+        if isinstance(t, dict) and t.get("type")
+    }
+    countries = inner.get("countries")
+    n_countries = len(countries) if isinstance(countries, list) else 0
+    total_occ = sum(
+        t.get("occurrences") for t in type_stats.values() if isinstance(t.get("occurrences"), int)
+    )
+
     events: list[dict] = []
-    for r in rows:
-        if not isinstance(r, dict):
-            continue
-        date = (r.get("date") or r.get("start_date") or r.get("featured_date") or "")[:10]
-        if not date or len(date) < 10:
-            continue
-        slot = r.get("slot_name") or r.get("featured_slot") or r.get("store_position") or "Featured"
-        country = (r.get("country") or r.get("country_code") or "").upper()
-        downloads = r.get("downloads") or r.get("downloads_delta") or r.get("total_downloads")
-        dl_text = f"，期间下载增益约 {int(downloads):,}" if downloads else ""
-        country_text = f"{country} " if country else ""
+    for ty, (date, country_name, path_text) in sorted(first_by_type.items(), key=lambda kv: kv[1][0]):
+        stats = type_stats.get(ty, {})
+        occ, dl = stats.get("occurrences"), stats.get("downloads")
+        where = f"{country_name}「{path_text}」" if path_text else (country_name or "App Store")
+        desc = f"近一年窗口内最早见于 {where}"
+        if isinstance(occ, int) and occ > 0:
+            desc += f"；该类型推荐位累计露出 {occ:,} 次"
+        if isinstance(dl, int) and dl > 0:
+            desc += f"，关联下载约 {dl:,}"
+        if not events and n_countries and total_occ:  # 最早一条附全局概况
+            desc += f"。期间共覆盖 {n_countries} 个国家/地区、合计露出 {total_occ:,} 次"
         events.append({
             "event_date": date,
             "event_type": "featuring",
-            "title": _slot_zh(slot),
-            "description": f"{country_text}App Store 推荐位：{slot}{dl_text}。",
+            "title": f"获{_FEATURED_TYPE_ZH.get(ty, f'App Store {ty} 推荐位')}推荐",
+            "description": desc + "。",
         })
     return events
 
@@ -221,15 +247,16 @@ class SensorTowerService:
         self.cache_ttl = settings.SENSOR_TOWER_CACHE_TTL
         self.snapshot_fresh_seconds = settings.SENSOR_TOWER_SNAPSHOT_FRESH_HOURS * 3600
 
-    async def _get(self, path: str, params: dict) -> dict:
+    async def _get(self, path: str, params: dict, timeout: httpx.Timeout | None = None) -> dict:
         # 复制 params 再注入 auth_token，避免污染调用方 dict 与缓存 key。
         q = {**params, "auth_token": self.api_token}
-        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=timeout or HTTP_TIMEOUT) as client:
             resp = await client.get(f"{settings.SENSOR_TOWER_BASE_URL}{path}", params=q)
             resp.raise_for_status()
             return resp.json()
 
-    async def _cached_get(self, cache_key: str, path: str, params: dict, fallback) -> dict:
+    async def _cached_get(self, cache_key: str, path: str, params: dict, fallback,
+                          timeout: httpx.Timeout | None = None) -> dict:
         """缓存层级：
             L1: 进程内 InMemoryTTLCache（cache_ttl 秒）
             L2: SQLite sensor_tower_snapshots（snapshot_fresh_seconds 秒）
@@ -256,7 +283,7 @@ class SensorTowerService:
                 return fallback()
 
             try:
-                data = await self._get(path, params)
+                data = await self._get(path, params, timeout=timeout)
             except Exception:
                 # 失败不该扣配额：try_consume 已扣，退还再抛给外层降级处理。
                 await quota.refund()
@@ -454,23 +481,31 @@ class SensorTowerService:
         return [{"app_id": str(aid), "rank": i + 1}
                 for i, aid in enumerate(data.get("ranking") or [])]
 
-    async def get_featured_impacts(self, app_id: str, country: str = "US") -> list[dict]:
-        """拉取该 iOS app 被 App Store 推荐过的历史事件（TTL 48h，省配额）。
+    async def get_featured_impacts(self, app_id: str) -> list[dict]:
+        """近一年该 iOS app 的 App Store 推荐露出，蒸馏成少量 featuring 里程碑。
 
+        2026-06-11 HK 实测定下的三个参数，改前先看配额账：
+        - **每次真实调用消耗 1 次月度配额**（org.usage 严格 +1/请求）→ L2 快照
+          缓存必须保留；
+        - 响应全球一把返回，country 参数不起过滤作用 → 不传；
+        - 窗口越长响应越大越慢（2023 起 7.2MB/30s；2010 起必超全局 10s 超时）
+          → 固定近 365 天 + 本端点单独 60s 超时。
         只接受 iOS 数字 app_id（包名返回 []）。失败 / mock → [] 静默回退，
         不影响 build_history 已有事件。
-        `featured/impacts` 是否计入月度配额待实测确认（测前按 1 次保守处理）。
         """
         if self.use_mock or not app_id.isdigit():
             return []
-        today = datetime.utcnow().strftime("%Y-%m-%d")
-        key = f"featured:ios:{country}:{app_id}"
+        end = datetime.utcnow()
+        start = end - timedelta(days=365)
+        key = f"featured:ios:{app_id}"
         data = await self._cached_get(
             key,
             "/v1/ios/featured/impacts",
-            {"app_id": app_id, "country": country,
-             "start_date": "2010-01-01", "end_date": today},
-            fallback=lambda: [],
+            {"app_id": app_id,
+             "start_date": start.strftime("%Y-%m-%d"),
+             "end_date": end.strftime("%Y-%m-%d")},
+            fallback=lambda: {},
+            timeout=httpx.Timeout(60.0, connect=5.0),
         )
         try:
             return _parse_featured_impacts(data)
