@@ -64,13 +64,27 @@ def build_movement_lines(s: dict) -> list[str]:
     return lines
 
 
-def build_newcomer_lines(market: dict, publisher: dict) -> list[str]:
-    """两层新品检测 → 人读行。"""
+def _enrich_suffix(e: Optional[dict]) -> str:
+    """新品行的富化尾巴：子品类 / 价格 / 上架日（log 表里有才拼，没有不占位）。"""
+    if not e:
+        return ""
+    parts = [p for p in (
+        e.get("genre"),
+        e.get("price"),
+        f"上架 {e['release_date']}" if e.get("release_date") else None,
+    ) if p]
+    return f" · {' · '.join(parts)}" if parts else ""
+
+
+def build_newcomer_lines(market: dict, publisher: dict,
+                         enrich: Optional[dict] = None) -> list[str]:
+    """两层新品检测 → 人读行。enrich: {app_id: {genre, price, release_date}}。"""
+    enrich = enrich or {}
     lines = []
     for n in (market.get("newcomers") or [])[:10]:
         tag = "" if n.get("is_slg") else " ⚠️ 新厂商待识别"
         lines.append(f"✨ **{n['name']}** 空降 **#{n['rank']}** — {n.get('publisher') or '?'}"
-                     f"（{_fmt_money(n.get('revenue'))}）{tag}")
+                     f"（{_fmt_money(n.get('revenue'))}）{_enrich_suffix(enrich.get(n.get('app_id')))}{tag}")
     for n in (publisher.get("newcomers") or [])[:10]:
         rank = f"#{n['rank']}" if n.get("rank") else "进榜"
         lines.append(f"🏢 **{n['entity_name']}** 新品 **{n['name']}** {rank}")
@@ -90,7 +104,8 @@ def build_daily_digest(per_combo: list[dict], today: str) -> Optional[tuple[str,
         if c.get("movement"):
             lines += build_movement_lines(c["movement"])
         if c.get("market") or c.get("publisher"):
-            lines += build_newcomer_lines(c.get("market") or {}, c.get("publisher") or {})
+            lines += build_newcomer_lines(c.get("market") or {}, c.get("publisher") or {},
+                                          enrich=c.get("enrich"))
         if not lines:
             continue
         total += len(lines)
@@ -121,8 +136,8 @@ async def send_daily_digest() -> bool:
     today = utcnow_naive().strftime("%Y-%m-%d")
     per_combo: list[dict] = []
     for country, platform in settings.sync_combos_list:
-        entry: dict = {"country": country, "platform": platform,
-                       "movement": None, "market": None, "publisher": None}
+        entry: dict = {"country": country, "platform": platform, "movement": None,
+                       "market": None, "publisher": None, "enrich": None}
         try:
             m = await detect_movement(country, platform, today)
             if not m.get("today_missing"):
@@ -131,6 +146,21 @@ async def send_daily_digest() -> bool:
             publisher = await detect_publisher_newcomers(country, platform)
             if market.get("as_of") == today:
                 entry["market"] = market
+                # 检出沉淀里的富化字段（record 已在同步路径先落库），给日报行加料
+                ids = [n["app_id"] for n in (market.get("newcomers") or [])]
+                if ids:
+                    from app.models.newcomer import MarketNewcomerLog
+                    async with AsyncSessionLocal() as db:
+                        logs = (await db.execute(
+                            select(MarketNewcomerLog).where(
+                                MarketNewcomerLog.country == country,
+                                MarketNewcomerLog.platform == platform,
+                                MarketNewcomerLog.app_id.in_(ids),
+                            )
+                        )).scalars().all()
+                    entry["enrich"] = {l.app_id: {
+                        "genre": l.genre, "price": l.price, "release_date": l.release_date,
+                    } for l in logs}
             if publisher.get("as_of") == today:
                 entry["publisher"] = publisher
         except Exception:

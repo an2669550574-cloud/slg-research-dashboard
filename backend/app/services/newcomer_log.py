@@ -30,15 +30,21 @@ async def _enrich_ios(app_id: str, country: str) -> Optional[dict]:
     if not app_id.isdigit():
         return None
     from app.services.itunes_releases import ITUNES_LOOKUP_URL
+    # 检出国 miss 时退避 us/sg 再查——软启动产品常不在检出国的 storefront 可见。
+    r = None
     async with httpx.AsyncClient(timeout=20) as client:
-        resp = await client.get(ITUNES_LOOKUP_URL, params={
-            "id": app_id, "country": country.lower(), "entity": "software"})
-        resp.raise_for_status()
-        results = [r for r in resp.json().get("results", [])
-                   if r.get("wrapperType") == "software"]
-    if not results:
+        for cc in dict.fromkeys([country.lower(), "us", "sg"]):
+            resp = await client.get(ITUNES_LOOKUP_URL, params={
+                "id": app_id, "country": cc, "entity": "software"})
+            resp.raise_for_status()
+            results = [x for x in resp.json().get("results", [])
+                       if x.get("wrapperType") == "software"]
+            if results:
+                r = results[0]
+                break
+            await asyncio.sleep(1)
+    if r is None:
         return None
-    r = results[0]
     genres = r.get("genres") or []
     genre = next((g for g in genres if g and g != "Games"), None) or r.get("primaryGenreName")
     shots = [u for u in (r.get("screenshotUrls") or []) if isinstance(u, str)][:5]
@@ -64,6 +70,7 @@ async def _enrich_android(app_id: str) -> Optional[dict]:
     if r.get("trackName") == app_id and "description" not in r:
         return None  # 降级到仅包名 = 没解析出任何详情
     genres = r.get("genres") or []
+    shots = [u for u in (r.get("screenshotUrls") or []) if isinstance(u, str)][:5]
     return {
         "store_url": r.get("trackViewUrl"),
         "release_date": None,  # GP 页拿不到稳定的上架日
@@ -72,7 +79,7 @@ async def _enrich_android(app_id: str) -> Optional[dict]:
         "rating_count": r.get("userRatingCount"),
         "price": r.get("formattedPrice"),
         "description": ((r.get("description") or "").strip()[:1500]) or None,
-        "screenshot_urls": None,
+        "screenshot_urls": json.dumps(shots) if shots else None,
         "enrich_source": "gp",
     }
 
@@ -148,3 +155,26 @@ async def record_all_combos() -> dict:
         except Exception:
             logger.exception("newcomer record failed for %s/%s", country, platform)
     return total
+
+
+async def attribute_entities(rows) -> dict[int, tuple[int, str]]:
+    """读时归属：log 行 → 已建档主体。{row.id: (entity_id, entity_name)}。
+
+    复用 newcomers._load_entity_matchers（与「厂商新品」同一套归属口径）。
+    **读时计算**而非落库——建档发生在检出之后，存档会过期；活算让
+    「建档 → 历史卡片立刻显示已归属」零回写。量级几十主体，开销可忽略。
+    """
+    from app.services.newcomers import _kw_hit, _load_entity_matchers
+    from app.services.slg_publishers import _tokens
+
+    matchers = await _load_entity_matchers()
+    out: dict[int, tuple[int, str]] = {}
+    for r in rows:
+        pub_tokens = _tokens(r.publisher)
+        for m in matchers:
+            if r.app_id in m["app_ids"] or (
+                pub_tokens and any(_kw_hit(pub_tokens, kw) for kw in m["kw_tokens"])
+            ):
+                out[r.id] = (m["entity_id"], m["entity_name"])
+                break
+    return out

@@ -323,6 +323,9 @@ export interface NewcomerHistoryItem {
   description: string | null
   screenshots: string[]
   enrich_source: 'itunes' | 'gp' | null
+  /** 读时归属：命中已建档主体（建档后立即生效，无需等下轮检出）。 */
+  entity_id: number | null
+  entity_name: string | null
 }
 
 export interface NewcomerHistoryOut {
