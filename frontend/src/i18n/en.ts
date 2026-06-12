@@ -165,6 +165,7 @@ export const en: Translations = {
     detectedAt: (d: string) => `detected ${d}`,
     allLabel: 'All',
     rangeDays: (n: number) => `${n}d`,
+    attributedTo: (n: string) => `Attributed: ${n}`,
     drawerDesc: 'Description',
     drawerShots: 'Screenshots',
     openStore: 'Store page',

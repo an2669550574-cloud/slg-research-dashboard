@@ -234,6 +234,9 @@ class NewcomerHistoryItem(BaseModel):
     description: Optional[str] = None
     screenshots: list[str] = []
     enrich_source: Optional[str] = None
+    # 读时归属：命中已建档主体（建档后无需回写，历史卡片立刻显示已归属）
+    entity_id: Optional[int] = None
+    entity_name: Optional[str] = None
 
 
 class NewcomerHistoryOut(BaseModel):
@@ -263,15 +266,21 @@ async def get_newcomer_history(
     rows = (await db.execute(
         q.order_by(MarketNewcomerLog.first_detected_at.desc(), MarketNewcomerLog.rank)
     )).scalars().all()
+    from app.services.newcomer_log import attribute_entities
+    attributed = await attribute_entities(rows)
     return NewcomerHistoryOut(
         today=utcnow_naive().strftime("%Y-%m-%d"),
         items=[
             NewcomerHistoryItem(
                 **{k: getattr(r, k) for k in (
                     "id", "country", "platform", "app_id", "as_of", "name", "publisher",
-                    "icon_url", "rank", "revenue", "is_slg", "first_detected_at",
+                    "icon_url", "rank", "revenue", "first_detected_at",
                     "store_url", "release_date", "genre", "rating", "rating_count",
                     "price", "description", "enrich_source")},
+                # 落库后建档的主体读时也算 SLG——is_slg 活算（存档值只作冗余）
+                is_slg=r.is_slg or r.id in attributed,
+                entity_id=attributed.get(r.id, (None, None))[0],
+                entity_name=attributed.get(r.id, (None, None))[1],
                 screenshots=json.loads(r.screenshot_urls) if r.screenshot_urls else [],
             )
             for r in rows

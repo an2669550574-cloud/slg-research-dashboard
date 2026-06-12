@@ -101,3 +101,43 @@ async def test_record_mock_mode_skips_enrich(client, monkeypatch):
     monkeypatch.setattr(nl, "_POLITE_DELAY_S", 0)
     r = await nl.record_market_newcomers("FR", "ios")
     assert r["recorded"] == 2 and r["enriched"] == 0 and called == []
+
+
+@pytest.mark.asyncio
+async def test_history_live_attribution(client, monkeypatch):
+    """建档发生在检出之后 → 历史端点读时归属：entity_name 出现、is_slg 翻真。"""
+    nl = importlib.import_module("app.services.newcomer_log")
+    now = _live("app.database").utcnow_naive()
+    today = now.strftime("%Y-%m-%d")
+    prev = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+    await _seed_rankings(today, prev, "GB", "c_")
+
+    monkeypatch.setattr(nl.settings, "USE_MOCK_DATA", True)  # 跳过外呼
+    monkeypatch.setattr(nl, "_POLITE_DELAY_S", 0)
+    await nl.record_market_newcomers("GB", "ios")
+
+    resp = await client.get("/api/newcomers/history?days=7&country=GB")
+    assert all(not i["is_slg"] and i["entity_name"] is None for i in resp.json()["items"])
+
+    # 事后建档：钉住 c_rookie01 的 app_id
+    r = await client.post("/api/publishers/", json={
+        "name": "新检出厂商甲", "app_ids": [{"app_id": "c_rookie01"}]})
+    assert r.status_code == 201
+
+    resp = await client.get("/api/newcomers/history?days=7&country=GB")
+    by_id = {i["app_id"]: i for i in resp.json()["items"]}
+    hit = by_id["c_rookie01"]
+    assert hit["is_slg"] is True and hit["entity_name"] == "新检出厂商甲"
+    assert by_id["c_rookie99"]["entity_name"] is None  # 未建档的不受影响
+
+
+def test_digest_newcomer_enrich_suffix():
+    from app.services.release_alerts import build_newcomer_lines
+    market = {"newcomers": [{"app_id": "x1", "rank": 7, "name": "寒霜新游",
+                             "publisher": "某厂", "revenue": None, "is_slg": True}]}
+    lines = build_newcomer_lines(market, {}, enrich={
+        "x1": {"genre": "Casual", "price": "Free", "release_date": "2026-06-01"}})
+    assert lines == ["✨ **寒霜新游** 空降 **#7** — 某厂（—） · Casual · Free · 上架 2026-06-01"]
+    # 无富化数据不占位
+    lines2 = build_newcomer_lines(market, {})
+    assert "·" not in lines2[0].split("（—）")[1]

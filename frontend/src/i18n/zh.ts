@@ -172,6 +172,7 @@ export const zh = {
     detectedAt: (d: string) => `检出 ${d}`,
     allLabel: '全部',
     rangeDays: (n: number) => `${n} 天`,
+    attributedTo: (n: string) => `已归属 ${n}`,
     drawerDesc: '简介',
     drawerShots: '截图',
     openStore: '商店页',

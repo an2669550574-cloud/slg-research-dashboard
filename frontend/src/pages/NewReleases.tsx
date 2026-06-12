@@ -53,6 +53,7 @@ export default function NewReleases() {
     }),
     onSuccess: (e) => {
       qc.invalidateQueries({ queryKey: ['newcomers'] })
+      qc.invalidateQueries({ queryKey: ['newcomerHistory'] })
       qc.invalidateQueries({ queryKey: ['publishers'] })
       toast.success(t.newcomers.triaged(e.name))
     },
@@ -253,7 +254,11 @@ export default function NewReleases() {
                   <span className="ml-auto">{t.newcomers.detectedAt(g.as_of)}</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  {g.is_slg ? (
+                  {g.entity_name ? (
+                    <span className="inline-block px-2 py-0.5 rounded-md text-[11px] font-medium bg-brand-600/15 text-brand-500">
+                      {t.newcomers.attributedTo(g.entity_name)}
+                    </span>
+                  ) : g.is_slg ? (
                     <span className="inline-block px-2 py-0.5 rounded-md text-[11px] font-medium bg-brand-600/15 text-brand-500">
                       {t.newcomers.slgKnown}
                     </span>

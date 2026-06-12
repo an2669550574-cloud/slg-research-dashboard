@@ -114,6 +114,12 @@ def parse_app_detail(html: str, package: str) -> dict:
             img = ld.get("image")
             if isinstance(img, str):
                 record["artworkUrl512"] = img
+            shots = ld.get("screenshot")
+            if isinstance(shots, str):
+                shots = [shots]
+            if isinstance(shots, list):
+                record["screenshotUrls"] = [
+                    u for u in shots if isinstance(u, str) and u.startswith("http")][:5]
         except (ValueError, TypeError, KeyError):
             logger.warning("gp JSON-LD parse failed for %s", package)
     if "artworkUrl512" not in record:
