@@ -211,6 +211,83 @@ async def get_publisher_newcomers(
     )
 
 
+class NewcomerHistoryItem(BaseModel):
+    """一条已沉淀的新面孔检出（含免费源富化字段，未富化为 NULL）。"""
+    id: int
+    country: str
+    platform: str
+    app_id: str
+    as_of: str
+    name: str
+    publisher: Optional[str] = None
+    icon_url: Optional[str] = None
+    rank: Optional[int] = None
+    revenue: Optional[float] = None
+    is_slg: bool
+    first_detected_at: datetime
+    store_url: Optional[str] = None
+    release_date: Optional[str] = None
+    genre: Optional[str] = None
+    rating: Optional[float] = None
+    rating_count: Optional[int] = None
+    price: Optional[str] = None
+    description: Optional[str] = None
+    screenshots: list[str] = []
+    enrich_source: Optional[str] = None
+
+
+class NewcomerHistoryOut(BaseModel):
+    today: str
+    items: list[NewcomerHistoryItem]
+    days: int
+
+
+@router.get("/history", response_model=NewcomerHistoryOut)
+async def get_newcomer_history(
+    days: int = Query(90, ge=1, le=365, description="回看 N 天内的检出"),
+    country: Optional[str] = Query(None),
+    platform: Optional[str] = Query(None),
+    topn: Optional[int] = Query(None, ge=1, le=200, description="只看名次 ≤ 此值的检出（如 50）"),
+    db: AsyncSession = Depends(get_db),
+):
+    """已沉淀的全市场新面孔检出历史（检出即落库 + 免费源富化，零 ST 配额）。"""
+    from app.models.newcomer import MarketNewcomerLog
+    since = utcnow_naive() - timedelta(days=days)
+    q = select(MarketNewcomerLog).where(MarketNewcomerLog.first_detected_at >= since)
+    if country:
+        q = q.where(MarketNewcomerLog.country == country.upper())
+    if platform:
+        q = q.where(MarketNewcomerLog.platform == platform.lower())
+    if topn:
+        q = q.where(MarketNewcomerLog.rank <= topn)
+    rows = (await db.execute(
+        q.order_by(MarketNewcomerLog.first_detected_at.desc(), MarketNewcomerLog.rank)
+    )).scalars().all()
+    return NewcomerHistoryOut(
+        today=utcnow_naive().strftime("%Y-%m-%d"),
+        items=[
+            NewcomerHistoryItem(
+                **{k: getattr(r, k) for k in (
+                    "id", "country", "platform", "app_id", "as_of", "name", "publisher",
+                    "icon_url", "rank", "revenue", "is_slg", "first_detected_at",
+                    "store_url", "release_date", "genre", "rating", "rating_count",
+                    "price", "description", "enrich_source")},
+                screenshots=json.loads(r.screenshot_urls) if r.screenshot_urls else [],
+            )
+            for r in rows
+        ],
+        days=days,
+    )
+
+
+@router.post("/history/sync")
+async def trigger_newcomer_history_sync():
+    """手动触发全 combo 检出落库（首次回填 / 调试用，平时随定时同步自动写）。"""
+    from app.services.newcomer_log import record_all_combos
+    summary = await record_all_combos()
+    return {"message": "ok", **summary}
+
+
 @router.get("/", response_model=NewcomersOut)
 async def get_newcomers(
     country: Optional[str] = Query(None, description="国家代码；不传则汇总所有 SYNC_RANKING_COMBOS"),

@@ -133,6 +133,8 @@ class Settings(BaseSettings):
     NEWCOMER_WINDOW: int = 4
     # 最近一次同步里名次 ≤ 该值才算"新进榜"，过滤榜尾噪声。
     NEWCOMER_TOPN: int = 50
+    # 历史沉淀口径（market_newcomer_log）：比日报 Top50 宽，页面可筛 Top50/100。
+    NEWCOMER_HISTORY_TOPN: int = 100
 
     # ── App Store 清单雷达（免费 iTunes lookup，零 ST 配额）──────────────
     # 每轮对每个开发者账号扫这些 storefront（逗号小写）。SLG 几乎都先软启动：
