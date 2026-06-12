@@ -104,6 +104,9 @@ class PublisherItunesArtist(Base):
         ForeignKey("publisher_entities.id", ondelete="CASCADE"), index=True
     )
     artist_id: Mapped[str] = mapped_column(String(30), unique=True)  # 如 "1717022676"
+    # 'ios' = iTunes artistId；'gp' = Google Play 开发者页 id（名称型如 "GAME SPARK"
+    # 或数字型）。GP 侧复用同一套清单 diff/基线语义，apps 行 storefronts 固定 'gp'。
+    platform: Mapped[str] = mapped_column(String(10), default="ios", server_default="ios")
     label: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)  # 如 "River Game HK Limited"
     last_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)

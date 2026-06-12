@@ -1,6 +1,6 @@
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from app.services.provenance import SOURCE_TYPES
 
@@ -33,21 +33,29 @@ class PublisherItunesArtistOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     artist_id: str
+    platform: str = "ios"
     label: Optional[str] = None
     last_synced_at: Optional[datetime] = None
 
 
 class PublisherItunesArtistCreate(BaseModel):
     artist_id: str
+    # 'ios' = iTunes artistId（必须纯数字）；'gp' = Google Play 开发者页 id
+    # （developer?id= 的名称型或 dev?id= 的数字型均可）。
+    platform: Literal["ios", "gp"] = "ios"
     label: Optional[str] = None
 
-    @field_validator("artist_id")
-    @classmethod
-    def _valid_artist_id(cls, v: str) -> str:
-        v = v.strip()
-        if not v.isdigit():
+    @model_validator(mode="after")
+    def _valid_artist_id(self) -> "PublisherItunesArtistCreate":
+        v = self.artist_id.strip()
+        if not v:
+            raise ValueError("artist_id must not be empty")
+        if self.platform == "ios" and not v.isdigit():
             raise ValueError("artist_id must be the numeric iTunes artistId, e.g. 1717022676")
-        return v
+        if len(v) > 30:
+            raise ValueError("artist_id too long (max 30 chars)")
+        self.artist_id = v
+        return self
 
 
 class PublisherSourceOut(BaseModel):

@@ -349,7 +349,11 @@ function AppstoreReleasesSection() {
                       {it.genre}
                     </span>
                   )}
-                  {it.storefronts.length > 0 && (
+                  {it.platform === 'gp' ? (
+                    <span className="shrink-0 text-[10px] font-semibold text-emerald-400 bg-emerald-400/10 border border-emerald-400/30 rounded px-1.5 py-0.5 font-data">
+                      Google Play
+                    </span>
+                  ) : it.storefronts.length > 0 && (
                     it.storefronts.includes('us') ? (
                       <span className="shrink-0 text-[10px] font-medium text-secondary bg-elevated rounded px-1.5 py-0.5 font-data">
                         {t.newcomers.appstoreRegions(it.storefronts.map(s => s.toUpperCase()).join('/'))}

@@ -179,13 +179,19 @@ async def _run_rank_backfill() -> None:
 
 
 async def _run_itunes_releases_sync() -> None:
-    """定时任务包装：App Store 开发者清单 diff（免费 iTunes API、零 ST 配额）。
-    任务自身已含 mock/空账号护栏，异常不拖垮 scheduler。"""
+    """定时任务包装：应用商店开发者清单 diff（iOS 免费 iTunes API + GP 免费
+    开发者页，零 ST 配额）。两侧各自含 mock/空账号护栏，异常互不拖垮、
+    不拖垮 scheduler；告警窗口各自独立不重报。"""
+    from app.services.gp_releases import sync_gp_releases
     from app.services.itunes_releases import sync_itunes_releases
     try:
         await sync_itunes_releases()
     except Exception:
         logger.exception("iTunes releases sync job crashed")
+    try:
+        await sync_gp_releases()
+    except Exception:
+        logger.exception("GP releases sync job crashed")
 
 
 async def sync_seed_games_if_empty() -> None:
