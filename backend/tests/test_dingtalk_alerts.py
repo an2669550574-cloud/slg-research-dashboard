@@ -61,25 +61,43 @@ async def test_send_adds_keyword_prefix_and_swallows_errors(monkeypatch):
 
 # ── digest 构建（纯函数）───────────────────────────────────────────────────
 
-def test_chart_digest_empty_returns_none():
-    from app.services.release_alerts import build_chart_digest
-    base = {"country": "US", "platform": "ios", "as_of": "2026-06-14", "newcomers": []}
-    assert build_chart_digest(base, dict(base)) is None
+def test_daily_digest_empty_returns_none():
+    from app.services.release_alerts import build_daily_digest
+    per_combo = [{"country": "US", "platform": "ios",
+                  "movement": None, "market": None, "publisher": None}]
+    assert build_daily_digest(per_combo, "2026-06-14") is None
 
 
-def test_chart_digest_contains_cjk_items():
-    from app.services.release_alerts import build_chart_digest
-    market = {"country": "US", "platform": "ios", "as_of": "2026-06-14", "newcomers": [
-        {"rank": 12, "name": "寒霜纪元", "publisher": "Unknown Studio", "revenue": 123000, "is_slg": False},
-    ]}
-    publisher = {"country": "US", "platform": "ios", "as_of": "2026-06-14", "newcomers": [
-        {"entity_name": "江娱互动", "name": "Top Heroes 顶级英雄", "rank": 77},
-    ]}
-    title, text = build_chart_digest(market, publisher)
-    assert title == "新品监测 US/ios"
-    assert "#12 寒霜纪元" in text and "新厂商待识别" in text
-    assert "江娱互动：Top Heroes 顶级英雄 #77" in text
-    assert "快照 2026-06-14" in text
+def test_daily_digest_human_readable_no_machine_codes():
+    """人话化：不出现 [NEW]/[UP] 机器码；关键数字加粗；多 combo 分段。"""
+    from app.services.release_alerts import build_daily_digest
+    movement = {
+        "new_entrants": [{"app_id": "123", "name": "寒霜启示录", "prev_rank": None, "cur_rank": 3}],
+        "surges": [{"app_id": "456", "name": "Last War", "prev_rank": 18, "cur_rank": 3}],
+        "drops": [{"app_id": "789", "name": "旧王朝", "prev_rank": 5, "cur_rank": None}],
+        "revenue_spikes": [{"app_id": "123", "name": "寒霜启示录",
+                            "prev_revenue": 10000, "cur_revenue": 14500, "pct": 45.0}],
+    }
+    market = {"newcomers": [{"rank": 12, "name": "神秘新游", "publisher": "Mystery Studio",
+                             "revenue": 123000, "is_slg": False}]}
+    publisher = {"newcomers": [{"entity_name": "江娱互动", "name": "Top Heroes 顶级英雄", "rank": 77}]}
+    per_combo = [
+        {"country": "US", "platform": "ios", "movement": movement,
+         "market": market, "publisher": publisher},
+        {"country": "JP", "platform": "ios", "movement": None, "market": None, "publisher": None},
+    ]
+    title, text, btns = build_daily_digest(per_combo, "2026-06-14")
+    assert title == "每日情报 2026-06-14"
+    assert "[NEW]" not in text and "[UP]" not in text and "[DOWN]" not in text
+    assert "🆕 **寒霜启示录** 空降 **#3**" in text
+    assert "📈 **Last War** #18 → **#3**（↑15）" in text
+    assert "📉 **旧王朝** 跌出 Top 榜（#5 → 榜外）" in text
+    assert "💰 **寒霜启示录** 收入 **+45%**" in text
+    assert "✨ **神秘新游** 空降 **#12**" in text and "新厂商待识别" in text
+    assert "🏢 **江娱互动** 新品 **Top Heroes 顶级英雄** #77" in text
+    assert "US · ios" in text and "JP" not in text  # 空 combo 不出段
+    # iOS 数字 app_id → 商店页按钮
+    assert ("寒霜启示录 →", "https://apps.apple.com/us/app/id123") in btns
 
 
 def test_appstore_digest():
@@ -93,17 +111,23 @@ def test_appstore_digest():
         track_view_url = "https://apps.apple.com/us/app/id123"
         genre = "Strategy"
         storefronts = "ph,ca"  # 无 us → 软启动措辞
-    title, text = build_appstore_digest([(App(), "壳木游戏 Camel Games", "Camel HK")])
-    assert "壳木游戏 Camel Games：测试新游：远古纪元（上架 2026-06-12）" in text
-    assert "Strategy" in text
+    title, text, btns = build_appstore_digest([(App(), "壳木游戏 Camel Games", "Camel HK")])
+    assert "🆕 **测试新游：远古纪元** — 壳木游戏 Camel Games（App Store）" in text
+    assert "Strategy" in text and "上架 2026-06-12" in text
     assert "仅 PH/CA 可见（疑似软启动）" in text
-    assert "[App Store](https://apps.apple.com/us/app/id123)" in text
+    assert ("测试新游：远古纪元 →", "https://apps.apple.com/us/app/id123") in btns
 
-    # us 在列 → 普通可见区措辞
+    # us 在列 → 普通可见区措辞；GP 行 → Google Play 标且无可见区话术
     class GlobalApp(App):
         storefronts = "us,ph,ca"
-    _, text2 = build_appstore_digest([(GlobalApp(), "壳木游戏 Camel Games", "Camel HK")])
+    _, text2, _ = build_appstore_digest([(GlobalApp(), "壳木游戏 Camel Games", "Camel HK")])
     assert "可见区 US/PH/CA" in text2 and "软启动" not in text2
+
+    class GpApp(App):
+        storefronts = "gp"
+        track_view_url = "https://play.google.com/store/apps/details?id=com.test.x"
+    _, text3, _ = build_appstore_digest([(GpApp(), "GAME SPARK", None)])
+    assert "（Google Play）" in text3 and "可见区" not in text3 and "软启动" not in text3
 
 
 def test_appstore_digest_expanded_section():
@@ -116,23 +140,28 @@ def test_appstore_digest_expanded_section():
         track_view_url = None
         genre = None
         storefronts = "us,ph,ca"
-    title, text = build_appstore_digest([], [(App(), "点点互动测试", ["us"])])
-    assert title == "App Store 雷达"
+    title, text, btns = build_appstore_digest([], [(App(), "点点互动测试", ["us"])])
+    assert title == "商店雷达上新"
     assert "扩区上线" in text
-    assert "点点互动测试：寒霜远征 新增 US（现 US/PH/CA）" in text
+    assert "🌍 **寒霜远征** — 点点互动测试 新增 **US**（现 US/PH/CA）" in text
+    assert btns == []
 
 
 # ── 挂钩链路 ────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_alert_chart_newcomers_end_to_end(client, monkeypatch):
-    """造榜单数据 + 已建档主体 → alert 推送的 markdown 含两层内容。"""
+async def test_send_daily_digest_end_to_end(client, monkeypatch):
+    """造当日榜单数据 + 已建档主体 → 日报含异动与两层新品，且只发一条。"""
     import importlib
+    from datetime import timedelta
     ra = importlib.import_module("app.services.release_alerts")
     dt = importlib.import_module("app.services.dingtalk")
     from app.config import settings
-    from app.database import AsyncSessionLocal
+    from app.database import AsyncSessionLocal, utcnow_naive
     from app.models.game import GameRanking
+
+    today = utcnow_naive().strftime("%Y-%m-%d")
+    prev = (utcnow_naive() - timedelta(days=1)).strftime("%Y-%m-%d")
 
     r = await client.post("/api/publishers/", json={
         "name": "江娱互动测试", "aliases": [{"keyword": "river game"}]})
@@ -140,10 +169,10 @@ async def test_alert_chart_newcomers_end_to_end(client, monkeypatch):
 
     async with AsyncSessionLocal() as db:
         rows = [
-            ("veteran", "2026-05-08", 1, "Century Games Pte. Ltd."),
-            ("veteran", "2026-05-15", 1, "Century Games Pte. Ltd."),
-            ("rookie", "2026-05-15", 4, "Mystery Studio"),                  # 全市场新面孔
-            ("topheroes", "2026-05-15", 88, "River Game HK Limited"),       # 厂商新品(88名)
+            ("veteran", prev, 1, "Century Games Pte. Ltd."),
+            ("veteran", today, 1, "Century Games Pte. Ltd."),
+            ("rookie", today, 4, "Mystery Studio"),                    # 全市场新面孔
+            ("topheroes", today, 88, "River Game HK Limited"),         # 厂商新品(88名)
         ]
         for app_id, date, rank, pub in rows:
             db.add(GameRanking(app_id=app_id, date=date, rank=rank, downloads=None,
@@ -152,15 +181,18 @@ async def test_alert_chart_newcomers_end_to_end(client, monkeypatch):
         await db.commit()
 
     monkeypatch.setattr(settings, "DINGTALK_WEBHOOK_URL", "https://example.com/hook")
-    captured = {}
-    async def fake_send(title, text):
-        captured["title"], captured["text"] = title, text
+    monkeypatch.setattr(settings, "SYNC_RANKING_COMBOS", "US:ios")
+    sent = []
+    async def fake_card(title, text, btns=None):
+        sent.append((title, text, btns))
         return True
-    monkeypatch.setattr(dt, "send_markdown", fake_send)
+    monkeypatch.setattr(dt, "send_action_card", fake_card)
 
-    assert await ra.alert_chart_newcomers("US", "ios") is True
-    assert "rookie" in captured["text"]
-    assert "江娱互动测试：topheroes #88" in captured["text"]
+    assert await ra.send_daily_digest() is True
+    assert len(sent) == 1
+    _, text, _ = sent[0]
+    assert "rookie" in text
+    assert "🏢 **江娱互动测试** 新品 **topheroes** #88" in text
 
 
 @pytest.mark.asyncio

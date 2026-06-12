@@ -156,16 +156,18 @@ async def _scheduled_sync(country: str = "US", platform: str = "ios") -> None:
             "Competitor movement check failed for %s/%s on %s (sync itself succeeded)",
             country, platform, today,
         )
-    # 新品两层（全市场空降 + 厂商任意名次）→ 钉钉。新快照落库的这次同步正好是
-    # 新面孔的"首报"窗口，天然去重；未配 webhook 时函数内静默 no-op。
-    from app.services.release_alerts import alert_chart_newcomers
+    # 钉钉推送不再随单 combo 各发各的——异动 + 新品并入 03:00 UTC 的日级
+    # 情报汇总（_run_daily_alert_digest），一天一条卡，见 release_alerts。
+
+
+async def _run_daily_alert_digest() -> None:
+    """定时任务包装：每日情报汇总（竞品异动 + 两层新品，全 combo 一条钉钉卡）。
+    纯本地库重跑检测，零配额；未配 webhook 静默 no-op；异常不拖垮 scheduler。"""
+    from app.services.release_alerts import send_daily_digest
     try:
-        await alert_chart_newcomers(country, platform)
+        await send_daily_digest()
     except Exception:
-        logger.exception(
-            "Newcomer DingTalk alert failed for %s/%s (sync itself succeeded)",
-            country, platform,
-        )
+        logger.exception("Daily alert digest job crashed")
 
 
 async def _run_rank_backfill() -> None:
@@ -285,6 +287,17 @@ def start_scheduler() -> None:
             replace_existing=True,
             misfire_grace_time=3600,
         )
+
+    # 每日情报汇总：03:00 UTC = 北京 11:00（核心同步 02:30~02:38 已结束）。
+    # 对全部 combo 重跑检测拼一张卡，只发一条；当天没新快照的 combo 被
+    # as_of/today_missing 闸门排除，不会重报旧数据。
+    scheduler.add_job(
+        _run_daily_alert_digest,
+        CronTrigger(hour=3, minute=0, timezone="UTC"),
+        id="daily_alert_digest",
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
 
     # 历史排名回填：03:30 UTC（核心同步 02:30~02:38 已结束，DB 备份 04:00
     # 之前）。任务内部自带 enabled/mock/配额护栏，空跑也无害，故无条件挂。

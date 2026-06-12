@@ -18,9 +18,8 @@ async def test_dingtalk():
     sent = await dingtalk.send_markdown(
         "告警通道测试",
         "### ✅ SLG 看板 · 钉钉告警通道连通\n\n"
-        "之后这三类消息会推到本群：\n\n"
-        "- 🆕 新品监测（全市场空降 / 厂商新品进榜）——随各市场榜单同步触达\n\n"
-        "- 📱 App Store 新上架（开发者清单 diff）——每周一同步后触达\n\n"
-        "- 📊 竞品异动（SLG 白名单进退榜 / 收入异动）——随榜单同步触达",
+        "之后这两类消息会推到本群：\n\n"
+        "- 📡 **每日情报汇总**（竞品异动 + 新品监测，全市场合并一条）——每天北京时间 11:00 左右\n\n"
+        "- 🛒 **商店雷达上新**（重点厂商 App Store / Google Play 清单 diff）——每 6 小时检出即推",
     )
     return {"enabled": True, "sent": sent}

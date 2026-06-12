@@ -69,3 +69,33 @@ async def send_markdown(title: str, text: str) -> bool:
     except Exception:
         logger.warning("DingTalk webhook send failed (title=%s)", title, exc_info=True)
         return False
+
+
+async def send_action_card(title: str, text: str,
+                           btns: list[tuple[str, str]] | None = None) -> bool:
+    """发一条 ActionCard（整卡 + 底部按钮区，观感优于裸 markdown）。
+
+    钉钉 actionCard 要求至少一个按钮——没有可跳的链接时自动降级 send_markdown，
+    调用方零分支。按钮最多 5 个（超出截断），title 同样加 "SLG" 前缀命中关键词。
+    """
+    if not btns:
+        return await send_markdown(title, text)
+    if not is_enabled():
+        return False
+    if not title.startswith("SLG"):
+        title = f"SLG · {title}"
+    payload = {
+        "msgtype": "actionCard",
+        "actionCard": {
+            "title": title,
+            "text": text,
+            # 1-2 个按钮横排更紧凑；3 个以上竖排避免截断。
+            "btnOrientation": "1" if len(btns) <= 2 else "0",
+            "btns": [{"title": t, "actionURL": u} for t, u in btns[:5]],
+        },
+    }
+    try:
+        return await _post_payload(payload)
+    except Exception:
+        logger.warning("DingTalk actionCard send failed (title=%s)", title, exc_info=True)
+        return False

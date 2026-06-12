@@ -1,12 +1,17 @@
-"""新品监测 → 钉钉推送：把三层监测的"有事发生"主动送到群里，不用人盯页面。
+"""监测 → 钉钉推送：把"有事发生"主动送到群里，不用人盯页面。
 
-触达时机（与检测口径一一对应，不引入新口径）：
-- 榜单两层（全市场 TopN 空降 + 厂商×任意名次）：每个 combo **定时同步成功后**
-  检测一次并推送非空摘要——新快照落库的那次正好是新面孔的"首报"窗口，天然去重。
-  手动 refresh 不经此路径，不会刷屏。
-- App Store 清单层：周级 sync 里 diff 出 new_apps>0 时推送一条汇总。
+2026-06-12 体验改版（人话化 + ActionCard + 日级聚合）：
+- **每日情报汇总**（竞品异动 + 两层新品，全 combo 合并一条）：不再随每个 combo
+  同步各发各的——03:00 UTC（北京 11:00，核心同步 02:30~02:38 之后）日级 job
+  对全部 combo **重跑检测**（纯本地库读、零配额、无状态），拼成一张卡发一次。
+  只纳入当天有新快照的 combo（as_of==today / today_missing 闸门），次市场的
+  旧快照不会被反复重报。
+- **应用商店雷达**（iOS+GP 清单 diff）保持每轮检出即推（6h 级，时效优先），
+  但换 ActionCard：底部按钮直达商店页。
+- 文案口径与 Sentry 日志分离：日志保留 [NEW]/[UP] 机器码（movement._format_parts），
+  群消息一律人读文案（emoji 分类 + 关键数字加粗）。
 
-所有发送走 services/dingtalk（未配 webhook = 静默 no-op；失败不抛、不拖垮同步）。
+所有发送走 services/dingtalk（未配 webhook = 静默 no-op；失败不抛、不拖垮任务）。
 digest 构建是纯函数，单测直接断言 markdown 文本。
 """
 import logging
@@ -15,103 +20,188 @@ from typing import Optional
 
 from sqlalchemy import select
 
-from app.database import AsyncSessionLocal
+from app.config import settings
+from app.database import AsyncSessionLocal, utcnow_naive
 from app.models.publisher import PublisherEntity, PublisherItunesApp, PublisherItunesArtist
 from app.services import dingtalk
 
 logger = logging.getLogger(__name__)
+
+_COMBO_FLAG = {"us": "🇺🇸", "jp": "🇯🇵", "kr": "🇰🇷", "cn": "🇨🇳", "tw": "🇹🇼", "de": "🇩🇪", "gb": "🇬🇧"}
 
 
 def _fmt_money(v) -> str:
     return f"${v:,.0f}" if v else "—"
 
 
-def build_chart_digest(market: dict, publisher: dict) -> Optional[tuple[str, str]]:
-    """两层榜单检测摘要 → (title, markdown)。两层都空 → None（不发）。"""
-    m_items = market.get("newcomers") or []
-    p_items = publisher.get("newcomers") or []
-    if not m_items and not p_items:
+def _combo_label(country: str, platform: str) -> str:
+    flag = _COMBO_FLAG.get(country.lower(), "")
+    return f"{flag} {country.upper()} · {platform}".strip()
+
+
+def _store_url(app_id: str, country: str, platform: str) -> Optional[str]:
+    """榜单行 app_id → 商店页链接。iOS 数字 id 可直拼；其余形态（包名/安卓）拼不出。"""
+    if platform == "ios" and str(app_id).isdigit():
+        return f"https://apps.apple.com/{country.lower()}/app/id{app_id}"
+    return None
+
+
+# ── 每日情报汇总（竞品异动 + 两层新品，全 combo 一条） ─────────────────────
+
+def build_movement_lines(s: dict) -> list[str]:
+    """movement 摘要 → 人读行。与 Sentry 的 [NEW]/[UP] 机器码刻意分离。"""
+    lines = []
+    for e in s["new_entrants"]:
+        frm = "榜外" if e["prev_rank"] is None else f"#{e['prev_rank']}"
+        lines.append(f"🆕 **{e['name']}** 空降 **#{e['cur_rank']}**（{frm} →）")
+    for e in s["surges"]:
+        lines.append(f"📈 **{e['name']}** #{e['prev_rank']} → **#{e['cur_rank']}**（↑{e['prev_rank'] - e['cur_rank']}）")
+    for e in s["drops"]:
+        to = "榜外" if e["cur_rank"] is None else f"#{e['cur_rank']}"
+        lines.append(f"📉 **{e['name']}** 跌出 Top 榜（#{e['prev_rank']} → {to}）")
+    for e in s["revenue_spikes"]:
+        lines.append(f"💰 **{e['name']}** 收入 **{e['pct']:+.0f}%**（{_fmt_money(e['prev_revenue'])} → {_fmt_money(e['cur_revenue'])}）")
+    return lines
+
+
+def build_newcomer_lines(market: dict, publisher: dict) -> list[str]:
+    """两层新品检测 → 人读行。"""
+    lines = []
+    for n in (market.get("newcomers") or [])[:10]:
+        tag = "" if n.get("is_slg") else " ⚠️ 新厂商待识别"
+        lines.append(f"✨ **{n['name']}** 空降 **#{n['rank']}** — {n.get('publisher') or '?'}"
+                     f"（{_fmt_money(n.get('revenue'))}）{tag}")
+    for n in (publisher.get("newcomers") or [])[:10]:
+        rank = f"#{n['rank']}" if n.get("rank") else "进榜"
+        lines.append(f"🏢 **{n['entity_name']}** 新品 **{n['name']}** {rank}")
+    return lines
+
+
+def build_daily_digest(per_combo: list[dict], today: str) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
+    """全 combo 检测结果 → (title, markdown, btns)。全空 → None（不发）。
+
+    per_combo: [{country, platform, movement: dict|None, market: dict|None, publisher: dict|None}]
+    """
+    sections: list[str] = []
+    btns: list[tuple[str, str]] = []
+    total = 0
+    for c in per_combo:
+        lines: list[str] = []
+        if c.get("movement"):
+            lines += build_movement_lines(c["movement"])
+        if c.get("market") or c.get("publisher"):
+            lines += build_newcomer_lines(c.get("market") or {}, c.get("publisher") or {})
+        if not lines:
+            continue
+        total += len(lines)
+        sections.append(f"**{_combo_label(c['country'], c['platform'])}**\n\n" + "\n\n".join(lines))
+        # 按钮：每 combo 取头一条异动/新品的商店页（最多 5 个，按 combo 顺序）
+        for e in ((c.get("movement") or {}).get("new_entrants") or [])[:1] + \
+                 ((c.get("movement") or {}).get("surges") or [])[:1]:
+            url = _store_url(e.get("app_id", ""), c["country"], c["platform"])
+            if url and len(btns) < 5:
+                btns.append((f"{e['name']} →", url))
+    if not sections:
         return None
-    combo = f"{market['country']}/{market['platform']}"
-    as_of = market.get("as_of") or ""
-    lines = [f"### 🆕 SLG 新品监测 · {combo}（快照 {as_of}）"]
-    if m_items:
-        lines.append(f"**全市场新面孔 · 空降 Top 榜（{len(m_items)}）**")
-        for n in m_items[:10]:
-            slg = "" if n.get("is_slg") else " ⚠️新厂商待识别"
-            lines.append(f"- #{n['rank']} {n['name']} — {n.get('publisher') or '?'}"
-                         f"（{_fmt_money(n.get('revenue'))}）{slg}")
-        if len(m_items) > 10:
-            lines.append(f"- …等共 {len(m_items)} 款，看板查看全部")
-    if p_items:
-        lines.append(f"**厂商新品 · 已建档主体首次进榜（{len(p_items)}）**")
-        for n in p_items[:10]:
-            lines.append(f"- {n['entity_name']}：{n['name']} #{n['rank'] or '—'}")
-        if len(p_items) > 10:
-            lines.append(f"- …等共 {len(p_items)} 款")
-    return f"新品监测 {combo}", "\n\n".join(lines)
+    head = f"### 📡 SLG 每日情报 · {today}（{total} 项）"
+    return f"每日情报 {today}", "\n\n---\n\n".join([head] + sections), btns
 
 
-async def alert_chart_newcomers(country: str, platform: str) -> bool:
-    """combo 同步成功后调用：检测两层榜单新品并推送（非空才发）。"""
+async def send_daily_digest() -> bool:
+    """日级 job 入口：对全部已配置 combo 重跑检测，拼一张卡发一次。
+
+    只纳入当天有新快照的 combo：movement 靠 today_missing 闸门，新品靠
+    as_of == today 闸门——次市场（周/月级同步）的旧快照不会被每天重报。
+    """
     if not dingtalk.is_enabled():
         return False
+    from app.services.movement import detect_movement
     from app.services.newcomers import detect_newcomers, detect_publisher_newcomers
-    market = await detect_newcomers(country, platform)
-    publisher = await detect_publisher_newcomers(country, platform)
-    msg = build_chart_digest(market, publisher)
-    if msg is None:
-        return False
-    return await dingtalk.send_markdown(*msg)
 
+    today = utcnow_naive().strftime("%Y-%m-%d")
+    per_combo: list[dict] = []
+    for country, platform in settings.sync_combos_list:
+        entry: dict = {"country": country, "platform": platform,
+                       "movement": None, "market": None, "publisher": None}
+        try:
+            m = await detect_movement(country, platform, today)
+            if not m.get("today_missing"):
+                entry["movement"] = m
+            market = await detect_newcomers(country, platform)
+            publisher = await detect_publisher_newcomers(country, platform)
+            if market.get("as_of") == today:
+                entry["market"] = market
+            if publisher.get("as_of") == today:
+                entry["publisher"] = publisher
+        except Exception:
+            logger.exception("daily digest detection failed for %s/%s", country, platform)
+        per_combo.append(entry)
+
+    msg = build_daily_digest(per_combo, today)
+    if msg is None:
+        logger.info("daily digest: nothing to report for %s", today)
+        return False
+    title, text, btns = msg
+    return await dingtalk.send_action_card(title, text, btns)
+
+
+# ── 应用商店雷达（iOS + GP 清单 diff，每轮检出即推） ────────────────────────
 
 def _sf_text(app) -> str:
-    """可见区描述：软启动（无 us）时明示，这是最关键的一行情报。"""
+    """可见区描述：软启动（无 us）时明示，这是最关键的一行情报。GP 行不适用。"""
     sfs = [s for s in (app.storefronts or "").split(",") if s]
-    if not sfs:
+    if not sfs or sfs == ["gp"]:
         return ""
     label = "/".join(s.upper() for s in sfs)
-    return f" · 仅 {label} 可见（疑似软启动）" if "us" not in sfs else f" · 可见区 {label}"
+    return f" · ⚠️ 仅 {label} 可见（疑似软启动）" if "us" not in sfs else f" · 可见区 {label}"
+
+
+def _platform_tag(app) -> str:
+    return "Google Play" if (app.storefronts or "") == "gp" else "App Store"
 
 
 def build_appstore_digest(
     rows: list[tuple],
     expanded: Optional[list[tuple]] = None,
-) -> Optional[tuple[str, str]]:
+) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
     """rows: [(PublisherItunesApp, entity_name, artist_label)]；
-    expanded: [(PublisherItunesApp, entity_name, added_storefronts)] → (title, markdown)。"""
+    expanded: [(PublisherItunesApp, entity_name, added_storefronts)]
+    → (title, markdown, btns)。"""
     expanded = expanded or []
     if not rows and not expanded:
         return None
-    lines = [f"### 📱 SLG · App Store 雷达（开发者清单 diff）"]
+    lines = ["### 🛒 SLG 商店雷达 · 重点厂商上新"]
+    btns: list[tuple[str, str]] = []
     if rows:
         lines.append(f"**新上架（{len(rows)} 款）**")
         for app, entity_name, _label in rows[:15]:
-            released = f"（上架 {app.release_date}）" if app.release_date else ""
+            released = f" · 上架 {app.release_date}" if app.release_date else ""
             genre = f" · {app.genre}" if app.genre else ""
-            link = f" [App Store]({app.track_view_url})" if app.track_view_url else ""
-            lines.append(f"- {entity_name}：{app.name}{released}{genre}{_sf_text(app)}{link}")
+            lines.append(f"🆕 **{app.name}** — {entity_name}（{_platform_tag(app)}）"
+                         f"{genre}{released}{_sf_text(app)}")
+            if app.track_view_url and len(btns) < 5:
+                btns.append((f"{app.name} →", app.track_view_url))
         if len(rows) > 15:
-            lines.append(f"- …等共 {len(rows)} 款")
+            lines.append(f"…等共 {len(rows)} 款，看板查看全部")
     if expanded:
-        lines.append(f"**扩区上线（{len(expanded)} 款，软启动 → 新增区域）**")
+        lines.append(f"**扩区上线（{len(expanded)} 款，软启动 → 更大范围）**")
         for app, entity_name, added in expanded[:15]:
             added_label = "/".join(s.upper() for s in added)
             now_label = "/".join(s.upper() for s in (app.storefronts or "").split(",") if s)
-            link = f" [App Store]({app.track_view_url})" if app.track_view_url else ""
-            lines.append(f"- {entity_name}：{app.name} 新增 {added_label}（现 {now_label}）{link}")
+            lines.append(f"🌍 **{app.name}** — {entity_name} 新增 **{added_label}**（现 {now_label}）")
+            if app.track_view_url and len(btns) < 5:
+                btns.append((f"{app.name} →", app.track_view_url))
         if len(expanded) > 15:
-            lines.append(f"- …等共 {len(expanded)} 款")
-    lines.append("> 未进榜也能抓到；详见看板「新品监测 → 厂商新品」")
-    return "App Store 雷达", "\n\n".join(lines)
+            lines.append(f"…等共 {len(expanded)} 款")
+    return "商店雷达上新", "\n\n".join(lines), btns
 
 
 async def alert_appstore_releases(
     since: datetime,
     expanded: Optional[list[tuple[int, list[str]]]] = None,
 ) -> bool:
-    """iTunes 清单同步后调用：推送本轮（first_seen_at >= since）的非基线新上架
-    与扩区上线（expanded = [(app row id, 新增区列表)]）。"""
+    """清单同步（iOS 或 GP 轮）后调用：推送本轮（first_seen_at >= since）的
+    非基线新上架与扩区上线（expanded = [(app row id, 新增区列表)]）。"""
     if not dingtalk.is_enabled():
         return False
     async with AsyncSessionLocal() as db:
@@ -140,4 +230,5 @@ async def alert_appstore_releases(
     msg = build_appstore_digest(list(rows), expanded_rows)
     if msg is None:
         return False
-    return await dingtalk.send_markdown(*msg)
+    title, text, btns = msg
+    return await dingtalk.send_action_card(title, text, btns)
