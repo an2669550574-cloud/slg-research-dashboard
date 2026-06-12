@@ -162,3 +162,24 @@ async def test_gp_sync_real_mode_with_failure_isolation(client, monkeypatch):
     assert summary["gp_failed"] == 1
     assert summary["gp_baselined"] == 1
     assert summary["gp_new_apps"] == 0
+
+
+@pytest.mark.asyncio
+async def test_ios_sync_skips_gp_accounts(client, monkeypatch):
+    """iOS 侧 sync 只取 platform='ios' 账号——GP 账号丢给 iTunes lookup 会 400。"""
+    import importlib
+    it = importlib.import_module("app.services.itunes_releases")
+
+    await _mk_entity_with_gp_account(client)  # 只有一个 GP 账号
+
+    called = []
+
+    async def fake_multi(artist_id):
+        called.append(artist_id)
+        return []
+
+    monkeypatch.setattr(it.settings, "USE_MOCK_DATA", False)
+    monkeypatch.setattr(it, "fetch_artist_apps_multi", fake_multi)
+    summary = await it.sync_itunes_releases()
+    assert called == []  # GP 账号没被 iTunes 侧碰
+    assert summary["synced"] == 0 and summary["failed"] == 0

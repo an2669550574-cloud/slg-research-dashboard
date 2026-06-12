@@ -150,7 +150,11 @@ async def sync_itunes_releases() -> dict:
         return summary
 
     async with AsyncSessionLocal() as db:
-        artists = (await db.execute(select(PublisherItunesArtist))).scalars().all()
+        # 只取 iOS 账号——GP 账号（platform='gp'）由 gp_releases.sync_gp_releases
+        # 负责，丢给 iTunes lookup 会 400。
+        artists = (await db.execute(
+            select(PublisherItunesArtist).where(PublisherItunesArtist.platform == "ios")
+        )).scalars().all()
     if not artists:
         return summary
 
