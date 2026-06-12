@@ -2,12 +2,13 @@ import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { Plus, Trash2, Pencil, X, Building2, Globe, ChevronRight, Link2, ShieldCheck, Network, Search, List, Landmark, CornerDownRight, LayoutGrid } from 'lucide-react'
+import { Plus, Trash2, Pencil, X, Building2, Globe, ChevronRight, Link2, ShieldCheck, Network, Search, List, Landmark, CornerDownRight, LayoutGrid, ListTree } from 'lucide-react'
 import { publishersApi } from '../lib/api'
 import { useT } from '../i18n'
 import { PageHeader } from '../components/PageHeader'
 import { QueryError } from '../components/QueryError'
 import { PublisherGraph } from '../components/PublisherGraph'
+import { PublisherCapitalTree } from '../components/PublisherCapitalTree'
 import { GameIcon } from '../components/GameIcon'
 import { useLocalStorageState } from '../lib/hooks'
 import type {
@@ -64,7 +65,7 @@ export default function PublishersManage() {
   const [sortKey, setSortKey] = useLocalStorageState<SortKey>('pub.sort', 'default')
   const [grouped, setGrouped] = useLocalStorageState<boolean>('pub.grouped', false)
   // 网格 / 股权图谱视图切换；图谱画全量（不受搜索/筛选影响）
-  const [view, setView] = useState<'grid' | 'graph'>('grid')
+  const [view, setView] = useState<'grid' | 'graph' | 'tree'>('grid')
 
   const isEditing = mode.kind === 'edit'
   const isOpen = mode.kind !== 'closed'
@@ -259,14 +260,14 @@ export default function PublishersManage() {
       {!isLoading && !isError && entities.length > 0 && (
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex gap-1 bg-elevated rounded-lg p-1">
-            {(['grid', 'graph'] as const).map(v => (
+            {(['grid', 'graph', 'tree'] as const).map(v => (
               <button
                 key={v}
                 onClick={() => setView(v)}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${view === v ? 'bg-brand-600 text-white' : 'text-secondary hover:text-primary'}`}
               >
-                {v === 'grid' ? <LayoutGrid size={12} /> : <Network size={12} />}
-                {v === 'grid' ? tt.viewList : tt.viewGraph}
+                {v === 'grid' ? <LayoutGrid size={12} /> : v === 'graph' ? <Network size={12} /> : <ListTree size={12} />}
+                {v === 'grid' ? tt.viewList : v === 'graph' ? tt.viewGraph : tt.viewTree}
               </button>
             ))}
           </div>
@@ -337,6 +338,8 @@ export default function PublishersManage() {
         <div className="text-center text-muted text-sm py-12 bg-surface border border-default rounded-xl">{tt.empty}</div>
       ) : view === 'graph' ? (
         <PublisherGraph entities={entities} onSelectEntity={setDetailId} />
+      ) : view === 'tree' ? (
+        <PublisherCapitalTree entities={entities} onSelectEntity={setDetailId} />
       ) : filtered.length === 0 ? (
         <div className="text-center text-muted text-sm py-12 bg-surface border border-default rounded-xl">{tt.emptyFiltered}</div>
       ) : (

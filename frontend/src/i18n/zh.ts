@@ -659,6 +659,12 @@ export const zh = {
     // 列表 / 股权图谱视图
     viewList: '列表',
     viewGraph: '股权图谱',
+    viewTree: '资本树',
+    treeHint: '以顶层资本方/母体为根的层级清单；行内 chip 为股权关系（虚线下划线=有备注可悬停），多母公司主体挂最强关系下、其余处灰字引用。',
+    treeMembers: (n: number) => `${n} 个主体`,
+    treeNoChildren: '暂无已录入的下层主体',
+    treeSeeAlso: '↗ 主位置见另一分支',
+    treeIndependents: (n: number) => `独立厂商（无已录入股权关系，${n}）`,
     graphHint: '只显示有股权关系的主体 · 点节点回列表看档案',
     graphLegendNode: '边框 =',
     graphEmpty: '暂无股权关系。在主体卡片的「股权关联」里添加母子 / 参股关系后，这里会自动生成图谱。',
