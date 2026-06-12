@@ -158,6 +158,15 @@ async def _scheduled_sync(country: str = "US", platform: str = "ios") -> None:
         )
     # 钉钉推送不再随单 combo 各发各的——异动 + 新品并入 03:00 UTC 的日级
     # 情报汇总（_run_daily_alert_digest），一天一条卡，见 release_alerts。
+    # 新面孔检出沉淀：落库 + 免费源富化（零 ST），手动 refresh 不经此路径。
+    from app.services.newcomer_log import record_market_newcomers
+    try:
+        await record_market_newcomers(country, platform)
+    except Exception:
+        logger.exception(
+            "Newcomer log record failed for %s/%s (sync itself succeeded)",
+            country, platform,
+        )
 
 
 async def _run_daily_alert_digest() -> None:

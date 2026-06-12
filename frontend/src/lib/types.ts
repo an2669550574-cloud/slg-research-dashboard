@@ -300,6 +300,37 @@ export interface NewcomerItem {
   is_slg: boolean
 }
 
+/** 一条已沉淀的新面孔检出（检出即落库 + 免费源富化，未富化字段为 null）。 */
+export interface NewcomerHistoryItem {
+  id: number
+  country: string
+  platform: string
+  app_id: string
+  as_of: string
+  name: string
+  publisher: string | null
+  icon_url: string | null
+  rank: number | null
+  revenue: number | null
+  is_slg: boolean
+  first_detected_at: IsoDateString
+  store_url: string | null
+  release_date: string | null
+  genre: string | null
+  rating: number | null
+  rating_count: number | null
+  price: string | null
+  description: string | null
+  screenshots: string[]
+  enrich_source: 'itunes' | 'gp' | null
+}
+
+export interface NewcomerHistoryOut {
+  today: string
+  items: NewcomerHistoryItem[]
+  days: number
+}
+
 export interface NewcomersOut {
   today: string
   items: NewcomerItem[]
