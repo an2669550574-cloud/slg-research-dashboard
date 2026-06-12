@@ -22,6 +22,7 @@ from app.models.publisher import PublisherEntity, PublisherItunesArtist, Publish
 from app.services.newcomers import (
     detect_newcomers, detect_publisher_newcomers, _load_entity_matchers,
 )
+from app.services.gp_releases import sync_gp_releases
 from app.services.itunes_releases import sync_itunes_releases
 
 logger = logging.getLogger(__name__)
@@ -83,10 +84,12 @@ class PublisherNewcomersOut(BaseModel):
 
 
 class AppstoreReleaseItem(BaseModel):
-    """一条「App Store 新上架」：开发者账号清单 diff 出的新 app（不依赖进榜）。"""
+    """一条「应用商店新上架」：开发者账号清单 diff 出的新 app（不依赖进榜）。
+    platform='gp' 行来自 Google Play 开发者页（track_id=包名，storefronts=['gp']）。"""
     entity_id: int
     entity_name: str
     artist_label: Optional[str] = None
+    platform: str = "ios"
     track_id: str
     name: str
     bundle_id: Optional[str] = None
@@ -128,7 +131,8 @@ async def get_appstore_releases(
 
     artists = (await db.execute(select(PublisherItunesArtist))).scalars().all()
     rows = (await db.execute(
-        select(PublisherItunesApp, PublisherEntity.name, PublisherItunesArtist.label)
+        select(PublisherItunesApp, PublisherEntity.name,
+               PublisherItunesArtist.label, PublisherItunesArtist.platform)
         .join(PublisherEntity, PublisherEntity.id == PublisherItunesApp.entity_id)
         .join(PublisherItunesArtist, PublisherItunesArtist.id == PublisherItunesApp.artist_row_id)
         .where(
@@ -143,6 +147,7 @@ async def get_appstore_releases(
         items=[
             AppstoreReleaseItem(
                 entity_id=app.entity_id, entity_name=entity_name, artist_label=artist_label,
+                platform=platform,
                 track_id=app.track_id, name=app.name, bundle_id=app.bundle_id,
                 release_date=app.release_date, track_view_url=app.track_view_url,
                 artwork_url=app.artwork_url, genre=app.genre, rating=app.rating,
@@ -152,7 +157,7 @@ async def get_appstore_releases(
                 screenshots=json.loads(app.screenshot_urls) if app.screenshot_urls else [],
                 first_seen_at=app.first_seen_at,
             )
-            for app, entity_name, artist_label in rows
+            for app, entity_name, artist_label, platform in rows
         ],
         artists_total=len(artists),
         artists_synced=sum(1 for a in artists if a.last_synced_at is not None),
@@ -162,10 +167,11 @@ async def get_appstore_releases(
 
 @router.post("/appstore/sync")
 async def trigger_appstore_sync():
-    """手动触发一轮 iTunes 清单同步（首次挂账号后建基线用，平时靠周级调度）。
-    免费 Apple API、零 ST 配额；mock 模式下空跑不出外网。"""
+    """手动触发一轮应用商店清单同步（首次挂账号后建基线用，平时靠定时调度）。
+    iOS 走免费 iTunes lookup，GP 走免费开发者页；零 ST 配额；mock 模式空跑。"""
     summary = await sync_itunes_releases()
-    return {"message": "ok", **summary}
+    gp_summary = await sync_gp_releases()
+    return {"message": "ok", **summary, **gp_summary}
 
 
 @router.get("/publishers", response_model=PublisherNewcomersOut)

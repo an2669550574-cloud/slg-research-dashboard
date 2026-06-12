@@ -354,15 +354,17 @@ async def delete_app_id(entity_id: int, app_id_row_id: int, db: AsyncSession = D
 
 @router.post("/{entity_id}/itunes-artists", response_model=PublisherItunesArtistOut, status_code=201)
 async def add_itunes_artist(entity_id: int, data: PublisherItunesArtistCreate, db: AsyncSession = Depends(get_db)):
-    """给主体挂一个 App Store 开发者账号。artist_id 全局唯一（一个账号只归一个主体）。
-    不影响 is_slg 判定，不刷新内存索引；清单同步由周级 job / 手动端点负责。"""
+    """给主体挂一个应用商店开发者账号（platform='ios' 为 iTunes artistId，
+    'gp' 为 Google Play 开发者页 id）。artist_id 全局唯一（一个账号只归一个主体）。
+    不影响 is_slg 判定，不刷新内存索引；清单同步由调度 job / 手动端点负责。"""
     await _get_entity_or_404(entity_id, db)
     dup = (await db.execute(
         select(PublisherItunesArtist).where(PublisherItunesArtist.artist_id == data.artist_id)
     )).scalar_one_or_none()
     if dup:
         raise HTTPException(status_code=409, detail="该 artist_id 已挂在某主体下")
-    a = PublisherItunesArtist(entity_id=entity_id, artist_id=data.artist_id, label=data.label)
+    a = PublisherItunesArtist(entity_id=entity_id, artist_id=data.artist_id,
+                              platform=data.platform, label=data.label)
     db.add(a)
     await db.commit()
     await db.refresh(a)

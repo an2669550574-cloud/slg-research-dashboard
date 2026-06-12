@@ -343,6 +343,8 @@ export interface AppstoreReleaseItem {
   entity_id: number
   entity_name: string
   artist_label: string | null
+  /** 'ios' = iTunes 清单 diff；'gp' = Google Play 开发者页（track_id=包名）。 */
+  platform: 'ios' | 'gp'
   track_id: string
   name: string
   bundle_id: string | null
@@ -672,16 +674,18 @@ export interface PublisherAppId {
   note: string | null
 }
 
-/** 主体的 App Store 开发者账号（iTunes artistId）。清单 diff 抓"未进榜新上架"。 */
+/** 主体的应用商店开发者账号（ios=iTunes artistId / gp=GP 开发者页 id）。清单 diff 抓"未进榜新上架"。 */
 export interface PublisherItunesArtist {
   id: number
   artist_id: string
+  platform: 'ios' | 'gp'
   label: string | null
   last_synced_at: IsoDateString | null
 }
 
 export interface PublisherItunesArtistCreate {
   artist_id: string
+  platform?: 'ios' | 'gp'
   label?: string | null
 }
 

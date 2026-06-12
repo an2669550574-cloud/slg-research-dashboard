@@ -453,7 +453,7 @@ function PublisherDetailDrawer({ entity: e, entities, onClose, onEdit, onDelete 
   const qc = useQueryClient()
   const [newAlias, setNewAlias] = useState('')
   const [newAppId, setNewAppId] = useState('')
-  const [newArtist, setNewArtist] = useState({ artist_id: '', label: '' })
+  const [newArtist, setNewArtist] = useState({ artist_id: '', label: '', platform: 'ios' as 'ios' | 'gp' })
   const [srcForm, setSrcForm] = useState<SrcForm>(BLANK_SRC)
   const [relForm, setRelForm] = useState<RelForm>(BLANK_REL)
 
@@ -482,9 +482,9 @@ function PublisherDetailDrawer({ entity: e, entities, onClose, onEdit, onDelete 
     onSuccess: () => { invalidate(); toast.success(tt.appIdDeleted) },
   })
   const addArtistMut = useMutation({
-    mutationFn: ({ artist_id, label }: { artist_id: string; label: string }) =>
-      publishersApi.addItunesArtist(e.id, { artist_id, label: label.trim() || null }),
-    onSuccess: () => { invalidate(); setNewArtist({ artist_id: '', label: '' }); toast.success(tt.artistAdded) },
+    mutationFn: ({ artist_id, label, platform }: { artist_id: string; label: string; platform: 'ios' | 'gp' }) =>
+      publishersApi.addItunesArtist(e.id, { artist_id, platform, label: label.trim() || null }),
+    onSuccess: () => { invalidate(); setNewArtist({ artist_id: '', label: '', platform: 'ios' }); toast.success(tt.artistAdded) },
   })
   const delArtistMut = useMutation({
     mutationFn: (rowId: number) => publishersApi.deleteItunesArtist(e.id, rowId),
@@ -515,7 +515,7 @@ function PublisherDetailDrawer({ entity: e, entities, onClose, onEdit, onDelete 
   const handleDelAppId = (rowId: number, aid: string) => {
     if (window.confirm(tt.confirmDeleteAppId(aid))) delAppIdMut.mutate(rowId)
   }
-  const handleAddArtist = () => { if (newArtist.artist_id.trim()) addArtistMut.mutate({ artist_id: newArtist.artist_id.trim(), label: newArtist.label }) }
+  const handleAddArtist = () => { if (newArtist.artist_id.trim()) addArtistMut.mutate({ artist_id: newArtist.artist_id.trim(), label: newArtist.label, platform: newArtist.platform }) }
   const handleDelArtist = (rowId: number, aid: string) => {
     if (window.confirm(tt.confirmDeleteArtist(aid))) delArtistMut.mutate(rowId)
   }
@@ -682,6 +682,9 @@ function PublisherDetailDrawer({ entity: e, entities, onClose, onEdit, onDelete 
                 <span key={a.id}
                   title={a.last_synced_at ? tt.artistSyncedAt(a.last_synced_at.slice(0, 10)) : tt.artistNeverSynced}
                   className="inline-flex items-center gap-1.5 text-xs text-primary bg-elevated border border-default rounded-lg pl-2.5 pr-1.5 py-1">
+                  {a.platform === 'gp' && (
+                    <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-400/10 border border-emerald-400/30 rounded px-1 font-data">GP</span>
+                  )}
                   <span className="font-data">{a.artist_id}</span>
                   {a.label && <span className="text-muted">· {a.label}</span>}
                   <span className={`w-1.5 h-1.5 rounded-full ${a.last_synced_at ? 'bg-emerald-500' : 'bg-amber-500'}`} />
@@ -690,6 +693,14 @@ function PublisherDetailDrawer({ entity: e, entities, onClose, onEdit, onDelete 
                 </span>
               ))}
               <span className="inline-flex items-center gap-1">
+                <select
+                  value={newArtist.platform}
+                  onChange={ev => setNewArtist(s => ({ ...s, platform: ev.target.value as 'ios' | 'gp' }))}
+                  className={chipInputClass}
+                >
+                  <option value="ios">iOS</option>
+                  <option value="gp">GP</option>
+                </select>
                 <input
                   value={newArtist.artist_id}
                   onChange={ev => setNewArtist(s => ({ ...s, artist_id: ev.target.value }))}
