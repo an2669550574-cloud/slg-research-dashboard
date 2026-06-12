@@ -121,15 +121,15 @@ async def detect_movement(country: str, platform: str, today: str) -> dict:
 
 
 async def detect_and_alert_movement(country: str, platform: str, today: str) -> dict:
-    """定时任务路径专用：检测 + 发 Sentry 告警 + 推钉钉。手动 refresh / API 拉取不应走这里。"""
+    """定时任务路径专用：检测 + 发 Sentry 告警。手动 refresh / API 拉取不应走这里。
+    钉钉推送不在此（2026-06-12 起异动并入日级汇总，见 release_alerts.send_daily_digest）。"""
     summary = await detect_movement(country, platform, today)
     _emit(summary)
-    await _emit_dingtalk(summary)
     return summary
 
 
 def _format_parts(s: dict) -> list[str]:
-    """异动摘要行——Sentry 日志与钉钉推送共用同一份口径。"""
+    """异动摘要行（机器码口径，仅 Sentry 日志用；群消息人话版在 release_alerts）。"""
     parts = []
     for e in s["new_entrants"]:
         frm = "榜外" if e["prev_rank"] is None else f"#{e['prev_rank']}"
@@ -158,18 +158,3 @@ def _emit(s: dict) -> None:
         "\n".join("  - " + p for p in parts),
     )
 
-
-async def _emit_dingtalk(s: dict) -> None:
-    """异动摘要 → 钉钉（未配 webhook 静默；失败已在 dingtalk 服务里兜住）。"""
-    from app.services import dingtalk
-    if not dingtalk.is_enabled():
-        return
-    parts = _format_parts(s)
-    if not parts:
-        return
-    combo = f"{s['country']}/{s['platform']}"
-    text = "\n\n".join(
-        [f"### 📊 SLG 竞品异动 · {combo}（{s['today']} vs {s['prev_date']}，{len(parts)} 项）"]
-        + [f"- {p}" for p in parts]
-    )
-    await dingtalk.send_markdown(f"竞品异动 {combo}", text)
