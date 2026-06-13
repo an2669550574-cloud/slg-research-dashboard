@@ -116,6 +116,37 @@ async def test_top_products_in_list(client):
 
 
 @pytest.mark.asyncio
+async def test_products_include_radar_unranked(client):
+    """雷达 itunes_apps 里未上榜的软启动新品也算旗下产品（治新厂商 product_count=0）。
+    同名跨平台（iOS+GP 同款）去重只计一款。"""
+    r = await client.post("/api/publishers/", json={"name": "雷达专属主体"})
+    eid = r.json()["id"]
+    a = await client.post(f"/api/publishers/{eid}/itunes-artists",
+                          json={"artist_id": "9001", "platform": "ios", "label": "雷达账号"})
+    artist_row_id = a.json()["id"]
+
+    from app.database import AsyncSessionLocal
+    from app.models.publisher import PublisherItunesApp
+    async with AsyncSessionLocal() as db:
+        for track_id, name, art in [
+            ("9100", "星海远征", "https://icon/sea.png"),       # iOS（未上任何榜）
+            ("com.x.star.gp", "星海远征", "https://icon/sea2.png"),  # GP 同款 → 去重
+            ("com.y.deep.gp", "深空要塞", "https://icon/deep.png"),
+        ]:
+            db.add(PublisherItunesApp(entity_id=eid, artist_row_id=artist_row_id,
+                                      track_id=track_id, name=name, artwork_url=art,
+                                      is_baseline=True))
+        await db.commit()
+
+    e = next(x for x in (await client.get("/api/publishers/")).json() if x["name"] == "雷达专属主体")
+    assert e["product_count"] == 2  # 星海远征（去重）+ 深空要塞
+    names = {p["name"] for p in e["top_products"]}
+    assert names == {"星海远征", "深空要塞"}
+    icons = {p["icon_url"] for p in e["top_products"]}
+    assert "https://icon/sea.png" in icons  # 同名取先出现的 iOS 行图标
+
+
+@pytest.mark.asyncio
 async def test_add_alias_refreshes_is_slg_index(client):
     """新增 alias 后 is_slg 内存索引即时刷新——经 aggregate-leaderboard（走 is_slg）验证。"""
     today = _today()

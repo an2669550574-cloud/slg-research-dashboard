@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db, utcnow_naive
 from app.models.publisher import (
     PublisherEntity, PublisherAlias, PublisherAppId, PublisherSource, PublisherRelation,
-    PublisherItunesArtist,
+    PublisherItunesArtist, PublisherItunesApp,
 )
 from app.models.game import GameRanking
 from app.schemas import (
@@ -139,21 +139,60 @@ async def _ranking_pairs(db: AsyncSession):
     return [(app_id, pub, name, icon, rev) for app_id, pub, name, icon, rev in res.all()]
 
 
-def _match_for_entity(pairs, alias_kw_tokens, app_id_set):
-    """返回 (旗下产品数, 按收入降序的 top3 PublisherTopProductOut)。命中规则同 count：
-    app_id 精确钉 或 alias token 命中代表 publisher。"""
-    matched = []  # (revenue, app_id, name, icon)
+def _match_for_entity(pairs, alias_kw_tokens, app_id_set, itunes_products=()):
+    """返回 (旗下产品数, 按收入降序的 top3 PublisherTopProductOut)。
+
+    两个来源并集：
+    - **榜单 game_rankings**（pairs）：app_id 精确钉 或 alias token 命中代表 publisher；带收入。
+    - **雷达 itunes_apps**（itunes_products，按 entity_id 直挂）：开发者账号下的 app 就是
+      旗下产品，含**未上榜的软启动新品**（如新厂商主打新品）——这类产品永远进不了
+      榜单聚合，只能从雷达补。无收入。
+
+    去重：榜单命中按 app_id；雷达产品跳过已在榜单命中集的 app_id，并按 name 去同名
+    （Top Lords 的 iOS / GP 双平台只算一款）。top3 优先有收入的（榜单来源），雷达
+    产品收入视为 0 排其后。"""
+    matched: dict[str, tuple[float, str, str]] = {}  # app_id -> (revenue, name, icon)
     for app_id, pub, name, icon, rev in pairs:
-        if app_id in app_id_set:
-            matched.append((rev or 0, app_id, name, icon))
+        hit = app_id in app_id_set or (
+            alias_kw_tokens and any(_kw_hit(_toks(pub), kt) for kt in alias_kw_tokens))
+        if hit:
+            matched[app_id] = (rev or 0, name, icon)
+    seen_names = {(n or "").strip().lower() for _, n, _ in matched.values() if n}
+    for track_id, name, artwork in itunes_products:
+        if track_id in matched:
             continue
-        if alias_kw_tokens:
-            pt = _toks(pub)
-            if any(_kw_hit(pt, kt) for kt in alias_kw_tokens):
-                matched.append((rev or 0, app_id, name, icon))
-    matched.sort(key=lambda m: -m[0])
-    top = [PublisherTopProductOut(app_id=m[1], name=m[2], icon_url=m[3]) for m in matched[:3]]
+        key = (name or "").strip().lower()
+        if key and key in seen_names:
+            continue  # 同名跨平台去重（雷达里 iOS+GP 各一条同款）
+        if key:
+            seen_names.add(key)
+        matched[track_id] = (0, name, artwork)
+    ordered = sorted(matched.items(), key=lambda kv: -kv[1][0])
+    top = [PublisherTopProductOut(app_id=aid, name=v[1], icon_url=v[2]) for aid, v in ordered[:3]]
     return len(matched), top
+
+
+async def _itunes_products_by_entity(db: AsyncSession) -> dict[int, list[tuple]]:
+    """一次查全表：{entity_id: [(track_id, name, artwork_url), ...]}（list 端点批量用）。"""
+    rows = (await db.execute(
+        select(PublisherItunesApp.entity_id, PublisherItunesApp.track_id,
+               PublisherItunesApp.name, PublisherItunesApp.artwork_url)
+        .order_by(PublisherItunesApp.id)
+    )).all()
+    out: dict[int, list[tuple]] = {}
+    for entity_id, track_id, name, artwork in rows:
+        out.setdefault(entity_id, []).append((track_id, name, artwork))
+    return out
+
+
+async def _itunes_products(entity_id: int, db: AsyncSession) -> list[tuple]:
+    """单主体雷达 app 清单（get/create/update 用）。"""
+    rows = (await db.execute(
+        select(PublisherItunesApp.track_id, PublisherItunesApp.name, PublisherItunesApp.artwork_url)
+        .where(PublisherItunesApp.entity_id == entity_id)
+        .order_by(PublisherItunesApp.id)
+    )).all()
+    return [(track_id, name, artwork) for track_id, name, artwork in rows]
 
 
 def _build_out(e: PublisherEntity, aliases, app_ids, sources, parents, children,
@@ -184,6 +223,7 @@ async def list_publishers(db: AsyncSession = Depends(get_db)):
     all_sources = (await db.execute(select(PublisherSource).order_by(PublisherSource.id))).scalars().all()
     all_relations = (await db.execute(select(PublisherRelation).order_by(PublisherRelation.id))).scalars().all()
     pairs = await _ranking_pairs(db)
+    itunes_by_entity = await _itunes_products_by_entity(db)
 
     by_alias: dict[int, list[PublisherAlias]] = {}
     for a in all_aliases:
@@ -212,7 +252,7 @@ async def list_publishers(db: AsyncSession = Depends(get_db)):
         sources = by_source.get(e.id, [])
         kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
         app_id_set = {a.app_id for a in app_ids}
-        count, top = _match_for_entity(pairs, kw_tokens, app_id_set)
+        count, top = _match_for_entity(pairs, kw_tokens, app_id_set, itunes_by_entity.get(e.id, []))
         out.append(_build_out(
             e, aliases, app_ids, sources,
             by_parents.get(e.id, []), by_children.get(e.id, []),
@@ -241,7 +281,8 @@ async def create_publisher(data: PublisherEntityCreate, db: AsyncSession = Depen
     parents, children = await _relations(e.id, db)
     pairs = await _ranking_pairs(db)
     kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
-    count, top = _match_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids})
+    count, top = _match_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids},
+                                   await _itunes_products(e.id, db))
     return _build_out(e, aliases, app_ids, sources, parents, children, count,
                       itunes_artists=await _itunes_artists(e.id, db), top_products=top)
 
@@ -254,7 +295,8 @@ async def get_publisher(entity_id: int, db: AsyncSession = Depends(get_db)):
     parents, children = await _relations(entity_id, db)
     pairs = await _ranking_pairs(db)
     kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
-    count, top = _match_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids})
+    count, top = _match_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids},
+                                   await _itunes_products(e.id, db))
     return _build_out(e, aliases, app_ids, sources, parents, children, count,
                       itunes_artists=await _itunes_artists(e.id, db), top_products=top)
 
@@ -272,7 +314,8 @@ async def update_publisher(entity_id: int, data: PublisherEntityUpdate, db: Asyn
     parents, children = await _relations(entity_id, db)
     pairs = await _ranking_pairs(db)
     kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
-    count, top = _match_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids})
+    count, top = _match_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids},
+                                   await _itunes_products(e.id, db))
     return _build_out(e, aliases, app_ids, sources, parents, children, count,
                       itunes_artists=await _itunes_artists(e.id, db), top_products=top)
 
