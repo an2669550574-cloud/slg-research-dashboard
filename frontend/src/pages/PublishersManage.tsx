@@ -392,7 +392,13 @@ export default function PublishersManage() {
                       )}
                     </div>
                   ) : (
-                    <div className="text-[11px] text-muted leading-8">{cap ? tt.capitalNoProducts : tt.sumEmpty}</div>
+                    <div className="text-[11px] text-muted leading-8">
+                      {cap
+                        ? tt.capitalNoProducts
+                        : (e.sources.length > 0 || e.parents.length > 0 || e.children.length > 0)
+                          ? tt.sumNoProducts
+                          : tt.sumEmpty}
+                    </div>
                   )}
                   {parent && (
                     <div className="flex items-center gap-1 text-[11px] text-muted min-w-0">

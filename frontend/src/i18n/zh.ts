@@ -691,6 +691,7 @@ export const zh = {
     sumAliases: (n: number) => `马甲 ${n}`,
     sumSources: (n: number) => `溯源 ${n}`,
     sumEmpty: '待调研（暂无股权 / 溯源）',
+    sumNoProducts: '暂无榜单产品（已有档案）',
     // 展开后业务优先版面
     briefSectionLabel: '公司介绍',
     briefEmpty: '暂无公司介绍，点右上角铅笔补充',
