@@ -843,7 +843,7 @@ export interface PublisherProduct {
   icon_url: string | null
   downloads: number
   revenue: number
-  matched_by: 'alias' | 'app_id'
+  matched_by: 'alias' | 'app_id' | 'radar'
 }
 
 export interface SyncRankingsResponse {
