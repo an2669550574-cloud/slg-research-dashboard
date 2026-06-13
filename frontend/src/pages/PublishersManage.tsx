@@ -947,7 +947,7 @@ function PublisherProducts({ entityId }: { entityId: number }) {
             <div className="text-[10px] text-muted truncate">{p.publisher || '—'}</div>
           </div>
           <span className="text-[10px] text-secondary border border-default rounded px-1.5 py-0.5 shrink-0">
-            {p.matched_by === 'app_id' ? tt.productMatchedAppId : tt.productMatchedAlias}
+            {p.matched_by === 'app_id' ? tt.productMatchedAppId : p.matched_by === 'radar' ? tt.productMatchedRadar : tt.productMatchedAlias}
           </span>
           <div className="text-right shrink-0 w-24">
             <div className="text-xs text-primary font-data">{fmtMoney(p.revenue)}</div>

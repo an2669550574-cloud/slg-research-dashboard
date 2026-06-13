@@ -556,5 +556,21 @@ async def list_publisher_products(
             app_id=r.app_id, name=r.name, publisher=r.publisher, icon_url=r.icon_url,
             downloads=int(r.downloads or 0), revenue=float(r.revenue or 0), matched_by=matched,
         ))
+    # 并入雷达 itunes_apps（开发者账号下的 app = 旗下产品，含未上榜软启动新品），
+    # 与卡片 product_count/top_products 同口径——否则卡片有数、抽屉为空，自相矛盾。
+    matched_ids = {i.app_id for i in items}
+    seen_names = {(i.name or "").strip().lower() for i in items if i.name}
+    for track_id, name, artwork in await _itunes_products(entity_id, db):
+        if track_id in matched_ids:
+            continue
+        key = (name or "").strip().lower()
+        if key and key in seen_names:
+            continue  # 同名跨平台去重（iOS+GP 同款）
+        if key:
+            seen_names.add(key)
+        items.append(PublisherProductOut(
+            app_id=track_id, name=name, publisher=None, icon_url=artwork,
+            downloads=0, revenue=0, matched_by="radar",
+        ))
     items.sort(key=lambda x: -x.revenue)
     return items

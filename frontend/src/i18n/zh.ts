@@ -596,6 +596,8 @@ export const zh = {
     productsEmpty: '近 30 天本地榜单未匹配到旗下产品',
     productMatchedAlias: '马甲',
     productMatchedAppId: 'app_id',
+    productMatchedRadar: '开发者账号',
+
     productRevenue: '收入',
     productDownloads: '下载',
     productsDaysHint: '近 30 天 · 跨已监测市场合计 · 零 ST 配额',

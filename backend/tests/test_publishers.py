@@ -147,6 +147,25 @@ async def test_products_include_radar_unranked(client):
 
 
 @pytest.mark.asyncio
+async def test_products_endpoint_includes_radar(client):
+    """/products 端点也并入雷达未上榜产品——与卡片同口径，避免卡片有数抽屉为空。"""
+    r = await client.post("/api/publishers/", json={"name": "雷达抽屉主体"})
+    eid = r.json()["id"]
+    a = await client.post(f"/api/publishers/{eid}/itunes-artists",
+                          json={"artist_id": "9002", "platform": "gp", "label": "账号"})
+    from app.database import AsyncSessionLocal
+    from app.models.publisher import PublisherItunesApp
+    async with AsyncSessionLocal() as db:
+        db.add(PublisherItunesApp(entity_id=eid, artist_row_id=a.json()["id"],
+                                  track_id="com.z.newgame.gp", name="深空奇兵",
+                                  artwork_url="https://icon/z.png", is_baseline=True))
+        await db.commit()
+    products = (await client.get(f"/api/publishers/{eid}/products")).json()
+    assert [p["name"] for p in products] == ["深空奇兵"]
+    assert products[0]["matched_by"] == "radar"
+
+
+@pytest.mark.asyncio
 async def test_add_alias_refreshes_is_slg_index(client):
     """新增 alias 后 is_slg 内存索引即时刷新——经 aggregate-leaderboard（走 is_slg）验证。"""
     today = _today()

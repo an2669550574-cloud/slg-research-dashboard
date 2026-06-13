@@ -585,6 +585,8 @@ export const en: Translations = {
     productsEmpty: 'No owned products matched in local rankings over the last 30 days',
     productMatchedAlias: 'alias',
     productMatchedAppId: 'app_id',
+    productMatchedRadar: 'dev account',
+
     productRevenue: 'Revenue',
     productDownloads: 'Downloads',
     productsDaysHint: 'Last 30 days · summed across tracked markets · zero ST quota',
