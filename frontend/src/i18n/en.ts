@@ -675,6 +675,7 @@ export const en: Translations = {
     sumAliases: (n: number) => `${n} aliases`,
     sumSources: (n: number) => `${n} sources`,
     sumEmpty: 'To research (no ownership / sources)',
+    sumNoProducts: 'No charting products (profile on file)',
     briefSectionLabel: 'Company overview',
     briefEmpty: 'No overview yet — click the pencil to add',
     productsSectionLabel: 'SLG products',
