@@ -199,6 +199,36 @@ async def search_articles(
     return unique[:limit]
 
 
+def _dedup_sort(articles: List[WechatArticle], limit: int) -> List[WechatArticle]:
+    seen, out = set(), []
+    for a in articles:
+        if a.link and a.link not in seen:
+            seen.add(a.link)
+            out.append(a)
+    out.sort(key=lambda x: x.publish_time or 0, reverse=True)
+    return out[:limit]
+
+
+async def _discover_and_search(
+    keyword: str, limit: int = 6, days: int = 180, max_accounts: int = 3,
+) -> List[WechatArticle]:
+    """兜底：订阅号 0 命中时，按 keyword 用 searchbiz 临时发现相关号（排除已订阅号，
+    取前 max_accounts）再搜文章。只临时用、不入库——发现的多是游戏官方/小号，情报价值
+    低于行业号，故仅作 fallback。"""
+    subscribed = set((await _enabled_accounts()).values())
+    cands = [c for c in await search_biz(keyword, limit=max_accounts + len(subscribed))
+             if c["fakeid"] not in subscribed][:max_accounts]
+    if not cands:
+        return []
+    cutoff_timestamp = int(time.time() - days * 86400)
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        groups = await asyncio.gather(*[
+            _search_account(client, c["nickname"], c["fakeid"], keyword, cutoff_timestamp)
+            for c in cands
+        ])
+    return _dedup_sort([a for group in groups for a in group], limit)
+
+
 async def search_multi_keywords(
     keywords: List[str],
     limit: int = 3,
@@ -213,17 +243,10 @@ async def search_multi_keywords(
     for kw in keywords:
         if not kw:
             continue
+        # 先精：订阅号；某关键词 0 命中 → 再广：searchbiz 临时发现相关号补搜（不入库）。
         articles = await search_articles(keyword=kw, limit=limit * 2, days=days)
+        if not articles:
+            articles = await _discover_and_search(kw, limit=limit * 2, days=days)
         all_results.extend(articles)
 
-    # 去重
-    seen = set()
-    unique = []
-    for a in all_results:
-        if a.link and a.link not in seen:
-            seen.add(a.link)
-            unique.append(a)
-
-    # 按时间排序
-    unique.sort(key=lambda x: x.publish_time or 0, reverse=True)
-    return unique[:limit]
+    return _dedup_sort(all_results, limit)
