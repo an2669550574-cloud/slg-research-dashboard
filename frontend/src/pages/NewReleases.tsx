@@ -11,6 +11,7 @@ import { COUNTRIES, PLATFORMS, platformLabel, type Country, type Platform } from
 import { GameIcon } from '../components/GameIcon'
 import { QueryError } from '../components/QueryError'
 import { PageHeader } from '../components/PageHeader'
+import { WechatAccountsPanel } from '../components/WechatAccountsPanel'
 import { useLocalStorageState } from '../lib/hooks'
 import type { NewcomerHistoryItem, PublisherNewcomersOut } from '../lib/types'
 
@@ -566,6 +567,8 @@ function PublisherNewcomersTable({ query }: { query: UseQueryResult<PublisherNew
           </table>
         </div>
       )}
+
+      <WechatAccountsPanel />
     </div>
   )
 }

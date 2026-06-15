@@ -861,3 +861,18 @@ export interface SyncHistoryResponse {
 export interface SeedResponse {
   message: string
 }
+
+/** 订阅的行业公众号（新品监测日报按这些号搜文章）。 */
+export interface WechatAccount {
+  id: number
+  name: string
+  fakeid: string
+  enabled: boolean
+}
+
+/** searchbiz 按名搜出的候选号（供选「订阅哪个」）。 */
+export interface WechatAccountCandidate {
+  fakeid: string
+  nickname: string
+  alias: string | null
+}
