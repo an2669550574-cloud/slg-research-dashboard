@@ -4,7 +4,7 @@
 的 combo（曾用 c.get("market", {}) 在 key 存在为 None 时 AttributeError，导致整段
 文章匹配被 try/except 吞掉、功能静默失效）。
 """
-from app.services.wechat_articles import WechatArticle
+from app.services.wechat_articles import WechatArticle, _strip_html
 from app.services.release_alerts import (
     _match_articles_to_apps, _articles_suffix, build_newcomer_lines,
 )
@@ -12,6 +12,13 @@ from app.services.release_alerts import (
 
 def _art(title, link="https://mp.weixin.qq.com/s/x", digest=""):
     return WechatArticle(title=title, link=link, digest=digest, author="游戏葡萄")
+
+
+def test_strip_html_removes_highlight_tags():
+    """搜索结果 title 会包 <em class="highlight">…</em>，必须清掉 + 反转义留纯文本。"""
+    assert _strip_html('离职腾讯后，他在新<em class="highlight">游戏</em>塞了AI') == "离职腾讯后，他在新游戏塞了AI"
+    assert _strip_html(None) == ""
+    assert _strip_html("  纯文本  ") == "纯文本"
 
 
 def test_match_articles_survives_none_market_combo():

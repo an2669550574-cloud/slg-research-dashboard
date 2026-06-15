@@ -7,6 +7,7 @@
 
 import asyncio
 import logging
+import re
 import time
 from typing import List, Optional
 
@@ -16,6 +17,13 @@ from pydantic import BaseModel
 from app.config import settings
 
 _logger = logging.getLogger(__name__)
+
+# 搜索接口会在命中词外包 <em class="highlight">…</em> 高亮标签，落进钉钉链接文字会很丑——清掉。
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _strip_html(s: Optional[str]) -> str:
+    return _TAG_RE.sub("", s or "").strip()
 
 # 订阅的行业公众号（需要登录 wechat-download-api 后手动获取 fakeid）
 # 当前仅配置游戏葡萄和游戏陀螺作为示例
@@ -64,8 +72,8 @@ async def _search_account(
             if create_time and create_time < cutoff_timestamp:
                 continue  # 过滤过时文章
             out.append(WechatArticle(
-                title=(a.get("title") or "").strip(),
-                digest=(a.get("digest") or "").strip(),
+                title=_strip_html(a.get("title")),
+                digest=_strip_html(a.get("digest")),
                 link=a.get("link", ""),
                 author=name,  # 用公众号名称代替 author
                 cover=a.get("cover", ""),
