@@ -118,7 +118,7 @@ SEED_PUBLISHERS: tuple[dict, ...] = (
      "app_ids": [("6756989323", "Last Asylum: Plague"), ("com.slg.policewar", "Police Chief")]},
     # ── 国内主体调研起点（领导点名）：先建壳，海外发行马甲关联待人工确认后在看板补 ──
     {"name": "江娱互动", "name_en": "Jiangyu Interactive", "hq_region": "国内", "is_slg": True,
-     "brief": "国内 SLG 厂商；Last War: Survival 研发背景，海外发行马甲关联待确认后补 alias", "aliases": [], "app_ids": []},
+     "brief": "国内 SLG 出海厂商，创始人吴凌江（前智明星通联创）；代表作 口袋奇兵 / Top War（海外主体 River Game）。元趣娱乐持股 35.63%。", "aliases": [], "app_ids": []},
     # 元趣娱乐 = First Fun（Last War 研发商），原 first fun/firstfun alias 从点点迁来归此主体；
     # 与江娱互动同系（谢贤林创办元趣、持江娱 35.63%）。海外发行走旗下 Funfly。
     {"name": "元趣娱乐", "name_en": "First Fun", "hq_region": "国内", "is_slg": True,
