@@ -33,11 +33,11 @@ from typing import Optional
 # ── 内置起步种子：主体 → 海外发行马甲(keyword,label) + 关注 app_id(app_id,note) ──
 SEED_PUBLISHERS: tuple[dict, ...] = (
     # 点点互动（世纪华通全资子公司）与其海外品牌 Century Games 是同一运营体，合并为单主体；
-    # century games / building blocks / first fun 是其海外发行马甲，diandian 为国内名兜底。
+    # century games / building blocks 是其海外发行马甲，diandian 为国内名兜底。
+    # 注：first fun / firstfun 不归点点——First Fun 是元趣娱乐（Last War 研发商），见下「元趣娱乐」条。
     {"name": "点点互动", "name_en": "Diandian Interactive / Century Games", "hq_region": "国内", "is_slg": True,
      "brief": "世纪华通全资子公司；海外发行品牌 Century Games（新加坡发行主体 Century Games Pte. Ltd.）。Whiteout Survival / Kingshot；Puzzles & Survival 为系工作室 Building Blocks 出品。",
      "aliases": [("century games", "Century Games"), ("building blocks", "Building Blocks"),
-                 ("first fun", "First Fun"), ("firstfun", "First Fun"),
                  ("diandian", "Diandian")], "app_ids": []},
     {"name": "FunPlus", "name_en": "FunPlus", "hq_region": "国内", "is_slg": True,
      "brief": "State of Survival / Sea of Conquest / Stormshot；KingsGroup（King of Avalon / Guns of Glory）为 FunPlus 系",
@@ -119,6 +119,11 @@ SEED_PUBLISHERS: tuple[dict, ...] = (
     # ── 国内主体调研起点（领导点名）：先建壳，海外发行马甲关联待人工确认后在看板补 ──
     {"name": "江娱互动", "name_en": "Jiangyu Interactive", "hq_region": "国内", "is_slg": True,
      "brief": "国内 SLG 厂商；Last War: Survival 研发背景，海外发行马甲关联待确认后补 alias", "aliases": [], "app_ids": []},
+    # 元趣娱乐 = First Fun（Last War 研发商），原 first fun/firstfun alias 从点点迁来归此主体；
+    # 与江娱互动同系（谢贤林创办元趣、持江娱 35.63%）。海外发行走旗下 Funfly。
+    {"name": "元趣娱乐", "name_en": "First Fun", "hq_region": "国内", "is_slg": True,
+     "brief": "北京元趣娱乐（First Fun），谢贤林（前智明星通联创/总裁）创办；Last War: Survival 研发商，海外由旗下 Funfly 发行；持江娱互动 35.63% 股份。",
+     "aliases": [("first fun", "First Fun"), ("firstfun", "First Fun")], "app_ids": []},
 )
 
 
