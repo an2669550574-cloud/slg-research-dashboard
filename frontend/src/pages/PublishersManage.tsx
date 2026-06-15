@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { Plus, Trash2, Pencil, X, Building2, Globe, ChevronRight, Link2, ShieldCheck, Network, Search, List, Landmark, CornerDownRight, LayoutGrid, ListTree } from 'lucide-react'
+import { Plus, Trash2, Pencil, X, Building2, Globe, ChevronRight, Link2, ShieldCheck, Network, Search, List, Landmark, CornerDownRight, LayoutGrid, ListTree, Download as DownloadIcon, AlertTriangle } from 'lucide-react'
 import { publishersApi } from '../lib/api'
+import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
 import { PageHeader } from '../components/PageHeader'
 import { QueryError } from '../components/QueryError'
@@ -18,6 +19,29 @@ import type {
 } from '../lib/types'
 
 type Segment = 'all' | 'operator' | 'capital'
+
+// 溯源时效复核：取主体所有 source 里最新的 as_of（核验日），超阈值标"建议复核"。
+// as_of 形态混合（"2014" / "2026-06" / "2026-06-12"），字符串排序对 ISO 前缀有序即可。
+const STALE_REVIEW_MONTHS = 12
+
+function latestAsOf(sources: { as_of: string | null }[]): string | null {
+  const ds = sources.map(s => s.as_of).filter((x): x is string => !!x).sort()
+  return ds.length ? ds[ds.length - 1] : null
+}
+
+function monthsSince(asOf: string): number {
+  const [y, m = 1, d = 1] = asOf.split('-').map(Number)
+  if (!y) return 0
+  const then = new Date(y, m - 1, d)
+  const now = new Date()
+  return (now.getFullYear() - then.getFullYear()) * 12 + (now.getMonth() - then.getMonth())
+}
+
+/** 该主体是否建议复核：有溯源、最新核验日超 STALE_REVIEW_MONTHS 个月。无源不算（那是「待调研」另一回事）。 */
+function isStaleForReview(sources: { as_of: string | null }[]): { stale: boolean; latest: string | null } {
+  const latest = latestAsOf(sources)
+  return { stale: !!latest && monthsSince(latest) >= STALE_REVIEW_MONTHS, latest }
+}
 type SortKey = 'default' | 'products' | 'provenance'
 const PROV_RANK: Record<string, number> = { primary: 0, secondary: 1, none: 2 }
 
@@ -180,9 +204,61 @@ export default function PublishersManage() {
 
   const detail = detailId != null ? entities.find(e => e.id === detailId) ?? null : null
 
+  // 调研成果导出（所见即所导，尊重当前筛选）。零后端——list 端点数据已含溯源/关系/产品。
+  const date = new Date().toISOString().slice(0, 10)
+  function exportOverview() {
+    if (filtered.length === 0) { toast.error(t.common.noExportData); return }
+    downloadCsv(`publishers-overview-${date}.csv`, filtered, [
+      { header: tt.exportColName, get: e => e.name },
+      { header: tt.exportColNameEn, get: e => e.name_en },
+      { header: tt.exportColRegion, get: e => e.hq_region },
+      { header: tt.exportColType, get: e => isCapital(e) ? tt.capitalBadge : tt.slgBadge },
+      { header: tt.exportColProducts, get: e => e.product_count ?? 0 },
+      { header: tt.exportColSources, get: e => e.sources.length },
+      { header: tt.exportColTier, get: e => e.provenance_tier === 'primary' ? tt.provPrimary : e.provenance_tier === 'secondary' ? tt.provSecondary : tt.provNone },
+      { header: tt.exportColParents, get: e => e.parents.map(p => `${p.name}(${tt.relationTypes[p.relation_type]}${p.stake_pct != null ? ' ' + p.stake_pct + '%' : ''})`).join(' / ') },
+      { header: tt.exportColChildren, get: e => e.children.length },
+      { header: tt.exportColAliases, get: e => e.aliases.map(a => a.keyword).join(' / ') },
+      { header: tt.exportColLatestReview, get: e => latestAsOf(e.sources) ?? '' },
+      { header: tt.exportColNeedReview, get: e => isStaleForReview(e.sources).stale ? tt.exportYes : '' },
+    ])
+    toast.success(t.common.exported(filtered.length))
+  }
+  function exportSources() {
+    const rows = filtered.flatMap(e => e.sources.map(s => ({ e, s })))
+    if (rows.length === 0) { toast.error(t.common.noExportData); return }
+    downloadCsv(`publishers-sources-${date}.csv`, rows, [
+      { header: tt.exportColName, get: r => r.e.name },
+      { header: tt.exportColSrcType, get: r => tt.sourceTypes[r.s.source_type] ?? r.s.source_type },
+      { header: tt.exportColSrcPrimary, get: r => r.s.is_primary ? tt.primaryTag : tt.secondaryTag },
+      { header: tt.exportColSrcConfidence, get: r => r.s.confidence ?? '' },
+      { header: tt.exportColLatestReview, get: r => r.s.as_of ?? '' },
+      { header: tt.exportColSrcTitle, get: r => r.s.title ?? '' },
+      { header: 'URL', get: r => r.s.url },
+      { header: tt.exportColSrcNote, get: r => r.s.note ?? '' },
+    ])
+    toast.success(t.common.exported(rows.length))
+  }
+
   return (
     <div className="px-4 sm:px-7 py-5 sm:py-7 max-w-[1500px] mx-auto space-y-5">
       <PageHeader eyebrow="Publishers" title={tt.title} subtitle={tt.subtitle}>
+        <button
+          onClick={exportOverview}
+          title={tt.exportOverviewHint}
+          className="flex items-center gap-2 px-3.5 py-2.5 rounded-lg font-data text-xs text-secondary border border-default hover:border-strong hover:text-primary bg-surface/60 transition-colors"
+        >
+          <DownloadIcon size={14} />
+          <span className="hidden sm:inline">{tt.exportOverview}</span>
+        </button>
+        <button
+          onClick={exportSources}
+          title={tt.exportSourcesHint}
+          className="flex items-center gap-2 px-3.5 py-2.5 rounded-lg font-data text-xs text-secondary border border-default hover:border-strong hover:text-primary bg-surface/60 transition-colors"
+        >
+          <DownloadIcon size={14} />
+          <span className="hidden sm:inline">{tt.exportSources}</span>
+        </button>
         <button
           onClick={() => isOpen ? closeForm() : openCreate()}
           className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold text-white bg-accent hover:brightness-110 glow-accent transition-all"
@@ -417,6 +493,11 @@ export default function PublishersManage() {
                   {e.children.length > 0 && <span>{tt.statChildren} <b className="text-secondary font-medium">{e.children.length}</b></span>}
                   {e.sources.length > 0 && <span>{tt.statSources} <b className="text-secondary font-medium">{e.sources.length}</b></span>}
                   <span className="ml-auto inline-flex items-center gap-1.5">
+                    {isStaleForReview(e.sources).stale && (
+                      <AlertTriangle size={12} className="text-amber-500">
+                        <title>{tt.reviewStale(latestAsOf(e.sources)!)}</title>
+                      </AlertTriangle>
+                    )}
                     <ShieldCheck
                       size={13}
                       className={e.provenance_tier === 'primary' ? 'text-emerald-400' : e.provenance_tier === 'secondary' ? 'text-amber-500' : 'text-muted/40'}
@@ -734,8 +815,18 @@ function PublisherDetailDrawer({ entity: e, entities, onClose, onEdit, onDelete 
 
           {/* 调研溯源（一手源沉淀） */}
           <div className="border-t border-default pt-3 space-y-2">
-            <div className="text-[11px] text-secondary" title={tt.sourcesHint}>
-              {tt.sourcesLabel}（{e.sources.length}）
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] text-secondary" title={tt.sourcesHint}>
+                {tt.sourcesLabel}（{e.sources.length}）
+              </span>
+              {(() => {
+                const { stale, latest } = isStaleForReview(e.sources)
+                return stale ? (
+                  <span className="inline-flex items-center gap-1 text-[10px] text-amber-500 bg-amber-500/10 border border-amber-500/30 rounded px-1.5 py-0.5">
+                    <AlertTriangle size={10} />{tt.reviewStale(latest!)}
+                  </span>
+                ) : null
+              })()}
             </div>
             <div className="space-y-1.5">
               {e.sources.map(s => (
