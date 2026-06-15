@@ -725,6 +725,7 @@ export const zh = {
     empty: '暂无厂商主体，点击"添加主体"录入第一个',
     slgBadge: 'SLG',
   },
+  },
   ownProductPicker: {
     label: '选择自家产品',
     manual: '手动输入…',

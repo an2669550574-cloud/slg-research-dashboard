@@ -280,6 +280,7 @@ export const productsApi = {
     api.delete(`/products/${productId}/materials/${materialId}`).then(r => r.data),
   analyze: (productId: number): Promise<OwnProductAnalyzeResult> =>
     api.post(`/products/${productId}/analyze`).then(r => r.data),
+<<<<<<< HEAD
 }
 
 // 删除一级 / 二级标签时附带管理员口令（后端未配置口令则忽略此头）。
