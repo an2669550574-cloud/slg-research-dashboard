@@ -57,3 +57,6 @@ snapshot-dashboard.md
 # IDE
 .vscode/settings.json
 .idea/
+
+# 本地一次性数据备份（合并/迁移前快照），不进版本控制
+.local-backups/
