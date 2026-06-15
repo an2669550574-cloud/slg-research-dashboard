@@ -77,24 +77,43 @@ def _enrich_suffix(e: Optional[dict]) -> str:
 
 
 def build_newcomer_lines(market: dict, publisher: dict,
-                         enrich: Optional[dict] = None) -> list[str]:
-    """两层新品检测 → 人读行。enrich: {app_id: {genre, price, release_date}}。"""
+                         enrich: Optional[dict] = None,
+                         articles: Optional[dict] = None) -> list[str]:
+    """两层新品检测 → 人读行。
+    enrich: {app_id: {genre, price, release_date}}
+    articles: {app_id: [WechatArticle]} 微信公众号文章
+    """
     enrich = enrich or {}
+    articles = articles or {}
     lines = []
     for n in (market.get("newcomers") or [])[:10]:
         tag = "" if n.get("is_slg") else " ⚠️ 新厂商待识别"
-        lines.append(f"✨ **{n['name']}** 空降 **#{n['rank']}** — {n.get('publisher') or '?'}"
-                     f"（{_fmt_money(n.get('revenue'))}）{_enrich_suffix(enrich.get(n.get('app_id')))}{tag}")
+        base = f"✨ **{n['name']}** 空降 **#{n['rank']}** — {n.get('publisher') or '?'}"
+        base += f"（{_fmt_money(n.get('revenue'))}）{_enrich_suffix(enrich.get(n.get('app_id')))}{tag}"
+        # 附上微信文章（如果有）
+        app_articles = articles.get(n.get('app_id'), [])
+        if app_articles:
+            base += "\n   📰 "
+            base += " | ".join(f"[{a.title}]({a.link})" for a in app_articles[:2])
+        lines.append(base)
     for n in (publisher.get("newcomers") or [])[:10]:
         rank = f"#{n['rank']}" if n.get("rank") else "进榜"
-        lines.append(f"🏢 **{n['entity_name']}** 新品 **{n['name']}** {rank}")
+        base = f"🏢 **{n['entity_name']}** 新品 **{n['name']}** {rank}"
+        # 厂商新品也尝试用厂商名搜文章
+        app_articles = articles.get(n.get('app_id'), [])
+        if app_articles:
+            base += "\n   📰 "
+            base += " | ".join(f"[{a.title}]({a.link})" for a in app_articles[:2])
+        lines.append(base)
     return lines
 
 
-def build_daily_digest(per_combo: list[dict], today: str) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
+def build_daily_digest(per_combo: list[dict], today: str,
+                       articles: Optional[dict] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
     """全 combo 检测结果 → (title, markdown, btns)。全空 → None（不发）。
 
     per_combo: [{country, platform, movement: dict|None, market: dict|None, publisher: dict|None}]
+    articles: {app_id: [WechatArticle]} 微信公众号文章（按 app_id 聚合）
     """
     sections: list[str] = []
     btns: list[tuple[str, str]] = []
@@ -105,7 +124,7 @@ def build_daily_digest(per_combo: list[dict], today: str) -> Optional[tuple[str,
             lines += build_movement_lines(c["movement"])
         if c.get("market") or c.get("publisher"):
             lines += build_newcomer_lines(c.get("market") or {}, c.get("publisher") or {},
-                                          enrich=c.get("enrich"))
+                                          enrich=c.get("enrich"), articles=articles)
         if not lines:
             continue
         total += len(lines)
@@ -135,6 +154,8 @@ async def send_daily_digest() -> bool:
 
     today = utcnow_naive().strftime("%Y-%m-%d")
     per_combo: list[dict] = []
+    all_newcomer_names: set[str] = set()  # 收集所有新品名称，用于批量搜微信文章
+
     for country, platform in settings.sync_combos_list:
         entry: dict = {"country": country, "platform": platform, "movement": None,
                        "market": None, "publisher": None, "enrich": None}
@@ -161,13 +182,43 @@ async def send_daily_digest() -> bool:
                     entry["enrich"] = {l.app_id: {
                         "genre": l.genre, "price": l.price, "release_date": l.release_date,
                     } for l in logs}
+                # 收集新品名称用于搜文章
+                for n in (market.get("newcomers") or []):
+                    if n.get("name"):
+                        all_newcomer_names.add(n["name"])
             if publisher.get("as_of") == today:
                 entry["publisher"] = publisher
+                # 收集厂商新品名称
+                for n in (publisher.get("newcomers") or []):
+                    if n.get("name"):
+                        all_newcomer_names.add(n["name"])
         except Exception:
             logger.exception("daily digest detection failed for %s/%s", country, platform)
         per_combo.append(entry)
 
-    msg = build_daily_digest(per_combo, today)
+    # 批量搜索微信文章（用新品名 + 厂商名）
+    articles_by_app: dict = {}
+    if all_newcomer_names:
+        try:
+            from app.services.wechat_articles import search_multi_keywords
+            # 同时也搜厂商名（从 publisher 新品中提取）
+            keywords = list(all_newcomer_names)
+            article_list = await search_multi_keywords(keywords, limit=20)
+            # 按游戏名匹配文章到 app_id（简单匹配：标题含关键词）
+            for a in article_list:
+                for name in all_newcomer_names:
+                    if name in a.title or name in (a.digest or ""):
+                        # 找到对应的 app_id（需要从 newcomer 列表反查）
+                        for c in per_combo:
+                            for n in (c.get("market", {}).get("newcomers") or []) + \
+                                     (c.get("publisher", {}).get("newcomers") or []):
+                                if n.get("name") == name and n.get("app_id"):
+                                    articles_by_app.setdefault(n["app_id"], []).append(a)
+                                    break
+        except Exception:
+            logger.warning("wechat articles search failed", exc_info=True)
+
+    msg = build_daily_digest(per_combo, today, articles=articles_by_app)
     if msg is None:
         logger.info("daily digest: nothing to report for %s", today)
         return False
