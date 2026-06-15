@@ -4,6 +4,9 @@
 的 combo（曾用 c.get("market", {}) 在 key 存在为 None 时 AttributeError，导致整段
 文章匹配被 try/except 吞掉、功能静默失效）。
 """
+import pytest
+
+from app.services import wechat_articles as wa
 from app.services.wechat_articles import WechatArticle, WechatLoginStatus, _strip_html
 from app.services.release_alerts import (
     _match_articles_to_apps, _articles_suffix, build_newcomer_lines,
@@ -46,6 +49,56 @@ def test_wechat_alert_expiring_soon_within_warn_days():
 
 def _art(title, link="https://mp.weixin.qq.com/s/x", digest=""):
     return WechatArticle(title=title, link=link, digest=digest, author="游戏葡萄")
+
+
+def _wa_art(title, link):
+    return WechatArticle(title=title, link=link, author="x", publish_time=1)
+
+
+@pytest.mark.asyncio
+async def test_multi_keyword_fallback_when_subscribed_miss(monkeypatch):
+    """订阅号 0 命中 → 走 searchbiz 发现号兜底搜。"""
+    calls = {"discover": 0}
+
+    async def fake_search_articles(keyword, limit=3, days=180):
+        return []  # 订阅号没搜到
+
+    async def fake_enabled():
+        return {"游戏葡萄": "FID_SUB=="}
+
+    async def fake_search_biz(query, limit=8):
+        return [{"fakeid": "FID_SUB==", "nickname": "已订阅(应被排除)", "alias": None},
+                {"fakeid": "FID_NEW==", "nickname": "口袋奇兵官方", "alias": None}]
+
+    async def fake_search_account(client, name, fakeid, keyword, cutoff):
+        calls["discover"] += 1
+        assert fakeid == "FID_NEW=="  # 已订阅的 FID_SUB 被排除
+        return [_wa_art(f"{keyword} 新版本爆料", "https://mp.weixin.qq.com/s/new")]
+
+    monkeypatch.setattr(wa, "search_articles", fake_search_articles)
+    monkeypatch.setattr(wa, "_enabled_accounts", fake_enabled)
+    monkeypatch.setattr(wa, "search_biz", fake_search_biz)
+    monkeypatch.setattr(wa, "_search_account", fake_search_account)
+
+    res = await wa.search_multi_keywords(["口袋奇兵"], limit=3)
+    assert len(res) == 1 and "口袋奇兵" in res[0].title
+    assert calls["discover"] == 1  # 只搜了发现的那个非订阅号
+
+
+@pytest.mark.asyncio
+async def test_multi_keyword_no_fallback_when_subscribed_hit(monkeypatch):
+    """订阅号有命中 → 不触发 searchbiz 兜底。"""
+    async def fake_search_articles(keyword, limit=3, days=180):
+        return [_wa_art("订阅号命中", "https://mp.weixin.qq.com/s/sub")]
+
+    async def boom_search_biz(query, limit=8):
+        raise AssertionError("命中时不应调用 searchbiz")
+
+    monkeypatch.setattr(wa, "search_articles", fake_search_articles)
+    monkeypatch.setattr(wa, "search_biz", boom_search_biz)
+
+    res = await wa.search_multi_keywords(["原神"], limit=3)
+    assert len(res) == 1 and res[0].title == "订阅号命中"
 
 
 def test_strip_html_removes_highlight_tags():
