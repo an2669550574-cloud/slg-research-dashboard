@@ -39,6 +39,13 @@ ITUNES_LOOKUP_URL = "https://itunes.apple.com/lookup"
 _POLITE_DELAY_S = 3.0
 # 合并多区结果时 storefront 的稳定排序（us 永远排最前，便于一眼看「美区是否可见」）。
 _SF_SEEN_KEY = "_seen_storefronts"
+# 已存在行的展示字段自愈白名单：仅当行内为空、新 lookup 有值时回填（不含 name/storefronts
+# 等身份/状态字段）。早期基线行无 artwork 的历史缺口由此逐轮补齐。
+_DISPLAY_BACKFILL_FIELDS = (
+    "artwork_url", "genre", "rating", "rating_count", "price",
+    "description", "screenshot_urls", "languages", "track_view_url",
+    "bundle_id", "release_date",
+)
 
 
 def _configured_storefronts() -> list[str]:
@@ -144,7 +151,7 @@ async def sync_itunes_releases() -> dict:
     mock 模式不出外网（本地开发用手动端点 + monkeypatch 测试）。
     """
     summary = {"synced": 0, "failed": 0, "baselined": 0,
-               "new_apps": 0, "backfilled_old": 0, "expanded": 0}
+               "new_apps": 0, "backfilled_old": 0, "expanded": 0, "enriched": 0}
     if settings.USE_MOCK_DATA:
         logger.info("itunes releases sync skipped (mock mode)")
         return summary
@@ -172,7 +179,7 @@ async def sync_itunes_releases() -> dict:
             continue
         result = await ingest_artist_apps(artist.id, apps)
         summary["synced"] += 1
-        for k in ("baselined", "new_apps", "backfilled_old", "expanded"):
+        for k in ("baselined", "new_apps", "backfilled_old", "expanded", "enriched"):
             summary[k] += result[k]
         expanded_rows.extend(result["expanded_rows"])
 
@@ -194,7 +201,7 @@ async def ingest_artist_apps(artist_row_id: int, apps: list[dict]) -> dict:
     输入记录可带 _seen_storefronts（set）；不带视作 {"us"}（兼容单区调用/旧测试）。
     """
     out = {"baselined": 0, "new_apps": 0, "backfilled_old": 0,
-           "expanded": 0, "expanded_rows": []}
+           "expanded": 0, "expanded_rows": [], "enriched": 0}
     async with AsyncSessionLocal() as db:
         artist: Optional[PublisherItunesArtist] = (await db.execute(
             select(PublisherItunesArtist).where(PublisherItunesArtist.id == artist_row_id)
@@ -220,7 +227,7 @@ async def ingest_artist_apps(artist_row_id: int, apps: list[dict]) -> dict:
 
             row = existing.get(tid)
             if row is not None:
-                # 已见过：只做可见区并集刷新；非基线行新增了区 = 扩区上线。
+                # 已见过：可见区并集刷新；非基线行新增了区 = 扩区上线。
                 old_sfs = set((row.storefronts or "").split(",")) - {""}
                 added = seen_sfs - old_sfs
                 if added:
@@ -228,6 +235,13 @@ async def ingest_artist_apps(artist_row_id: int, apps: list[dict]) -> dict:
                     if not row.is_baseline and old_sfs:
                         out["expanded"] += 1
                         out["expanded_rows"].append((row.id, _sf_sorted(added)))
+                # 展示字段自愈：当前为空、新 lookup 有值就回填（早期基线行无 artwork 等
+                # 历史缺口逐轮补齐；只填空、绝不覆盖已有值）。
+                for k in _DISPLAY_BACKFILL_FIELDS:
+                    nv = f.get(k)
+                    if nv not in (None, "") and not getattr(row, k):
+                        setattr(row, k, nv)
+                        out["enriched"] += 1
                 continue
 
             # 基线之后首次见到、但上架日期太老 → 静默入基线（新增扫描区首轮的

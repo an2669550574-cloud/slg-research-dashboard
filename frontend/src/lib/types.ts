@@ -844,6 +844,8 @@ export interface PublisherProduct {
   downloads: number
   revenue: number
   matched_by: 'alias' | 'app_id' | 'radar'
+  /** 雷达产品的子品类；无榜单 publisher 时作副标题兜底 */
+  genre: string | null
 }
 
 export interface SyncRankingsResponse {

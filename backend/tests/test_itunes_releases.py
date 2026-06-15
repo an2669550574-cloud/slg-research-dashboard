@@ -43,8 +43,8 @@ def _app(track_id, name, bundle_id=None, release_date="2026-06-01", storefronts=
 
 
 def _counts(result: dict) -> dict:
-    """忽略 expanded_rows 明细，只比计数。"""
-    return {k: v for k, v in result.items() if k != "expanded_rows"}
+    """忽略 expanded_rows 明细与 enriched（展示字段自愈），只比 diff 计数。"""
+    return {k: v for k, v in result.items() if k not in ("expanded_rows", "enriched")}
 
 
 @pytest.mark.asyncio
@@ -93,6 +93,41 @@ async def test_ingest_idempotent(client):
     await ingest_artist_apps(artist["id"], [_app(200, "野蛮时代")])
     r = await ingest_artist_apps(artist["id"], [_app(200, "野蛮时代")])
     assert _counts(r) == {"baselined": 0, "new_apps": 0, "backfilled_old": 0, "expanded": 0}
+
+
+@pytest.mark.asyncio
+async def test_existing_row_display_fields_selfheal(client):
+    """已存在行的展示字段自愈：基线行原本无 artwork，下一轮 lookup 带 artwork → 回填，
+    且只填空、不覆盖已有值（模拟早期无 artwork 基线的历史缺口逐轮补齐）。"""
+    from app.services.itunes_releases import ingest_artist_apps
+    from sqlalchemy import select
+    from app.database import AsyncSessionLocal
+    from app.models.publisher import PublisherItunesApp
+    _entity, artist = await _mk_entity_with_artist(client)
+
+    # 首轮：人为去掉 artwork/genre（模拟早期基线行）
+    bare = _app(210, "口袋奇兵")
+    bare.pop("artworkUrl512")
+    bare["genres"] = ["Games"]
+    bare.pop("primaryGenreName", None)  # 无子品类 + 无主品类 → genre 落 None
+    bare["averageUserRating"] = 3.1  # 哨兵：已有值，次轮 4.6 不应覆盖
+    await ingest_artist_apps(artist["id"], [bare])
+    async with AsyncSessionLocal() as db:
+        row = (await db.execute(select(PublisherItunesApp).where(
+            PublisherItunesApp.track_id == "210"))).scalar_one()
+        assert row.artwork_url is None and row.genre is None
+        assert row.rating == 3.1
+
+    # 次轮：同 track_id 带齐展示字段 → artwork/genre 回填，enriched 计数 > 0
+    r = await ingest_artist_apps(artist["id"], [_app(210, "口袋奇兵")])
+    assert _counts(r) == {"baselined": 0, "new_apps": 0, "backfilled_old": 0, "expanded": 0}
+    assert r["enriched"] >= 2  # 至少 artwork_url + genre
+    async with AsyncSessionLocal() as db:
+        row = (await db.execute(select(PublisherItunesApp).where(
+            PublisherItunesApp.track_id == "210"))).scalar_one()
+        assert row.artwork_url and row.artwork_url.endswith("512x512bb.jpg")
+        assert row.genre == "Strategy"
+        assert row.rating == 3.1  # 原有值不被覆盖（次轮 4.6 被 fill-only 跳过）
 
 
 @pytest.mark.asyncio
