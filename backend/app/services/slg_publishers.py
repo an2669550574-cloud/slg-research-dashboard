@@ -32,12 +32,13 @@ from typing import Optional
 
 # ── 内置起步种子：主体 → 海外发行马甲(keyword,label) + 关注 app_id(app_id,note) ──
 SEED_PUBLISHERS: tuple[dict, ...] = (
-    {"name": "Century Games", "name_en": "Century Games", "hq_region": "国内", "is_slg": True,
-     "brief": "Whiteout Survival / Kingshot；Puzzles & Survival 为系工作室 Building Blocks 出品",
+    # 点点互动（世纪华通全资子公司）与其海外品牌 Century Games 是同一运营体，合并为单主体；
+    # century games / building blocks / first fun 是其海外发行马甲，diandian 为国内名兜底。
+    {"name": "点点互动", "name_en": "Diandian Interactive / Century Games", "hq_region": "国内", "is_slg": True,
+     "brief": "世纪华通全资子公司；海外发行品牌 Century Games（新加坡发行主体 Century Games Pte. Ltd.）。Whiteout Survival / Kingshot；Puzzles & Survival 为系工作室 Building Blocks 出品。",
      "aliases": [("century games", "Century Games"), ("building blocks", "Building Blocks"),
-                 ("first fun", "First Fun"), ("firstfun", "First Fun")], "app_ids": []},
-    {"name": "点点互动", "name_en": "Diandian Interactive", "hq_region": "国内", "is_slg": True,
-     "brief": "世纪华通旗下", "aliases": [("diandian", "Diandian")], "app_ids": []},
+                 ("first fun", "First Fun"), ("firstfun", "First Fun"),
+                 ("diandian", "Diandian")], "app_ids": []},
     {"name": "FunPlus", "name_en": "FunPlus", "hq_region": "国内", "is_slg": True,
      "brief": "State of Survival / Sea of Conquest / Stormshot；KingsGroup（King of Avalon / Guns of Glory）为 FunPlus 系",
      "aliases": [("funplus", "FunPlus"), ("kingsgroup", "KingsGroup")], "app_ids": []},
