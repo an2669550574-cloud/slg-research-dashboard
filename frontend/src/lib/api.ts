@@ -63,6 +63,8 @@ import type {
   PublisherRelationLink,
   PublisherRelationCreate,
   PublisherProduct,
+  WechatAccount,
+  WechatAccountCandidate,
 } from './types'
 
 // 缺 X-Total-Count 头时 fallback 用 items.length（兼容老路由 / 测试夹具）
@@ -372,6 +374,20 @@ export const publishersApi = {
     api.delete(`/publishers/${id}/relations/${relationId}`).then(r => r.data),
   products: (id: number, days = 30): Promise<PublisherProduct[]> =>
     api.get(`/publishers/${id}/products`, { params: { days } }).then(r => r.data),
+}
+
+// 订阅公众号：看板维护新品监测日报要搜哪些行业号。零 ST 配额（走 wechat-api）。
+export const wechatAccountsApi = {
+  list: (): Promise<WechatAccount[]> =>
+    api.get('/wechat-accounts/').then(r => r.data),
+  search: (query: string): Promise<WechatAccountCandidate[]> =>
+    api.get('/wechat-accounts/search', { params: { query } }).then(r => r.data),
+  create: (data: { fakeid: string; name: string }): Promise<WechatAccount> =>
+    api.post('/wechat-accounts/', data).then(r => r.data),
+  setEnabled: (id: number, enabled: boolean): Promise<WechatAccount> =>
+    api.patch(`/wechat-accounts/${id}`, { enabled }).then(r => r.data),
+  remove: (id: number): Promise<DeleteResponse> =>
+    api.delete(`/wechat-accounts/${id}`).then(r => r.data),
 }
 
 export type AdaptModel = 'claude-sonnet-4.5' | 'claude-opus-4.7'

@@ -13,6 +13,7 @@ from typing import List, Optional
 
 import httpx
 from pydantic import BaseModel
+from sqlalchemy import func, select
 
 from app.config import settings
 
@@ -25,15 +26,64 @@ _TAG_RE = re.compile(r"<[^>]+>")
 def _strip_html(s: Optional[str]) -> str:
     return _TAG_RE.sub("", s or "").strip()
 
-# 订阅的行业公众号（需要登录 wechat-download-api 后手动获取 fakeid）
-# 当前仅配置游戏葡萄和游戏陀螺作为示例
-SUBSCRIBED_ACCOUNTS = {
+
+# 起步种子：表空时灌入（见 seed_wechat_accounts_if_empty），也是 DB 不可用时的兜底。
+# 上线后订阅号改在看板维护（wechat_accounts 表），不再改这里。
+_SEED_ACCOUNTS = {
     "游戏葡萄": "MjM5OTc2ODUxMw==",
     "游戏陀螺": "MjM5Njc5MjgyMA==",
-    # 更多公众号可以后续添加，如：
-    # "手游那点事": "xxx",
-    # "竞核": "xxx",
 }
+
+
+async def _enabled_accounts() -> dict:
+    """启用中的订阅号 {name: fakeid}，从 DB 读；DB 空或出错回退种子，保证搜索不空转。"""
+    try:
+        from app.database import AsyncSessionLocal  # 延迟 import：避开测试 reload 的陈旧 engine 绑定
+        from app.models.wechat import WechatAccount
+        async with AsyncSessionLocal() as db:
+            rows = (await db.execute(
+                select(WechatAccount).where(WechatAccount.enabled.is_(True))
+            )).scalars().all()
+        if rows:
+            return {r.name: r.fakeid for r in rows}
+    except Exception as e:
+        _logger.warning("读订阅号失败，回退种子: %s", e)
+    return dict(_SEED_ACCOUNTS)
+
+
+async def seed_wechat_accounts_if_empty() -> None:
+    """表空时灌入种子订阅号（与 mock games / publishers 同款的启动 seed）。"""
+    from app.database import AsyncSessionLocal
+    from app.models.wechat import WechatAccount
+    async with AsyncSessionLocal() as db:
+        n = (await db.execute(select(func.count(WechatAccount.id)))).scalar() or 0
+        if n:
+            return
+        for name, fakeid in _SEED_ACCOUNTS.items():
+            db.add(WechatAccount(name=name, fakeid=fakeid, enabled=True))
+        await db.commit()
+        _logger.info("seeded %d wechat accounts", len(_SEED_ACCOUNTS))
+
+
+async def search_biz(query: str, limit: int = 8) -> list[dict]:
+    """按名搜公众号 → 候选 [{fakeid, nickname, alias}]（wechat-api /searchbiz）。连不上返 []。"""
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                f"{settings.WECHAT_API_BASE}/api/public/searchbiz", params={"query": query})
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as e:
+        _logger.warning("searchbiz 失败: %s", e)
+        return []
+    out = []
+    if data.get("success"):
+        for a in (data.get("data", {}).get("list") or [])[:limit]:
+            fid = a.get("fakeid", "")
+            if fid:
+                out.append({"fakeid": fid, "nickname": _strip_html(a.get("nickname")),
+                            "alias": a.get("alias") or None})
+    return out
 
 
 class WechatArticle(BaseModel):
@@ -125,11 +175,14 @@ async def search_articles(
         按时间倒序的文章列表，最多 limit 篇
     """
     cutoff_timestamp = int(time.time() - days * 86400)
+    accounts = await _enabled_accounts()
+    if not accounts:
+        return []
 
     async with httpx.AsyncClient(timeout=15.0) as client:
         groups = await asyncio.gather(*[
             _search_account(client, name, fakeid, keyword, cutoff_timestamp)
-            for name, fakeid in SUBSCRIBED_ACCOUNTS.items()
+            for name, fakeid in accounts.items()
         ])
     results = [a for group in groups for a in group]
 
