@@ -196,7 +196,9 @@ async def test_send_daily_digest_end_to_end(client, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_alerts_test_endpoint_disabled(client):
+async def test_alerts_test_endpoint_disabled(client, monkeypatch):
+    # 强制清掉 webhook 配置，隔离本地 backend/.env 里配了真实 webhook 的情况
+    monkeypatch.setattr("app.config.settings.DINGTALK_WEBHOOK_URL", "", raising=False)
     r = await client.post("/api/alerts/dingtalk/test")
     assert r.status_code == 200
     assert r.json() == {"enabled": False, "sent": False}
