@@ -76,25 +76,74 @@ def _enrich_suffix(e: Optional[dict]) -> str:
     return f" · {' · '.join(parts)}" if parts else ""
 
 
+def _articles_suffix(app_articles: Optional[list]) -> str:
+    """新品行后缀：附最多 2 篇微信文章链接；标题清掉会破坏 markdown 链接/分隔的字符。"""
+    if not app_articles:
+        return ""
+    links = []
+    for a in app_articles[:2]:
+        title = (a.title or "").replace("[", "(").replace("]", ")").replace("|", "/")
+        title = " ".join(title.split())  # 折叠换行/多空格
+        links.append(f"[{title}]({a.link})")
+    return "\n   📰 " + " | ".join(links)
+
+
+def _match_articles_to_apps(per_combo: list[dict], article_list: list) -> dict:
+    """搜到的文章 → 按「标题/摘要含新品名」聚合到 app_id：{app_id: [WechatArticle]}。
+
+    用 (c.get("market") or {}) 而非 c.get("market", {})——entry 的 market/publisher
+    初始为 None，后者在 key 存在时返回 None 会 AttributeError（曾导致整段静默失效）。
+    """
+    name_to_apps: dict[str, list[str]] = {}
+    for c in per_combo:
+        rows = ((c.get("market") or {}).get("newcomers") or []) + \
+               ((c.get("publisher") or {}).get("newcomers") or [])
+        for n in rows:
+            nm, aid = n.get("name"), n.get("app_id")
+            if nm and aid:
+                apps = name_to_apps.setdefault(nm, [])
+                if aid not in apps:
+                    apps.append(aid)
+    out: dict[str, list] = {}
+    for a in article_list:
+        text = (a.title or "") + " " + (a.digest or "")
+        for nm, app_ids in name_to_apps.items():
+            if nm in text:
+                for aid in app_ids:
+                    out.setdefault(aid, []).append(a)
+    return out
+
+
 def build_newcomer_lines(market: dict, publisher: dict,
-                         enrich: Optional[dict] = None) -> list[str]:
-    """两层新品检测 → 人读行。enrich: {app_id: {genre, price, release_date}}。"""
+                         enrich: Optional[dict] = None,
+                         articles: Optional[dict] = None) -> list[str]:
+    """两层新品检测 → 人读行。
+    enrich: {app_id: {genre, price, release_date}}
+    articles: {app_id: [WechatArticle]} 微信公众号文章
+    """
     enrich = enrich or {}
+    articles = articles or {}
     lines = []
     for n in (market.get("newcomers") or [])[:10]:
         tag = "" if n.get("is_slg") else " ⚠️ 新厂商待识别"
-        lines.append(f"✨ **{n['name']}** 空降 **#{n['rank']}** — {n.get('publisher') or '?'}"
-                     f"（{_fmt_money(n.get('revenue'))}）{_enrich_suffix(enrich.get(n.get('app_id')))}{tag}")
+        base = f"✨ **{n['name']}** 空降 **#{n['rank']}** — {n.get('publisher') or '?'}"
+        base += f"（{_fmt_money(n.get('revenue'))}）{_enrich_suffix(enrich.get(n.get('app_id')))}{tag}"
+        base += _articles_suffix(articles.get(n.get('app_id')))
+        lines.append(base)
     for n in (publisher.get("newcomers") or [])[:10]:
         rank = f"#{n['rank']}" if n.get("rank") else "进榜"
-        lines.append(f"🏢 **{n['entity_name']}** 新品 **{n['name']}** {rank}")
+        base = f"🏢 **{n['entity_name']}** 新品 **{n['name']}** {rank}"
+        base += _articles_suffix(articles.get(n.get('app_id')))
+        lines.append(base)
     return lines
 
 
-def build_daily_digest(per_combo: list[dict], today: str) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
+def build_daily_digest(per_combo: list[dict], today: str,
+                       articles: Optional[dict] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
     """全 combo 检测结果 → (title, markdown, btns)。全空 → None（不发）。
 
     per_combo: [{country, platform, movement: dict|None, market: dict|None, publisher: dict|None}]
+    articles: {app_id: [WechatArticle]} 微信公众号文章（按 app_id 聚合）
     """
     sections: list[str] = []
     btns: list[tuple[str, str]] = []
@@ -105,7 +154,7 @@ def build_daily_digest(per_combo: list[dict], today: str) -> Optional[tuple[str,
             lines += build_movement_lines(c["movement"])
         if c.get("market") or c.get("publisher"):
             lines += build_newcomer_lines(c.get("market") or {}, c.get("publisher") or {},
-                                          enrich=c.get("enrich"))
+                                          enrich=c.get("enrich"), articles=articles)
         if not lines:
             continue
         total += len(lines)
@@ -135,6 +184,8 @@ async def send_daily_digest() -> bool:
 
     today = utcnow_naive().strftime("%Y-%m-%d")
     per_combo: list[dict] = []
+    all_newcomer_names: set[str] = set()  # 收集所有新品名称，用于批量搜微信文章
+
     for country, platform in settings.sync_combos_list:
         entry: dict = {"country": country, "platform": platform, "movement": None,
                        "market": None, "publisher": None, "enrich": None}
@@ -161,13 +212,32 @@ async def send_daily_digest() -> bool:
                     entry["enrich"] = {l.app_id: {
                         "genre": l.genre, "price": l.price, "release_date": l.release_date,
                     } for l in logs}
+                # 收集新品名称用于搜文章
+                for n in (market.get("newcomers") or []):
+                    if n.get("name"):
+                        all_newcomer_names.add(n["name"])
             if publisher.get("as_of") == today:
                 entry["publisher"] = publisher
+                # 收集厂商新品名称
+                for n in (publisher.get("newcomers") or []):
+                    if n.get("name"):
+                        all_newcomer_names.add(n["name"])
         except Exception:
             logger.exception("daily digest detection failed for %s/%s", country, platform)
         per_combo.append(entry)
 
-    msg = build_daily_digest(per_combo, today)
+    # 批量搜索微信文章（用新品名 + 厂商名）
+    articles_by_app: dict = {}
+    if all_newcomer_names and settings.WECHAT_ENABLED and not settings.USE_MOCK_DATA:
+        try:
+            from app.services.wechat_articles import search_multi_keywords
+            keywords = list(all_newcomer_names)[:settings.WECHAT_MAX_KEYWORDS]
+            article_list = await search_multi_keywords(keywords, limit=20)
+            articles_by_app = _match_articles_to_apps(per_combo, article_list)
+        except Exception:
+            logger.warning("wechat articles search failed", exc_info=True)
+
+    msg = build_daily_digest(per_combo, today, articles=articles_by_app)
     if msg is None:
         logger.info("daily digest: nothing to report for %s", today)
         return False

@@ -10,6 +10,8 @@ import { PageHeader } from '../components/PageHeader'
 import { Select } from '../components/Select'
 import { Pagination } from '../components/Pagination'
 import { QueryError } from '../components/QueryError'
+
+import { MaterialAnalysisDrawer } from '../components/MaterialAnalysisDrawer'
 import { UnifiedDirectionsModal } from '../components/UnifiedDirectionsModal'
 import { downloadCsv } from '../lib/csv'
 import { useDebouncedValue } from '../lib/hooks'
@@ -33,6 +35,8 @@ export default function MaterialAnalysis() {
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState('analyzed_at:desc')
   const [offset, setOffset] = useState(0)
+
+  const [active, setActive] = useState<MaterialOut | null>(null)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [unifiedOpen, setUnifiedOpen] = useState(false)
   const debouncedSearch = useDebouncedValue(search)
@@ -346,6 +350,8 @@ export default function MaterialAnalysis() {
         <Pagination total={total} offset={offset} pageSize={PAGE_SIZE} onOffsetChange={setOffset} />
       </div>
 
+
+      <MaterialAnalysisDrawer material={active} onClose={() => setActive(null)} />
       <UnifiedDirectionsModal open={unifiedOpen} materialIds={[...selected]}
         onClose={() => setUnifiedOpen(false)} />
     </div>

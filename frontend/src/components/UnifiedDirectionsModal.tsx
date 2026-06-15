@@ -80,7 +80,6 @@ export function UnifiedDirectionsModal({ open, materialIds, onClose }: Props) {
     if (!md) return
     downloadText(`unified-directions-${new Date().toISOString().slice(0, 10)}.md`, md)
   }
-
   const est = estimate.data
   const cp = result?.common_patterns
 
