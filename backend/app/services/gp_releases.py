@@ -21,6 +21,7 @@ import asyncio
 import json
 import logging
 import re
+from html import unescape
 from typing import Optional
 from urllib.parse import quote_plus
 
@@ -46,6 +47,20 @@ _PKG_RE = re.compile(r"store/apps/details\?id=([a-zA-Z][a-zA-Z0-9_.]+)")
 _JSONLD_RE = re.compile(
     r'<script[^>]+type="application/ld\+json"[^>]*>(.*?)</script>', re.S)
 _OG_IMAGE_RE = re.compile(r'<meta[^>]+property="og:image"[^>]+content="([^"]+)"')
+# 「关于这款游戏」完整正文容器：GP 稳定输出 data-g-id="description"。JSON-LD 的
+# description 往往只是标题下的短标语，正文才是真简介——能解析就用更长的那个。
+_DESC_BLOCK_RE = re.compile(r'data-g-id="description"[^>]*>(.*?)</div>', re.S)
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _full_description(html: str) -> Optional[str]:
+    """从详情页抽「关于这款游戏」完整正文（best-effort，失败返回 None 回退 JSON-LD）。"""
+    m = _DESC_BLOCK_RE.search(html)
+    if not m:
+        return None
+    txt = re.sub(r"<br\s*/?>", "\n", m.group(1))
+    txt = unescape(_TAG_RE.sub("", txt)).strip()
+    return txt or None
 
 
 def developer_page_url(dev_id: str) -> str:
@@ -100,7 +115,10 @@ def parse_app_detail(html: str, package: str) -> dict:
         try:
             ld = json.loads(m.group(1))
             record["trackName"] = (ld.get("name") or package)
-            record["description"] = ld.get("description")
+            # JSON-LD description 常是短标语；正文容器能解析出更长的就用正文（回退短的）。
+            ld_desc = (ld.get("description") or "").strip()
+            full_desc = _full_description(html) or ""
+            record["description"] = full_desc if len(full_desc) > len(ld_desc) else (ld_desc or None)
             record["genres"] = [g for g in [_gp_genre(ld.get("applicationCategory"))] if g]
             rating = ld.get("aggregateRating") or {}
             if rating.get("ratingValue") is not None:
