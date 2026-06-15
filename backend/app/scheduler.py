@@ -179,6 +179,16 @@ async def _run_daily_alert_digest() -> None:
         logger.exception("Daily alert digest job crashed")
 
 
+async def _run_wechat_login_check() -> None:
+    """定时任务包装：微信公众号登录将过期/已失效 → 钉钉提醒重新扫码。
+    未启用 / 未配 webhook / 服务连不上 → 静默；异常不拖垮 scheduler。"""
+    from app.services.release_alerts import alert_wechat_login_if_needed
+    try:
+        await alert_wechat_login_if_needed()
+    except Exception:
+        logger.exception("WeChat login check job crashed")
+
+
 async def _run_rank_backfill() -> None:
     """定时任务包装：回填异常不能拖垮 scheduler。异常走 logger.exception
     (ERROR→Sentry)。任务自身已含 enabled/mock/配额护栏。"""
@@ -304,6 +314,16 @@ def start_scheduler() -> None:
         _run_daily_alert_digest,
         CronTrigger(hour=3, minute=0, timezone="UTC"),
         id="daily_alert_digest",
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
+
+    # 微信公众号登录过期提醒：每日 02:55 UTC（日报前 5 分钟），失效/将过期才发。
+    # 任务自带 enabled/webhook/连通性护栏，未启用时空跑无害。
+    scheduler.add_job(
+        _run_wechat_login_check,
+        CronTrigger(hour=2, minute=55, timezone="UTC"),
+        id="wechat_login_check",
         replace_existing=True,
         misfire_grace_time=3600,
     )

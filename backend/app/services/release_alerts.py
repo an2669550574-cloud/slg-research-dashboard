@@ -15,6 +15,7 @@
 digest 构建是纯函数，单测直接断言 markdown 文本。
 """
 import logging
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -243,6 +244,46 @@ async def send_daily_digest() -> bool:
         return False
     title, text, btns = msg
     return await dingtalk.send_action_card(title, text, btns)
+
+
+# ── 微信公众号登录过期提醒 ─────────────────────────────────────────────────
+
+_WECHAT_RELOGIN_HINT = (
+    "重新扫码登录：终端跑 `ssh -L 5050:127.0.0.1:5000 hk-prod`，"
+    "再浏览器打开 http://localhost:5050/login.html 用微信扫码。"
+)
+
+
+def build_wechat_expiry_alert(status, now_ts: float, warn_days: int) -> Optional[tuple[str, str]]:
+    """微信登录状态 → (title, markdown) 提醒，或 None（健康 / 服务连不上时不提醒）。
+
+    status=None 表示 wechat-api 连不上——那是另一类问题，不误报「登录过期」。
+    """
+    if status is None:
+        return None
+    if not status.logged_in or status.is_expired:
+        text = ("### ⚠️ 微信公众号登录已失效\n\n"
+                "新品监测日报将**暂停附带行业文章**（其余情报照常）。\n\n" + _WECHAT_RELOGIN_HINT)
+        return "微信公众号登录已失效", text
+    if status.expire_time_ms:
+        days_left = (status.expire_time_ms / 1000 - now_ts) / 86400
+        if days_left <= warn_days:
+            text = (f"### ⏰ 微信公众号登录将在约 {max(0, round(days_left))} 天后过期\n\n"
+                    f"账号：{status.nickname or '—'}。请尽快重新扫码，避免日报断档。\n\n" + _WECHAT_RELOGIN_HINT)
+            return "微信公众号登录即将过期", text
+    return None
+
+
+async def alert_wechat_login_if_needed() -> bool:
+    """每日检查 wechat 登录状态，失效/将过期则推钉钉。未启用 / 未配 webhook → 不发。"""
+    if not (settings.WECHAT_ENABLED and dingtalk.is_enabled()):
+        return False
+    from app.services.wechat_articles import get_login_status
+    status = await get_login_status()
+    built = build_wechat_expiry_alert(status, time.time(), settings.WECHAT_EXPIRY_WARN_DAYS)
+    if not built:
+        return False
+    return await dingtalk.send_markdown(*built)
 
 
 # ── 应用商店雷达（iOS + GP 清单 diff，每轮检出即推） ────────────────────────

@@ -4,10 +4,44 @@
 的 combo（曾用 c.get("market", {}) 在 key 存在为 None 时 AttributeError，导致整段
 文章匹配被 try/except 吞掉、功能静默失效）。
 """
-from app.services.wechat_articles import WechatArticle, _strip_html
+from app.services.wechat_articles import WechatArticle, WechatLoginStatus, _strip_html
 from app.services.release_alerts import (
     _match_articles_to_apps, _articles_suffix, build_newcomer_lines,
+    build_wechat_expiry_alert,
 )
+
+_NOW = 1_781_000_000.0  # 固定"现在"（秒），避免依赖真实时钟
+_DAY_MS = 86_400_000
+
+
+def test_wechat_alert_none_when_service_unreachable():
+    # status=None（连不上）不能误报「过期」
+    assert build_wechat_expiry_alert(None, _NOW, 3) is None
+
+
+def test_wechat_alert_none_when_healthy_and_far():
+    st = WechatLoginStatus(logged_in=True, is_expired=False,
+                           expire_time_ms=int((_NOW + 30 * 86400) * 1000))
+    assert build_wechat_expiry_alert(st, _NOW, 3) is None
+
+
+def test_wechat_alert_expired():
+    st = WechatLoginStatus(logged_in=True, is_expired=True)
+    out = build_wechat_expiry_alert(st, _NOW, 3)
+    assert out is not None and "失效" in out[0] and "login.html" in out[1]
+
+
+def test_wechat_alert_not_logged_in():
+    st = WechatLoginStatus(logged_in=False, is_expired=False)
+    assert build_wechat_expiry_alert(st, _NOW, 3) is not None
+
+
+def test_wechat_alert_expiring_soon_within_warn_days():
+    # 还有 2 天过期（warn=3）→ 预警；ms 时间戳要正确换算
+    st = WechatLoginStatus(logged_in=True, is_expired=False,
+                           expire_time_ms=int(_NOW * 1000) + 2 * _DAY_MS)
+    out = build_wechat_expiry_alert(st, _NOW, 3)
+    assert out is not None and "过期" in out[0]
 
 
 def _art(title, link="https://mp.weixin.qq.com/s/x", digest=""):

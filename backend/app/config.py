@@ -204,6 +204,9 @@ class Settings(BaseSettings):
     WECHAT_API_BASE: str = "http://127.0.0.1:5001"
     # 单轮日报最多用多少个新品名去搜（限并发与外部服务压力）。
     WECHAT_MAX_KEYWORDS: int = 20
+    # 登录 session 剩余 ≤ 此天数 → 提前预警；已过期/未登录则直接提醒。微信 MP
+    # session 本就短（~4 天），预警设 1 天（仅最后一天提醒）避免天天刷屏。
+    WECHAT_EXPIRY_WARN_DAYS: int = 1
 
     @property
     def cors_origin_list(self) -> list[str]:
