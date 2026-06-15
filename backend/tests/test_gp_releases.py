@@ -60,6 +60,27 @@ def test_parse_app_detail_jsonld_cjk():
     assert r["_seen_storefronts"] == {"gp"}
 
 
+def test_parse_app_detail_prefers_full_description():
+    """正文容器（data-g-id=description）比 JSON-LD 短标语长 → 用正文，标签清洗 + 反转义。"""
+    html = _APP_HTML.replace(
+        "</head><body></body></html>",
+        '</head><body>'
+        '<div data-g-id="description">'
+        '经营你的酒馆，招募传奇英雄，<br>在七国之地建立你的王朝 &amp; 称霸维斯特洛。'
+        '这是一款史诗级 4X 策略战争手游，深度玩法应有尽有。'
+        '</div></body></html>')
+    r = parse_app_detail(html, "com.gamespark.mykingdom.gp")
+    assert "建立你的王朝 & 称霸维斯特洛" in r["description"]  # 反转义 + 取到正文
+    assert "<" not in r["description"] and ">" not in r["description"]  # 标签已清
+    assert len(r["description"]) > len("经营你的酒馆，招募英雄。")  # 比 JSON-LD 短标语长
+
+
+def test_parse_app_detail_falls_back_to_jsonld_short():
+    """无正文容器 → 回退 JSON-LD 短描述（不回归）。"""
+    r = parse_app_detail(_APP_HTML, "com.gamespark.mykingdom.gp")
+    assert r["description"] == "经营你的酒馆，招募英雄。"
+
+
 def test_parse_app_detail_degrades_to_package_only():
     r = parse_app_detail("<html><body>no structured data</body></html>", "com.test.无结构")
     assert r["trackId"] == "com.test.无结构"
