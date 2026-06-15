@@ -5,18 +5,17 @@
 用于新品监测推送时附上行业分析背景。
 """
 
-import os
+import asyncio
 import logging
+import time
 from typing import List, Optional
-from datetime import datetime
 
 import httpx
 from pydantic import BaseModel
 
-_logger = logging.getLogger(__name__)
+from app.config import settings
 
-# wechat-download-api 服务地址（本地默认）
-WECHAT_API_BASE = os.getenv("WECHAT_API_BASE", "http://127.0.0.1:5001")
+_logger = logging.getLogger(__name__)
 
 # 订阅的行业公众号（需要登录 wechat-download-api 后手动获取 fakeid）
 # 当前仅配置游戏葡萄和游戏陀螺作为示例
@@ -39,6 +38,42 @@ class WechatArticle(BaseModel):
     publish_time: Optional[int] = None
 
 
+async def _search_account(
+    client: httpx.AsyncClient, name: str, fakeid: str,
+    keyword: str, cutoff_timestamp: int,
+) -> List[WechatArticle]:
+    """搜单个公众号；失败只记 warning 返回空（一个号挂不拖累其余）。"""
+    try:
+        resp = await client.get(
+            f"{settings.WECHAT_API_BASE}/api/public/articles/search",
+            params={"fakeid": fakeid, "query": keyword, "count": 10},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except httpx.HTTPStatusError as e:
+        _logger.warning("搜索 %s 失败: HTTP %s", name, e.response.status_code)
+        return []
+    except Exception as e:
+        _logger.warning("搜索 %s 失败: %s", name, e)
+        return []
+
+    out: List[WechatArticle] = []
+    if data.get("success"):
+        for a in data.get("data", {}).get("articles", []):
+            create_time = a.get("create_time", 0)
+            if create_time and create_time < cutoff_timestamp:
+                continue  # 过滤过时文章
+            out.append(WechatArticle(
+                title=(a.get("title") or "").strip(),
+                digest=(a.get("digest") or "").strip(),
+                link=a.get("link", ""),
+                author=name,  # 用公众号名称代替 author
+                cover=a.get("cover", ""),
+                publish_time=create_time,
+            ))
+    return out
+
+
 async def search_articles(
     keyword: str,
     limit: int = 3,
@@ -55,42 +90,14 @@ async def search_articles(
     Returns:
         按时间倒序的文章列表，最多 limit 篇
     """
-    results = []
-    cutoff_timestamp = int((datetime.now().timestamp() - days * 86400))
+    cutoff_timestamp = int(time.time() - days * 86400)
 
     async with httpx.AsyncClient(timeout=15.0) as client:
-        for name, fakeid in SUBSCRIBED_ACCOUNTS.items():
-            try:
-                resp = await client.get(
-                    f"{WECHAT_API_BASE}/api/public/articles/search",
-                    params={
-                        "fakeid": fakeid,
-                        "query": keyword,
-                        "count": 10,  # 每个号取前10篇
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
-
-                if data.get("success"):
-                    for a in data.get("data", {}).get("articles", []):
-                        # 过滤过时文章
-                        create_time = a.get("create_time", 0)
-                        if create_time and create_time < cutoff_timestamp:
-                            continue
-
-                        results.append(WechatArticle(
-                            title=a.get("title", "").strip(),
-                            digest=a.get("digest", "").strip(),
-                            link=a.get("link", ""),
-                            author=name,  # 用公众号名称代替 author
-                            cover=a.get("cover", ""),
-                            publish_time=create_time,
-                        ))
-            except httpx.HTTPStatusError as e:
-                _logger.warning(f"搜索 {name} 失败: HTTP {e.response.status_code}")
-            except Exception as e:
-                _logger.warning(f"搜索 {name} 失败: {e}")
+        groups = await asyncio.gather(*[
+            _search_account(client, name, fakeid, keyword, cutoff_timestamp)
+            for name, fakeid in SUBSCRIBED_ACCOUNTS.items()
+        ])
+    results = [a for group in groups for a in group]
 
     # 去重（按 link）
     seen = set()

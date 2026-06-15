@@ -76,6 +76,44 @@ def _enrich_suffix(e: Optional[dict]) -> str:
     return f" · {' · '.join(parts)}" if parts else ""
 
 
+def _articles_suffix(app_articles: Optional[list]) -> str:
+    """新品行后缀：附最多 2 篇微信文章链接；标题清掉会破坏 markdown 链接/分隔的字符。"""
+    if not app_articles:
+        return ""
+    links = []
+    for a in app_articles[:2]:
+        title = (a.title or "").replace("[", "(").replace("]", ")").replace("|", "/")
+        title = " ".join(title.split())  # 折叠换行/多空格
+        links.append(f"[{title}]({a.link})")
+    return "\n   📰 " + " | ".join(links)
+
+
+def _match_articles_to_apps(per_combo: list[dict], article_list: list) -> dict:
+    """搜到的文章 → 按「标题/摘要含新品名」聚合到 app_id：{app_id: [WechatArticle]}。
+
+    用 (c.get("market") or {}) 而非 c.get("market", {})——entry 的 market/publisher
+    初始为 None，后者在 key 存在时返回 None 会 AttributeError（曾导致整段静默失效）。
+    """
+    name_to_apps: dict[str, list[str]] = {}
+    for c in per_combo:
+        rows = ((c.get("market") or {}).get("newcomers") or []) + \
+               ((c.get("publisher") or {}).get("newcomers") or [])
+        for n in rows:
+            nm, aid = n.get("name"), n.get("app_id")
+            if nm and aid:
+                apps = name_to_apps.setdefault(nm, [])
+                if aid not in apps:
+                    apps.append(aid)
+    out: dict[str, list] = {}
+    for a in article_list:
+        text = (a.title or "") + " " + (a.digest or "")
+        for nm, app_ids in name_to_apps.items():
+            if nm in text:
+                for aid in app_ids:
+                    out.setdefault(aid, []).append(a)
+    return out
+
+
 def build_newcomer_lines(market: dict, publisher: dict,
                          enrich: Optional[dict] = None,
                          articles: Optional[dict] = None) -> list[str]:
@@ -90,20 +128,12 @@ def build_newcomer_lines(market: dict, publisher: dict,
         tag = "" if n.get("is_slg") else " ⚠️ 新厂商待识别"
         base = f"✨ **{n['name']}** 空降 **#{n['rank']}** — {n.get('publisher') or '?'}"
         base += f"（{_fmt_money(n.get('revenue'))}）{_enrich_suffix(enrich.get(n.get('app_id')))}{tag}"
-        # 附上微信文章（如果有）
-        app_articles = articles.get(n.get('app_id'), [])
-        if app_articles:
-            base += "\n   📰 "
-            base += " | ".join(f"[{a.title}]({a.link})" for a in app_articles[:2])
+        base += _articles_suffix(articles.get(n.get('app_id')))
         lines.append(base)
     for n in (publisher.get("newcomers") or [])[:10]:
         rank = f"#{n['rank']}" if n.get("rank") else "进榜"
         base = f"🏢 **{n['entity_name']}** 新品 **{n['name']}** {rank}"
-        # 厂商新品也尝试用厂商名搜文章
-        app_articles = articles.get(n.get('app_id'), [])
-        if app_articles:
-            base += "\n   📰 "
-            base += " | ".join(f"[{a.title}]({a.link})" for a in app_articles[:2])
+        base += _articles_suffix(articles.get(n.get('app_id')))
         lines.append(base)
     return lines
 
@@ -198,23 +228,12 @@ async def send_daily_digest() -> bool:
 
     # 批量搜索微信文章（用新品名 + 厂商名）
     articles_by_app: dict = {}
-    if all_newcomer_names:
+    if all_newcomer_names and settings.WECHAT_ENABLED and not settings.USE_MOCK_DATA:
         try:
             from app.services.wechat_articles import search_multi_keywords
-            # 同时也搜厂商名（从 publisher 新品中提取）
-            keywords = list(all_newcomer_names)
+            keywords = list(all_newcomer_names)[:settings.WECHAT_MAX_KEYWORDS]
             article_list = await search_multi_keywords(keywords, limit=20)
-            # 按游戏名匹配文章到 app_id（简单匹配：标题含关键词）
-            for a in article_list:
-                for name in all_newcomer_names:
-                    if name in a.title or name in (a.digest or ""):
-                        # 找到对应的 app_id（需要从 newcomer 列表反查）
-                        for c in per_combo:
-                            for n in (c.get("market", {}).get("newcomers") or []) + \
-                                     (c.get("publisher", {}).get("newcomers") or []):
-                                if n.get("name") == name and n.get("app_id"):
-                                    articles_by_app.setdefault(n["app_id"], []).append(a)
-                                    break
+            articles_by_app = _match_articles_to_apps(per_combo, article_list)
         except Exception:
             logger.warning("wechat articles search failed", exc_info=True)
 

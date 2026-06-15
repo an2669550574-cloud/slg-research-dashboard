@@ -198,6 +198,13 @@ class Settings(BaseSettings):
     SENTRY_ENVIRONMENT: str = "production"
     SENTRY_TRACES_SAMPLE_RATE: float = 0.05
 
+    # ── 微信公众号文章搜索（日报附行业分析）────────────────────────
+    # 默认关闭：未部署 wechat-download-api / mock 模式下不去连，避免拖慢日报。
+    WECHAT_ENABLED: bool = False
+    WECHAT_API_BASE: str = "http://127.0.0.1:5001"
+    # 单轮日报最多用多少个新品名去搜（限并发与外部服务压力）。
+    WECHAT_MAX_KEYWORDS: int = 20
+
     @property
     def cors_origin_list(self) -> list[str]:
         if not self.CORS_ORIGINS or self.CORS_ORIGINS.strip() == "*":
