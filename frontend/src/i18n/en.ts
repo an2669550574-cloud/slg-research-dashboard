@@ -708,7 +708,6 @@ export const en: Translations = {
     empty: 'No publishers yet, click "Add Publisher" to add the first',
     slgBadge: 'SLG',
   },
-  },
   ownProductPicker: {
     label: 'Pick your product',
     manual: 'Type manually…',
