@@ -158,7 +158,7 @@ def _match_for_entity(pairs, alias_kw_tokens, app_id_set, itunes_products=()):
         if hit:
             matched[app_id] = (rev or 0, name, icon)
     seen_names = {(n or "").strip().lower() for _, n, _ in matched.values() if n}
-    for track_id, name, artwork in itunes_products:
+    for track_id, name, artwork, _genre in itunes_products:
         if track_id in matched:
             continue
         key = (name or "").strip().lower()
@@ -173,26 +173,27 @@ def _match_for_entity(pairs, alias_kw_tokens, app_id_set, itunes_products=()):
 
 
 async def _itunes_products_by_entity(db: AsyncSession) -> dict[int, list[tuple]]:
-    """一次查全表：{entity_id: [(track_id, name, artwork_url), ...]}（list 端点批量用）。"""
+    """一次查全表：{entity_id: [(track_id, name, artwork_url, genre), ...]}（list 端点批量用）。"""
     rows = (await db.execute(
         select(PublisherItunesApp.entity_id, PublisherItunesApp.track_id,
-               PublisherItunesApp.name, PublisherItunesApp.artwork_url)
+               PublisherItunesApp.name, PublisherItunesApp.artwork_url, PublisherItunesApp.genre)
         .order_by(PublisherItunesApp.id)
     )).all()
     out: dict[int, list[tuple]] = {}
-    for entity_id, track_id, name, artwork in rows:
-        out.setdefault(entity_id, []).append((track_id, name, artwork))
+    for entity_id, track_id, name, artwork, genre in rows:
+        out.setdefault(entity_id, []).append((track_id, name, artwork, genre))
     return out
 
 
 async def _itunes_products(entity_id: int, db: AsyncSession) -> list[tuple]:
-    """单主体雷达 app 清单（get/create/update 用）。"""
+    """单主体雷达 app 清单 (track_id, name, artwork_url, genre)（get/create/update + products 用）。"""
     rows = (await db.execute(
-        select(PublisherItunesApp.track_id, PublisherItunesApp.name, PublisherItunesApp.artwork_url)
+        select(PublisherItunesApp.track_id, PublisherItunesApp.name,
+               PublisherItunesApp.artwork_url, PublisherItunesApp.genre)
         .where(PublisherItunesApp.entity_id == entity_id)
         .order_by(PublisherItunesApp.id)
     )).all()
-    return [(track_id, name, artwork) for track_id, name, artwork in rows]
+    return [(track_id, name, artwork, genre) for track_id, name, artwork, genre in rows]
 
 
 def _build_out(e: PublisherEntity, aliases, app_ids, sources, parents, children,
@@ -560,7 +561,7 @@ async def list_publisher_products(
     # 与卡片 product_count/top_products 同口径——否则卡片有数、抽屉为空，自相矛盾。
     matched_ids = {i.app_id for i in items}
     seen_names = {(i.name or "").strip().lower() for i in items if i.name}
-    for track_id, name, artwork in await _itunes_products(entity_id, db):
+    for track_id, name, artwork, genre in await _itunes_products(entity_id, db):
         if track_id in matched_ids:
             continue
         key = (name or "").strip().lower()
@@ -570,7 +571,7 @@ async def list_publisher_products(
             seen_names.add(key)
         items.append(PublisherProductOut(
             app_id=track_id, name=name, publisher=None, icon_url=artwork,
-            downloads=0, revenue=0, matched_by="radar",
+            downloads=0, revenue=0, matched_by="radar", genre=genre,
         ))
     items.sort(key=lambda x: -x.revenue)
     return items

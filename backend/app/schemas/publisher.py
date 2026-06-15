@@ -195,3 +195,4 @@ class PublisherProductOut(BaseModel):
     downloads: int = 0
     revenue: float = 0
     matched_by: str  # "alias" | "app_id" | "radar" —— 该产品因何归属本主体
+    genre: Optional[str] = None  # 雷达(radar)产品的子品类，无榜单 publisher 时作副标题兜底

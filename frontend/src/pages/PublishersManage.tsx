@@ -1035,7 +1035,7 @@ function PublisherProducts({ entityId }: { entityId: number }) {
             : <div className="w-8 h-8 rounded-lg shrink-0 bg-surface" />}
           <div className="min-w-0 flex-1">
             <div className="text-xs text-primary truncate">{p.name || p.app_id}</div>
-            <div className="text-[10px] text-muted truncate">{p.publisher || '—'}</div>
+            <div className="text-[10px] text-muted truncate">{p.publisher || p.genre || '—'}</div>
           </div>
           <span className="text-[10px] text-secondary border border-default rounded px-1.5 py-0.5 shrink-0">
             {p.matched_by === 'app_id' ? tt.productMatchedAppId : p.matched_by === 'radar' ? tt.productMatchedRadar : tt.productMatchedAlias}
