@@ -46,6 +46,32 @@ class WechatArticle(BaseModel):
     publish_time: Optional[int] = None
 
 
+class WechatLoginStatus(BaseModel):
+    """wechat-api 登录状态（/api/admin/status）。"""
+    logged_in: bool
+    is_expired: bool
+    expire_time_ms: Optional[int] = None  # 毫秒时间戳
+    nickname: Optional[str] = None
+
+
+async def get_login_status() -> Optional[WechatLoginStatus]:
+    """查 wechat-api 登录状态。服务连不上返回 None（与「已过期」区分，避免误报过期）。"""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"{settings.WECHAT_API_BASE}/api/admin/status")
+            resp.raise_for_status()
+            d = resp.json()
+    except Exception as e:
+        _logger.warning("wechat 登录状态查询失败: %s", e)
+        return None
+    return WechatLoginStatus(
+        logged_in=bool(d.get("loggedIn")),
+        is_expired=bool(d.get("isExpired")),
+        expire_time_ms=d.get("expireTime") or None,
+        nickname=d.get("nickname") or None,
+    )
+
+
 async def _search_account(
     client: httpx.AsyncClient, name: str, fakeid: str,
     keyword: str, cutoff_timestamp: int,
