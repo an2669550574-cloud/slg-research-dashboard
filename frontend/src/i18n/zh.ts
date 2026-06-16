@@ -210,6 +210,7 @@ export const zh = {
     remove: '移除',
     removeConfirm: (name: string) => `移除订阅号「${name}」？日报将不再搜该号。`,
     empty: '还没订阅任何公众号',
+    subscribedCount: (n: number) => `已订阅 ${n} 个`,
     added: (name: string) => `已订阅 ${name}`,
     removed: '已移除',
     loadFailed: '加载订阅号失败',
