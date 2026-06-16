@@ -134,10 +134,11 @@ async def test_history_live_attribution(client, monkeypatch):
 def test_digest_newcomer_enrich_suffix():
     from app.services.release_alerts import build_newcomer_lines
     market = {"newcomers": [{"app_id": "x1", "rank": 7, "name": "寒霜新游",
-                             "publisher": "某厂", "revenue": None, "is_slg": True}]}
+                             "publisher": "某厂", "revenue": None, "downloads": None, "is_slg": True}]}
     lines = build_newcomer_lines(market, {}, enrich={
         "x1": {"genre": "Casual", "price": "Free", "release_date": "2026-06-01"}})
-    assert lines == ["✨ **寒霜新游** 空降 **#7** — 某厂（—） · Casual · Free · 上架 2026-06-01"]
-    # 无富化数据不占位
+    # 富化子行：品类英译中（Casual→休闲）· 厂商归属（未匹配主体退回发行商名）· 上架日；price 不再展示
+    assert lines == ["✨ **寒霜新游** 空降 **#7**  \n　休闲 · 厂商 某厂 · 上架 2026-06-01"]
+    # 无富化数据时子行仅剩厂商（发行商名）一项
     lines2 = build_newcomer_lines(market, {})
-    assert "·" not in lines2[0].split("（—）")[1]
+    assert lines2 == ["✨ **寒霜新游** 空降 **#7**  \n　厂商 某厂"]

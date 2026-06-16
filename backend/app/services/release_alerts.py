@@ -29,15 +29,64 @@ from app.services import dingtalk
 logger = logging.getLogger(__name__)
 
 _COMBO_FLAG = {"us": "🇺🇸", "jp": "🇯🇵", "kr": "🇰🇷", "cn": "🇨🇳", "tw": "🇹🇼", "de": "🇩🇪", "gb": "🇬🇧"}
+# 市场 / 平台中文标签（领导面向，去英文）。漏配的国家码回退大写原文。
+_COUNTRY_CN = {"us": "美国", "jp": "日本", "kr": "韩国", "cn": "中国", "tw": "台湾",
+               "de": "德国", "gb": "英国", "au": "澳洲", "ca": "加拿大", "fr": "法国"}
+_PLATFORM_CN = {"ios": "iOS", "android": "安卓"}
+# 应用商店品类英文 → 中文（SLG 监控里绝大多数是策略子类，其余常见类一并覆盖）。
+_GENRE_CN = {
+    "strategy": "策略", "simulation": "模拟经营", "casual": "休闲", "puzzle": "解谜",
+    "role playing": "角色扮演", "rpg": "角色扮演", "action": "动作", "adventure": "冒险",
+    "card": "卡牌", "board": "桌游", "arcade": "街机", "racing": "竞速", "sports": "体育",
+}
+
+
+def _fmt_num(v) -> str:
+    """大数压成 K/M（领导看规模而非精确值）：1234→1K，2_020_000→2.0M。"""
+    if not v:
+        return "—"
+    v = float(v)
+    if v >= 1_000_000:
+        return f"{v / 1_000_000:.1f}M"
+    if v >= 1_000:
+        return f"{v / 1_000:.0f}K"
+    return f"{v:.0f}"
 
 
 def _fmt_money(v) -> str:
-    return f"${v:,.0f}" if v else "—"
+    return f"${_fmt_num(v)}" if v else "—"
+
+
+def _genre_cn(g: Optional[str]) -> Optional[str]:
+    if not g:
+        return None
+    return _GENRE_CN.get(g.strip().lower(), g)
 
 
 def _combo_label(country: str, platform: str) -> str:
     flag = _COMBO_FLAG.get(country.lower(), "")
-    return f"{flag} {country.upper()} · {platform}".strip()
+    cc = _COUNTRY_CN.get(country.lower(), country.upper())
+    pf = _PLATFORM_CN.get(platform.lower(), platform)
+    return f"{flag} {cc} · {pf} 畅销榜".strip()
+
+
+def _meta_line(*, genre=None, revenue=None, downloads=None, entity=None, release_date=None) -> str:
+    """条目下方的中文富化子行：品类 · 日收入 · 下载 · 厂商 · 上架日。全空则不占行。
+    用 markdown 硬换行（行尾两空格 + \\n）+ 全角空格缩进，使其挂在主行下方。"""
+    parts = []
+    if (g := _genre_cn(genre)):
+        parts.append(g)
+    if revenue:
+        parts.append(f"日收入 {_fmt_money(revenue)}")
+    if downloads:
+        parts.append(f"下载 {_fmt_num(downloads)}")
+    if entity:
+        parts.append(f"厂商 {entity}")
+    if release_date:
+        parts.append(f"上架 {release_date}")
+    if not parts:
+        return ""
+    return "  \n　" + " · ".join(parts)
 
 
 def _store_url(app_id: str, country: str, platform: str) -> Optional[str]:
@@ -49,32 +98,30 @@ def _store_url(app_id: str, country: str, platform: str) -> Optional[str]:
 
 # ── 每日情报汇总（竞品异动 + 两层新品，全 combo 一条） ─────────────────────
 
-def build_movement_lines(s: dict) -> list[str]:
-    """movement 摘要 → 人读行。与 Sentry 的 [NEW]/[UP] 机器码刻意分离。"""
+def build_movement_lines(s: dict, entities: Optional[dict] = None) -> list[str]:
+    """movement 摘要 → 人读行。与 Sentry 的 [NEW]/[UP] 机器码刻意分离。
+    entities: {app_id: 中文厂商主体} —— 给每条补「日收入 · 下载 · 厂商归属」子行。"""
+    entities = entities or {}
+
+    def _meta(e):
+        return _meta_line(revenue=e.get("revenue"), downloads=e.get("downloads"),
+                          entity=entities.get(e.get("app_id")) or e.get("publisher"))
+
     lines = []
     for e in s["new_entrants"]:
         frm = "榜外" if e["prev_rank"] is None else f"#{e['prev_rank']}"
-        lines.append(f"🆕 **{e['name']}** 空降 **#{e['cur_rank']}**（{frm} →）")
+        lines.append(f"🆕 **{e['name']}** 空降 **#{e['cur_rank']}**（{frm} →）" + _meta(e))
     for e in s["surges"]:
-        lines.append(f"📈 **{e['name']}** #{e['prev_rank']} → **#{e['cur_rank']}**（↑{e['prev_rank'] - e['cur_rank']}）")
+        lines.append(f"📈 **{e['name']}** #{e['prev_rank']} → **#{e['cur_rank']}**（↑{e['prev_rank'] - e['cur_rank']}）" + _meta(e))
     for e in s["drops"]:
         to = "榜外" if e["cur_rank"] is None else f"#{e['cur_rank']}"
-        lines.append(f"📉 **{e['name']}** 跌出 Top 榜（#{e['prev_rank']} → {to}）")
+        lines.append(f"📉 **{e['name']}** 跌出 Top 榜（#{e['prev_rank']} → {to}）" + _meta(e))
     for e in s["revenue_spikes"]:
-        lines.append(f"💰 **{e['name']}** 收入 **{e['pct']:+.0f}%**（{_fmt_money(e['prev_revenue'])} → {_fmt_money(e['cur_revenue'])}）")
+        # 收入异动主行已带前后金额，子行只补厂商归属（不重复金额）。
+        ent = entities.get(e.get("app_id")) or e.get("publisher")
+        lines.append(f"💰 **{e['name']}** 收入 **{e['pct']:+.0f}%**（{_fmt_money(e['prev_revenue'])} → {_fmt_money(e['cur_revenue'])}）"
+                     + (_meta_line(entity=ent) if ent else ""))
     return lines
-
-
-def _enrich_suffix(e: Optional[dict]) -> str:
-    """新品行的富化尾巴：子品类 / 价格 / 上架日（log 表里有才拼，没有不占位）。"""
-    if not e:
-        return ""
-    parts = [p for p in (
-        e.get("genre"),
-        e.get("price"),
-        f"上架 {e['release_date']}" if e.get("release_date") else None,
-    ) if p]
-    return f" · {' · '.join(parts)}" if parts else ""
 
 
 def _articles_suffix(app_articles: Optional[list]) -> str:
@@ -117,34 +164,46 @@ def _match_articles_to_apps(per_combo: list[dict], article_list: list) -> dict:
 
 def build_newcomer_lines(market: dict, publisher: dict,
                          enrich: Optional[dict] = None,
-                         articles: Optional[dict] = None) -> list[str]:
+                         articles: Optional[dict] = None,
+                         entities: Optional[dict] = None) -> list[str]:
     """两层新品检测 → 人读行。
     enrich: {app_id: {genre, price, release_date}}
     articles: {app_id: [WechatArticle]} 微信公众号文章
+    entities: {app_id: 中文厂商主体} —— 市场新面孔补中文归属（厂商新品行自带 entity_name）
     """
     enrich = enrich or {}
     articles = articles or {}
+    entities = entities or {}
     lines = []
     for n in (market.get("newcomers") or [])[:10]:
-        tag = "" if n.get("is_slg") else " ⚠️ 新厂商待识别"
-        base = f"✨ **{n['name']}** 空降 **#{n['rank']}** — {n.get('publisher') or '?'}"
-        base += f"（{_fmt_money(n.get('revenue'))}）{_enrich_suffix(enrich.get(n.get('app_id')))}{tag}"
-        base += _articles_suffix(articles.get(n.get('app_id')))
+        aid = n.get("app_id")
+        tag = "" if n.get("is_slg") else "  ⚠️ 新厂商待识别"
+        en = enrich.get(aid) or {}
+        meta = _meta_line(genre=en.get("genre"), revenue=n.get("revenue"),
+                          downloads=n.get("downloads"),
+                          entity=entities.get(aid) or n.get("publisher"),
+                          release_date=en.get("release_date"))
+        base = f"✨ **{n['name']}** 空降 **#{n['rank']}**{tag}" + meta
+        base += _articles_suffix(articles.get(aid))
         lines.append(base)
     for n in (publisher.get("newcomers") or [])[:10]:
+        aid = n.get("app_id")
         rank = f"#{n['rank']}" if n.get("rank") else "进榜"
-        base = f"🏢 **{n['entity_name']}** 新品 **{n['name']}** {rank}"
-        base += _articles_suffix(articles.get(n.get('app_id')))
+        meta = _meta_line(revenue=n.get("revenue"), downloads=n.get("downloads"))
+        base = f"🏢 **{n['entity_name']}** 新品 **{n['name']}** {rank}" + meta
+        base += _articles_suffix(articles.get(aid))
         lines.append(base)
     return lines
 
 
 def build_daily_digest(per_combo: list[dict], today: str,
-                       articles: Optional[dict] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
+                       articles: Optional[dict] = None,
+                       entities: Optional[dict] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
     """全 combo 检测结果 → (title, markdown, btns)。全空 → None（不发）。
 
     per_combo: [{country, platform, movement: dict|None, market: dict|None, publisher: dict|None}]
     articles: {app_id: [WechatArticle]} 微信公众号文章（按 app_id 聚合）
+    entities: {app_id: 中文厂商主体}（市场新面孔 / 异动行补中文归属）
     """
     sections: list[str] = []
     btns: list[tuple[str, str]] = []
@@ -152,10 +211,11 @@ def build_daily_digest(per_combo: list[dict], today: str,
     for c in per_combo:
         lines: list[str] = []
         if c.get("movement"):
-            lines += build_movement_lines(c["movement"])
+            lines += build_movement_lines(c["movement"], entities=entities)
         if c.get("market") or c.get("publisher"):
             lines += build_newcomer_lines(c.get("market") or {}, c.get("publisher") or {},
-                                          enrich=c.get("enrich"), articles=articles)
+                                          enrich=c.get("enrich"), articles=articles,
+                                          entities=entities)
         if not lines:
             continue
         total += len(lines)
@@ -238,7 +298,27 @@ async def send_daily_digest() -> bool:
         except Exception:
             logger.warning("wechat articles search failed", exc_info=True)
 
-    msg = build_daily_digest(per_combo, today, articles=articles_by_app)
+    # 厂商主体中文归属：一次性加载匹配器，解析市场新面孔 / 异动行涉及的 app_id。
+    # 厂商新品行自带 entity_name，这里只补另两层（纯内存匹配，零查询/零配额）。
+    entities_by_app: dict = {}
+    try:
+        from app.services.newcomers import _load_entity_matchers, resolve_entity
+        matchers = await _load_entity_matchers()
+        for c in per_combo:
+            mv = c.get("movement") or {}
+            rows = list((c.get("market") or {}).get("newcomers") or [])
+            for k in ("new_entrants", "surges", "drops", "revenue_spikes"):
+                rows += mv.get(k) or []
+            for n in rows:
+                aid = n.get("app_id")
+                if aid and aid not in entities_by_app:
+                    name = resolve_entity(aid, n.get("publisher"), matchers)
+                    if name:
+                        entities_by_app[aid] = name
+    except Exception:
+        logger.warning("entity attribution for digest failed", exc_info=True)
+
+    msg = build_daily_digest(per_combo, today, articles=articles_by_app, entities=entities_by_app)
     if msg is None:
         logger.info("daily digest: nothing to report for %s", today)
         return False

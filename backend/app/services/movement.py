@@ -91,12 +91,14 @@ async def detect_movement(country: str, platform: str, today: str) -> dict:
             summary["new_entrants"].append({
                 "app_id": r.app_id, "name": _label(r), "icon_url": r.icon_url,
                 "prev_rank": p.rank if p else None, "cur_rank": r.rank,
+                "publisher": r.publisher, "revenue": r.revenue, "downloads": r.downloads,
             })
             continue
         if p.rank - r.rank >= jump:
             summary["surges"].append({
                 "app_id": r.app_id, "name": _label(r), "icon_url": r.icon_url,
                 "prev_rank": p.rank, "cur_rank": r.rank,
+                "publisher": r.publisher, "revenue": r.revenue, "downloads": r.downloads,
             })
         if p.revenue and r.revenue is not None and p.revenue > 0:
             pct = (r.revenue - p.revenue) / p.revenue * 100
@@ -112,9 +114,11 @@ async def detect_movement(country: str, platform: str, today: str) -> dict:
             continue
         c = cur.get(p.app_id)
         if c is None or c.rank is None or c.rank > topn:
+            src = c if c is not None else p  # 现状指标优先取今日行；彻底掉榜则退回昨日行
             summary["drops"].append({
                 "app_id": p.app_id, "name": _label(p), "icon_url": p.icon_url,
                 "prev_rank": p.rank, "cur_rank": c.rank if c else None,
+                "publisher": p.publisher, "revenue": src.revenue, "downloads": src.downloads,
             })
 
     return summary
