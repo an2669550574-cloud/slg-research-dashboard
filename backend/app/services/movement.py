@@ -105,6 +105,7 @@ async def detect_movement(country: str, platform: str, today: str) -> dict:
             if abs(pct) >= rev_pct:
                 summary["revenue_spikes"].append({
                     "app_id": r.app_id, "name": _label(r), "icon_url": r.icon_url,
+                    "cur_rank": r.rank,  # 收入异动行带上当前名次，给收入涨跌一个排名参照系
                     "prev_revenue": p.revenue, "cur_revenue": r.revenue, "pct": pct,
                 })
 

@@ -70,9 +70,9 @@ def _combo_label(country: str, platform: str) -> str:
     return f"{flag} {cc} · {pf} 畅销榜".strip()
 
 
-def _meta_line(*, genre=None, revenue=None, downloads=None, entity=None, release_date=None) -> str:
-    """条目下方的中文富化子行：品类 · 日收入 · 下载 · 厂商 · 上架日。全空则不占行。
-    用 markdown 硬换行（行尾两空格 + \\n）+ 全角空格缩进，使其挂在主行下方。"""
+def _meta_line(*, genre=None, revenue=None, downloads=None, entity=None) -> str:
+    """条目下方的中文富化子行：品类 · 日收入 · 下载 · 厂商。全空则不占行。
+    用 markdown 引用块（`> `）渲染成灰色竖条子行——与主标题行形成层次、折行自带缩进。"""
     parts = []
     if (g := _genre_cn(genre)):
         parts.append(g)
@@ -82,11 +82,9 @@ def _meta_line(*, genre=None, revenue=None, downloads=None, entity=None, release
         parts.append(f"下载 {_fmt_num(downloads)}")
     if entity:
         parts.append(f"厂商 {entity}")
-    if release_date:
-        parts.append(f"上架 {release_date}")
     if not parts:
         return ""
-    return "  \n　" + " · ".join(parts)
+    return "\n> " + " · ".join(parts)
 
 
 def _store_url(app_id: str, country: str, platform: str) -> Optional[str]:
@@ -117,10 +115,12 @@ def build_movement_lines(s: dict, entities: Optional[dict] = None) -> list[str]:
         to = "榜外" if e["cur_rank"] is None else f"#{e['cur_rank']}"
         lines.append(f"📉 **{e['name']}** 跌出 Top 榜（#{e['prev_rank']} → {to}）" + _meta(e))
     for e in s["revenue_spikes"]:
-        # 收入异动主行已带前后金额，子行只补厂商归属（不重复金额）。
+        # 收入异动主行已带前后金额，厂商归属**内联行尾**（不另起引用块——否则子行只剩
+        # 孤零零一个厂商，跟在折行的主行后面很飘）。
         ent = entities.get(e.get("app_id")) or e.get("publisher")
-        lines.append(f"💰 **{e['name']}** 收入 **{e['pct']:+.0f}%**（{_fmt_money(e['prev_revenue'])} → {_fmt_money(e['cur_revenue'])}）"
-                     + (_meta_line(entity=ent) if ent else ""))
+        rk = f"现 #{e['cur_rank']} · " if e.get("cur_rank") else ""  # 收入涨跌的排名参照系
+        tail = f" · 厂商 {ent}" if ent else ""
+        lines.append(f"💰 **{e['name']}** {rk}收入 **{e['pct']:+.0f}%**（{_fmt_money(e['prev_revenue'])} → {_fmt_money(e['cur_revenue'])}）{tail}")
     return lines
 
 
@@ -181,8 +181,7 @@ def build_newcomer_lines(market: dict, publisher: dict,
         en = enrich.get(aid) or {}
         meta = _meta_line(genre=en.get("genre"), revenue=n.get("revenue"),
                           downloads=n.get("downloads"),
-                          entity=entities.get(aid) or n.get("publisher"),
-                          release_date=en.get("release_date"))
+                          entity=entities.get(aid) or n.get("publisher"))
         base = f"✨ **{n['name']}** 空降 **#{n['rank']}**{tag}" + meta
         base += _articles_suffix(articles.get(aid))
         lines.append(base)
@@ -209,17 +208,21 @@ def build_daily_digest(per_combo: list[dict], today: str,
     btns: list[tuple[str, str]] = []
     total = 0
     for c in per_combo:
-        lines: list[str] = []
-        if c.get("movement"):
-            lines += build_movement_lines(c["movement"], entities=entities)
-        if c.get("market") or c.get("publisher"):
-            lines += build_newcomer_lines(c.get("market") or {}, c.get("publisher") or {},
+        mv_blocks = build_movement_lines(c["movement"], entities=entities) if c.get("movement") else []
+        nc_blocks = (build_newcomer_lines(c.get("market") or {}, c.get("publisher") or {},
                                           enrich=c.get("enrich"), articles=articles,
                                           entities=entities)
-        if not lines:
+                     if (c.get("market") or c.get("publisher")) else [])
+        if not mv_blocks and not nc_blocks:
             continue
-        total += len(lines)
-        sections.append(f"**{_combo_label(c['country'], c['platform'])}**\n\n" + "\n\n".join(lines))
+        total += len(mv_blocks) + len(nc_blocks)
+        # 分组小标题（异动 / 新品）让领导一眼分清「榜在动」vs「有新东西」。
+        parts = [f"**{_combo_label(c['country'], c['platform'])}**"]
+        if mv_blocks:
+            parts.append("【榜单异动】\n\n" + "\n\n".join(mv_blocks))
+        if nc_blocks:
+            parts.append("【新品上架】\n\n" + "\n\n".join(nc_blocks))
+        sections.append("\n\n".join(parts))
         # 按钮：每 combo 取头一条异动/新品的商店页（最多 5 个，按 combo 顺序）
         for e in ((c.get("movement") or {}).get("new_entrants") or [])[:1] + \
                  ((c.get("movement") or {}).get("surges") or [])[:1]:
