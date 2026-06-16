@@ -190,6 +190,20 @@ async def _load_entity_matchers() -> list[dict]:
     ]
 
 
+def resolve_entity(app_id: Optional[str], publisher: Optional[str],
+                   matchers: list[dict]) -> Optional[str]:
+    """(app_id / 发行商串) → 已建档主体的**中文名**，命中不了返回 None。
+    复用 detect_publisher_newcomers 的归属规则（钉选 app_id 优先，其次 alias 子序列），
+    给市场新面孔 / 异动行补「厂商主体中文归属」用——纯内存匹配，零查询。"""
+    pub_tokens = _tokens(publisher)
+    for m in matchers:
+        if app_id and app_id in m["app_ids"]:
+            return m["entity_name"]
+        if pub_tokens and any(_kw_hit(pub_tokens, kw) for kw in m["kw_tokens"]):
+            return m["entity_name"]
+    return None
+
+
 async def detect_publisher_newcomers(
     country: str,
     platform: str,

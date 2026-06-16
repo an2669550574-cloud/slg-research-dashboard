@@ -78,8 +78,8 @@ def test_daily_digest_human_readable_no_machine_codes():
         "revenue_spikes": [{"app_id": "123", "name": "寒霜启示录",
                             "prev_revenue": 10000, "cur_revenue": 14500, "pct": 45.0}],
     }
-    market = {"newcomers": [{"rank": 12, "name": "神秘新游", "publisher": "Mystery Studio",
-                             "revenue": 123000, "is_slg": False}]}
+    market = {"newcomers": [{"app_id": "999", "rank": 12, "name": "神秘新游", "publisher": "Mystery Studio",
+                             "revenue": 123000, "downloads": 5200, "is_slg": False}]}
     publisher = {"newcomers": [{"entity_name": "江娱互动", "name": "Top Heroes 顶级英雄", "rank": 77}]}
     per_combo = [
         {"country": "US", "platform": "ios", "movement": movement,
@@ -94,8 +94,10 @@ def test_daily_digest_human_readable_no_machine_codes():
     assert "📉 **旧王朝** 跌出 Top 榜（#5 → 榜外）" in text
     assert "💰 **寒霜启示录** 收入 **+45%**" in text
     assert "✨ **神秘新游** 空降 **#12**" in text and "新厂商待识别" in text
+    # 富化子行：日收入压缩 K/M、下载量、厂商归属（未匹配主体退回发行商名）
+    assert "日收入 $123K" in text and "下载 5K" in text and "厂商 Mystery Studio" in text
     assert "🏢 **江娱互动** 新品 **Top Heroes 顶级英雄** #77" in text
-    assert "US · ios" in text and "JP" not in text  # 空 combo 不出段
+    assert "🇺🇸 美国 · iOS 畅销榜" in text and "JP" not in text  # 中文市场标签；空 combo 不出段
     # iOS 数字 app_id → 商店页按钮
     assert ("寒霜启示录 →", "https://apps.apple.com/us/app/id123") in btns
 
