@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
-import { Search, Plus, Trash2, Loader2, Check } from 'lucide-react'
+import { Search, Plus, Trash2, Loader2, Check, ChevronRight } from 'lucide-react'
 import { wechatAccountsApi } from '../lib/api'
 import type { WechatAccountCandidate } from '../lib/types'
 import { useT } from '../i18n'
@@ -13,6 +13,8 @@ export function WechatAccountsPanel() {
   const qc = useQueryClient()
   const [query, setQuery] = useState('')
   const [candidates, setCandidates] = useState<WechatAccountCandidate[] | null>(null)
+  // 已订阅列表折叠：用户未手动操作前，按数量自动决定（多则默认收起，免得页面太长）
+  const [listOpenOverride, setListOpenOverride] = useState<boolean | null>(null)
 
   const { data: accounts = [] } = useQuery({
     queryKey: ['wechatAccounts'],
@@ -39,6 +41,7 @@ export function WechatAccountsPanel() {
 
   const subscribed = new Set(accounts.map(a => a.fakeid))
   const runSearch = () => { const q = query.trim(); if (q) searchMut.mutate(q) }
+  const listOpen = listOpenOverride ?? accounts.length <= 8
 
   return (
     <div className="bg-surface border border-default rounded-xl p-4 space-y-3">
@@ -96,30 +99,46 @@ export function WechatAccountsPanel() {
             </div>
       )}
 
-      {/* 已订阅列表 */}
-      <div className="space-y-1.5 pt-1">
-        {accounts.length === 0
-          ? <div className="text-[11px] text-muted">{tt.empty}</div>
-          : accounts.map(a => (
-              <div key={a.id} className="flex items-center gap-3 px-2.5 py-1.5 rounded-lg border border-default">
-                <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${a.enabled ? 'bg-emerald-400' : 'bg-muted'}`} />
-                <span className={`text-xs flex-1 truncate ${a.enabled ? 'text-primary' : 'text-muted line-through'}`}>{a.name}</span>
-                <button
-                  onClick={() => toggleMut.mutate({ id: a.id, enabled: !a.enabled })}
-                  disabled={toggleMut.isPending}
-                  className="shrink-0 text-[11px] text-secondary hover:text-primary px-1.5 py-0.5"
-                >
-                  {a.enabled ? tt.disable : tt.enable}
-                </button>
-                <button
-                  onClick={() => { if (confirm(tt.removeConfirm(a.name))) removeMut.mutate(a.id) }}
-                  className="shrink-0 text-muted hover:text-red-400 p-1"
-                  aria-label={tt.remove}
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+      {/* 已订阅列表（可折叠） */}
+      <div className="pt-1">
+        {accounts.length === 0 ? (
+          <div className="text-[11px] text-muted">{tt.empty}</div>
+        ) : (
+          <>
+            <button
+              onClick={() => setListOpenOverride(!listOpen)}
+              aria-expanded={listOpen}
+              className="flex items-center gap-1.5 w-full text-left text-[11px] text-muted hover:text-secondary transition-colors py-0.5"
+            >
+              <ChevronRight className={`w-3.5 h-3.5 shrink-0 transition-transform ${listOpen ? 'rotate-90' : ''}`} />
+              {tt.subscribedCount(accounts.length)}
+            </button>
+            {listOpen && (
+              <div className="space-y-1.5 mt-1.5">
+                {accounts.map(a => (
+                  <div key={a.id} className="flex items-center gap-3 px-2.5 py-1.5 rounded-lg border border-default">
+                    <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${a.enabled ? 'bg-emerald-400' : 'bg-muted'}`} />
+                    <span className={`text-xs flex-1 truncate ${a.enabled ? 'text-primary' : 'text-muted line-through'}`}>{a.name}</span>
+                    <button
+                      onClick={() => toggleMut.mutate({ id: a.id, enabled: !a.enabled })}
+                      disabled={toggleMut.isPending}
+                      className="shrink-0 text-[11px] text-secondary hover:text-primary px-1.5 py-0.5"
+                    >
+                      {a.enabled ? tt.disable : tt.enable}
+                    </button>
+                    <button
+                      onClick={() => { if (confirm(tt.removeConfirm(a.name))) removeMut.mutate(a.id) }}
+                      className="shrink-0 text-muted hover:text-red-400 p-1"
+                      aria-label={tt.remove}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
+          </>
+        )}
       </div>
     </div>
   )

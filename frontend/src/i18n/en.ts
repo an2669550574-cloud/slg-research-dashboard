@@ -203,6 +203,7 @@ export const en: Translations = {
     remove: 'Remove',
     removeConfirm: (name: string) => `Remove subscription "${name}"? The digest will stop searching it.`,
     empty: 'No subscribed accounts yet',
+    subscribedCount: (n: number) => `${n} subscribed`,
     added: (name: string) => `Subscribed ${name}`,
     removed: 'Removed',
     loadFailed: 'Failed to load subscriptions',
