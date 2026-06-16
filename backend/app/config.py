@@ -29,12 +29,12 @@ class Settings(BaseSettings):
     # 缓存比源头还短就纯属浪费配额。默认 24 小时。
     SENSOR_TOWER_CACHE_TTL: int = 86400
     # 每月最多调用 Sensor Tower 真实 API 的次数（硬上限）。公司账号 3000/月共享。
-    # 配额分级后稳态自动同步 ≈ 19/月（US 周级 + JP/KR 月级 + 销量仅主市场双周），
-    # 留余量给手动刷新/详情页按需取 → 设 50 封顶。
+    # 配额分级后稳态自动同步 ≈ 74/月（US 每日拉榜 + JP/KR 月级 + 销量仅主市场周级），
+    # 留余量给手动刷新/详情页按需取 → 设 100 封顶。
     # 超额后自动降级到 sensor_tower_snapshots 表里的最后一次成功响应（不报错、不断站）。
     # 注意：此值低于 RANK_BACKFILL_QUOTA_FLOOR(150) → 历史回填默认被该上限挡停
     #（设计内：回填是一次性活，补完即可停；要补未完的历史临时把本值调高再跑）。
-    SENSOR_TOWER_MONTHLY_LIMIT: int = 50
+    SENSOR_TOWER_MONTHLY_LIMIT: int = 100
     # 用量越过该百分比时打一条 ERROR（经 Sentry 推送），让维护者在配额耗尽
     # 前就收到主动告警，而不是等线上静默降级到过期快照才发现。
     SENSOR_TOWER_QUOTA_WARN_PCT: int = 80
@@ -86,10 +86,11 @@ class Settings(BaseSettings):
     # 不在此列但在 SYNC_RANKING_COMBOS 内的 = 次市场（用 SECONDARY 间隔）。
     SYNC_RANKING_COMBOS_PRIMARY: str = "US:ios,US:android"
     # 主/次市场拉榜间隔（天）。1=每天，2=隔日，7=每周，30=每月。
-    # 现策略：US 是唯一在盯的主市场 → 周级；JP/KR 仅偶尔回看 → 月级。
-    # rank 长期趋势走本地库读，次市场月级足够。要 US 更勤就把 PRIMARY 调小。
-    # 用量：US 2组×周 ≈ 8.7/月 + JP/KR 4组×月 ≈ 4/月 ≈ 12.7/月拉榜。
-    SYNC_PRIMARY_INTERVAL_DAYS: int = 7
+    # 现策略：US 是唯一在盯的主市场 → 每日（全市场新面孔检出要日级，不漏新品）；
+    # JP/KR 仅偶尔回看 → 月级。rank 长期趋势走本地库读，次市场月级足够。
+    # 要省配额就把 PRIMARY 调大（7=周级，回到双周新面孔）。
+    # 用量：US 2组×每日 ≈ 61/月 + JP/KR 4组×月 ≈ 4/月 ≈ 65/月拉榜。
+    SYNC_PRIMARY_INTERVAL_DAYS: int = 1
     SYNC_SECONDARY_INTERVAL_DAYS: int = 30
     # 日榜销量(下载/收入)抓取间隔（天）。ST 销量估算本身 T-1/T-2、日间波动小。
     # 非抓取日榜行 dl/rev 落 NULL（库内诚实），日榜读路径用该 app 上次已知值
