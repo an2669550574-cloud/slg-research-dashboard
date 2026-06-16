@@ -75,7 +75,7 @@ def test_daily_digest_human_readable_no_machine_codes():
         "new_entrants": [{"app_id": "123", "name": "寒霜启示录", "prev_rank": None, "cur_rank": 3}],
         "surges": [{"app_id": "456", "name": "Last War", "prev_rank": 18, "cur_rank": 3}],
         "drops": [{"app_id": "789", "name": "旧王朝", "prev_rank": 5, "cur_rank": None}],
-        "revenue_spikes": [{"app_id": "123", "name": "寒霜启示录",
+        "revenue_spikes": [{"app_id": "123", "name": "寒霜启示录", "cur_rank": 3,
                             "prev_revenue": 10000, "cur_revenue": 14500, "pct": 45.0}],
     }
     market = {"newcomers": [{"app_id": "999", "rank": 12, "name": "神秘新游", "publisher": "Mystery Studio",
@@ -92,12 +92,14 @@ def test_daily_digest_human_readable_no_machine_codes():
     assert "🆕 **寒霜启示录** 空降 **#3**" in text
     assert "📈 **Last War** #18 → **#3**（↑15）" in text
     assert "📉 **旧王朝** 跌出 Top 榜（#5 → 榜外）" in text
-    assert "💰 **寒霜启示录** 收入 **+45%**" in text
+    assert "💰 **寒霜启示录** 现 #3 · 收入 **+45%**" in text  # 收入异动带当前名次参照
     assert "✨ **神秘新游** 空降 **#12**" in text and "新厂商待识别" in text
-    # 富化子行：日收入压缩 K/M、下载量、厂商归属（未匹配主体退回发行商名）
-    assert "日收入 $123K" in text and "下载 5K" in text and "厂商 Mystery Studio" in text
+    # 富化子行（引用块）：日收入压缩 K/M、下载量、厂商归属（未匹配主体退回发行商名）
+    assert "> 日收入 $123K · 下载 5K · 厂商 Mystery Studio" in text
     assert "🏢 **江娱互动** 新品 **Top Heroes 顶级英雄** #77" in text
     assert "🇺🇸 美国 · iOS 畅销榜" in text and "JP" not in text  # 中文市场标签；空 combo 不出段
+    # 分组小标题：异动与新品分区
+    assert "【榜单异动】" in text and "【新品上架】" in text
     # iOS 数字 app_id → 商店页按钮
     assert ("寒霜启示录 →", "https://apps.apple.com/us/app/id123") in btns
 
