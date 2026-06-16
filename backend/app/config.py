@@ -91,13 +91,15 @@ class Settings(BaseSettings):
     # 用量：US 2组×周 ≈ 8.7/月 + JP/KR 4组×月 ≈ 4/月 ≈ 12.7/月拉榜。
     SYNC_PRIMARY_INTERVAL_DAYS: int = 7
     SYNC_SECONDARY_INTERVAL_DAYS: int = 30
-    # 日榜销量(下载/收入)抓取间隔（天）。ST 销量估算本身 T-1/T-2、日间波动小，
-    # 双周刷新对竞品研究足够。非抓取日榜行 dl/rev 落 NULL（库内诚实），日榜
-    # 读路径用该 app 上次已知值兜底显示，详情页趋势自然退化成稀疏数据点。
+    # 日榜销量(下载/收入)抓取间隔（天）。ST 销量估算本身 T-1/T-2、日间波动小。
+    # 非抓取日榜行 dl/rev 落 NULL（库内诚实），日榜读路径用该 app 上次已知值
+    # 兜底显示，详情页趋势自然退化成稀疏数据点。
     # ⚠️ 销量只对**主市场**抓（见 scheduler._scheduled_sync 的 with_sales 门控）：
     # 次市场月级拉榜永远 with_sales=False，JP/KR 销量改走详情页按需取。
-    # 默认 14：US 2组×双周 ≈ 4.3/月销量调用。1 = 每天抓（等于不解耦）。
-    SALES_FETCH_INTERVAL_DAYS: int = 14
+    # 取 7 与主市场拉榜(SYNC_PRIMARY_INTERVAL_DAYS)对齐：每个拉榜日都顺带拉销量，
+    # 仪表盘金额与排名同周级刷新。用量：US 2组×每周 ≈ 8.7/月销量调用
+    # （较双周 14 多 ≈ 4.3/月）。设 14 = 双周解耦省配额；1 = 每天抓。
+    SALES_FETCH_INTERVAL_DAYS: int = 7
 
     # ── 历史排名回填 ─────────────────────────────────────────────
     # ST 无"某 app 排名历史"接口；只能逐 (combo, 日期) 拉整张品类榜
