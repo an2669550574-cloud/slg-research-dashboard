@@ -10,7 +10,7 @@
 import re
 from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func, or_, delete as sa_delete
+from sqlalchemy import select, func, or_, and_, delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db, utcnow_naive
@@ -139,8 +139,33 @@ async def _ranking_pairs(db: AsyncSession):
     return [(app_id, pub, name, icon, rev) for app_id, pub, name, icon, rev in res.all()]
 
 
-def _match_for_entity(pairs, alias_kw_tokens, app_id_set, itunes_products=()):
-    """返回 (旗下产品数, 按收入降序的 top3 PublisherTopProductOut)。
+async def _rank_by_app(db: AsyncSession) -> dict[str, tuple[int, str]]:
+    """{app_id: (跨市场最佳名次, 命中市场如 "JP/android")}。只看各 (国家,平台) **最新一期**
+    快照——反映「当前畅销」而非历史最好，供「按畅销榜名次」排序。零 ST 配额、纯本地库。"""
+    latest = (
+        select(GameRanking.country, GameRanking.platform,
+               func.max(GameRanking.date).label("md"))
+        .group_by(GameRanking.country, GameRanking.platform)
+    ).subquery()
+    rows = (await db.execute(
+        select(GameRanking.app_id, GameRanking.country, GameRanking.platform, GameRanking.rank)
+        .join(latest, and_(GameRanking.country == latest.c.country,
+                           GameRanking.platform == latest.c.platform,
+                           GameRanking.date == latest.c.md))
+    )).all()
+    best: dict[str, tuple[int, str]] = {}
+    for app_id, country, platform, rank in rows:
+        if rank is None:
+            continue
+        cur = best.get(app_id)
+        if cur is None or rank < cur[0]:
+            best[app_id] = (rank, f"{country}/{platform}")
+    return best
+
+
+def _match_for_entity(pairs, alias_kw_tokens, app_id_set, itunes_products=(), rank_by_app=None):
+    """返回 (旗下产品数, 按收入降序的 top3 PublisherTopProductOut, 最佳名次, 命中市场)。
+    rank_by_app 给定时算旗下产品在各市场最新快照的最小名次（best_rank/market），否则两者为 None。
 
     两个来源并集：
     - **榜单 game_rankings**（pairs）：app_id 精确钉 或 alias token 命中代表 publisher；带收入。
@@ -169,7 +194,14 @@ def _match_for_entity(pairs, alias_kw_tokens, app_id_set, itunes_products=()):
         matched[track_id] = (0, name, artwork)
     ordered = sorted(matched.items(), key=lambda kv: -kv[1][0])
     top = [PublisherTopProductOut(app_id=aid, name=v[1], icon_url=v[2]) for aid, v in ordered[:3]]
-    return len(matched), top
+    best_rank: int | None = None
+    best_market: str | None = None
+    if rank_by_app:
+        for aid in matched:
+            hit = rank_by_app.get(aid)
+            if hit and (best_rank is None or hit[0] < best_rank):
+                best_rank, best_market = hit
+    return len(matched), top, best_rank, best_market
 
 
 async def _itunes_products_by_entity(db: AsyncSession) -> dict[int, list[tuple]]:
@@ -197,7 +229,8 @@ async def _itunes_products(entity_id: int, db: AsyncSession) -> list[tuple]:
 
 
 def _build_out(e: PublisherEntity, aliases, app_ids, sources, parents, children,
-               product_count: int | None, itunes_artists=(), top_products=()) -> PublisherEntityOut:
+               product_count: int | None, itunes_artists=(), top_products=(),
+               best_rank: int | None = None, best_market: str | None = None) -> PublisherEntityOut:
     return PublisherEntityOut(
         id=e.id, name=e.name, name_en=e.name_en, hq_region=e.hq_region,
         is_slg=e.is_slg, brief=e.brief, sort_order=e.sort_order,
@@ -208,6 +241,7 @@ def _build_out(e: PublisherEntity, aliases, app_ids, sources, parents, children,
         provenance_tier=provenance_tier([s.source_type for s in sources]),
         parents=parents, children=children,
         product_count=product_count, top_products=list(top_products),
+        best_rank=best_rank, best_rank_market=best_market,
         created_at=e.created_at, updated_at=e.updated_at,
     )
 
@@ -224,6 +258,7 @@ async def list_publishers(db: AsyncSession = Depends(get_db)):
     all_sources = (await db.execute(select(PublisherSource).order_by(PublisherSource.id))).scalars().all()
     all_relations = (await db.execute(select(PublisherRelation).order_by(PublisherRelation.id))).scalars().all()
     pairs = await _ranking_pairs(db)
+    rank_by_app = await _rank_by_app(db)
     itunes_by_entity = await _itunes_products_by_entity(db)
 
     by_alias: dict[int, list[PublisherAlias]] = {}
@@ -253,11 +288,13 @@ async def list_publishers(db: AsyncSession = Depends(get_db)):
         sources = by_source.get(e.id, [])
         kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
         app_id_set = {a.app_id for a in app_ids}
-        count, top = _match_for_entity(pairs, kw_tokens, app_id_set, itunes_by_entity.get(e.id, []))
+        count, top, best_rank, best_market = _match_for_entity(
+            pairs, kw_tokens, app_id_set, itunes_by_entity.get(e.id, []), rank_by_app)
         out.append(_build_out(
             e, aliases, app_ids, sources,
             by_parents.get(e.id, []), by_children.get(e.id, []),
             count, itunes_artists=by_artist.get(e.id, []), top_products=top,
+            best_rank=best_rank, best_market=best_market,
         ))
     return out
 
@@ -281,11 +318,14 @@ async def create_publisher(data: PublisherEntityCreate, db: AsyncSession = Depen
     sources = await _sources(e.id, db)
     parents, children = await _relations(e.id, db)
     pairs = await _ranking_pairs(db)
+    rank_by_app = await _rank_by_app(db)
     kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
-    count, top = _match_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids},
-                                   await _itunes_products(e.id, db))
+    count, top, best_rank, best_market = _match_for_entity(
+        pairs, kw_tokens, {a.app_id for a in app_ids},
+        await _itunes_products(e.id, db), rank_by_app)
     return _build_out(e, aliases, app_ids, sources, parents, children, count,
-                      itunes_artists=await _itunes_artists(e.id, db), top_products=top)
+                      itunes_artists=await _itunes_artists(e.id, db), top_products=top,
+                      best_rank=best_rank, best_market=best_market)
 
 
 @router.get("/{entity_id}", response_model=PublisherEntityOut)
@@ -295,11 +335,14 @@ async def get_publisher(entity_id: int, db: AsyncSession = Depends(get_db)):
     sources = await _sources(entity_id, db)
     parents, children = await _relations(entity_id, db)
     pairs = await _ranking_pairs(db)
+    rank_by_app = await _rank_by_app(db)
     kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
-    count, top = _match_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids},
-                                   await _itunes_products(e.id, db))
+    count, top, best_rank, best_market = _match_for_entity(
+        pairs, kw_tokens, {a.app_id for a in app_ids},
+        await _itunes_products(e.id, db), rank_by_app)
     return _build_out(e, aliases, app_ids, sources, parents, children, count,
-                      itunes_artists=await _itunes_artists(e.id, db), top_products=top)
+                      itunes_artists=await _itunes_artists(e.id, db), top_products=top,
+                      best_rank=best_rank, best_market=best_market)
 
 
 @router.put("/{entity_id}", response_model=PublisherEntityOut)
@@ -314,11 +357,14 @@ async def update_publisher(entity_id: int, data: PublisherEntityUpdate, db: Asyn
     sources = await _sources(entity_id, db)
     parents, children = await _relations(entity_id, db)
     pairs = await _ranking_pairs(db)
+    rank_by_app = await _rank_by_app(db)
     kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
-    count, top = _match_for_entity(pairs, kw_tokens, {a.app_id for a in app_ids},
-                                   await _itunes_products(e.id, db))
+    count, top, best_rank, best_market = _match_for_entity(
+        pairs, kw_tokens, {a.app_id for a in app_ids},
+        await _itunes_products(e.id, db), rank_by_app)
     return _build_out(e, aliases, app_ids, sources, parents, children, count,
-                      itunes_artists=await _itunes_artists(e.id, db), top_products=top)
+                      itunes_artists=await _itunes_artists(e.id, db), top_products=top,
+                      best_rank=best_rank, best_market=best_market)
 
 
 @router.delete("/{entity_id}")

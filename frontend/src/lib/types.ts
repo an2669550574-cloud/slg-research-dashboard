@@ -795,6 +795,10 @@ export interface PublisherEntity {
   product_count: number | null
   /** 折叠态图标锚点：旗下产品按收入降序的前 3 个（icon 来自 game_rankings，零 ST） */
   top_products: PublisherTopProduct[]
+  /** 旗下产品在各市场最新快照里的最佳（最小）畅销榜名次；无上榜产品为 null */
+  best_rank: number | null
+  /** best_rank 命中的市场，如 "JP/android" */
+  best_rank_market: string | null
   created_at: IsoDateString
   updated_at: IsoDateString
 }

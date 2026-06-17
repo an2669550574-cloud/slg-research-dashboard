@@ -161,6 +161,10 @@ class PublisherEntityOut(BaseModel):
     product_count: Optional[int] = None  # 旗下产品数；列表视图按需填，详情视图必填
     # 折叠态产品图标锚点：旗下产品按收入降序的前 3 个（icon 来自 game_rankings，零 ST 配额）。
     top_products: list[PublisherTopProductOut] = []
+    # 旗下产品在「各市场最新快照」里的最佳（最小）畅销榜名次 + 命中市场（如 "JP/android"）。
+    # 用于「按畅销榜名次」排序，让畅销头部公司排最前；无上榜产品（纯控股母体/软启动）则为空。
+    best_rank: Optional[int] = None
+    best_rank_market: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
