@@ -34,6 +34,17 @@ export const NODE_H = 48
 const H_GAP = 36
 const V_GAP = 72
 
+/**
+ * 「资本系」并组口径——三视图（集团 tab / 股权图谱 / 资本树）共用的单一源：
+ * 控制级（全资 wholly_owned / 控股 controlling）+ 品牌型关联（affiliate，如莉莉丝→Farlight、
+ * 元趣→Funfly）才把两个主体并进同一资本系。纯财务参股（minority，如三七→星合 24%）**不并组**——
+ * 只作主体卡上的关联链接，不进连通分量、不做资本树嵌套、不进集团卡。改口径只动这一处。
+ */
+export const GROUP_EDGE_TYPES: ReadonlySet<PublisherRelationType> = new Set<PublisherRelationType>([
+  'wholly_owned', 'controlling', 'affiliate',
+])
+export const isGroupEdge = (relationType: PublisherRelationType) => GROUP_EDGE_TYPES.has(relationType)
+
 /** 收集去重后的全部股权边。每条关系在 parent.children 与 child.parents 各出现一次，按 relation_id 去重。 */
 function collectEdges(entities: PublisherEntity[]): EquityEdge[] {
   const known = new Set(entities.map(e => e.id))
@@ -79,17 +90,19 @@ function computeDepths(ids: number[], parentsOf: Map<number, number[]>): Map<num
  * 每个分量内节点已算好 (x, y)（母公司在上、子层居中、按母公司重心排序减少交叉）。
  */
 export function buildEquityGraph(entities: PublisherEntity[]): EquityComponent[] {
-  const edges = collectEdges(entities)
-  if (edges.length === 0) return []
+  const allEdges = collectEdges(entities)
+  // 只有控制级 + 品牌型关联（GROUP_EDGE_TYPES）参与「连通分量 / 分层 / 布局」；纯参股不并组。
+  const structural = allEdges.filter(e => isGroupEdge(e.relationType))
+  if (structural.length === 0) return []
   const byId = new Map(entities.map(e => [e.id, e]))
 
-  // 无向邻接 → BFS 分连通分量
+  // 无向邻接 → BFS 分连通分量（只用 structural 边，参股不连通）
   const adj = new Map<number, Set<number>>()
   const link = (a: number, b: number) => {
     if (!adj.has(a)) adj.set(a, new Set())
     adj.get(a)!.add(b)
   }
-  for (const ed of edges) { link(ed.parentId, ed.childId); link(ed.childId, ed.parentId) }
+  for (const ed of structural) { link(ed.parentId, ed.childId); link(ed.childId, ed.parentId) }
 
   const seen = new Set<number>()
   const componentIds: number[][] = []
@@ -111,9 +124,12 @@ export function buildEquityGraph(entities: PublisherEntity[]): EquityComponent[]
   const components: EquityComponent[] = []
   for (const ids of componentIds) {
     const idSet = new Set(ids)
-    const compEdges = edges.filter(e => idSet.has(e.parentId) && idSet.has(e.childId))
+    // 分层/布局只看 structural 边；参股不抬高子层、不决定母重心。
+    const structEdges = structural.filter(e => idSet.has(e.parentId) && idSet.has(e.childId))
+    // 渲染用全部组内边：含组内成员之间的参股（两端同组才画虚线；跨组参股不入图，只在卡上留链接）。
+    const compEdges = allEdges.filter(e => idSet.has(e.parentId) && idSet.has(e.childId))
     const parentsOf = new Map<number, number[]>()
-    for (const e of compEdges) {
+    for (const e of structEdges) {
       if (!parentsOf.has(e.childId)) parentsOf.set(e.childId, [])
       parentsOf.get(e.childId)!.push(e.parentId)
     }

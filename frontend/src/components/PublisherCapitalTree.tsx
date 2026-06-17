@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { useT } from '../i18n'
 import { Building2, CornerDownRight, Globe, Landmark, ShieldCheck } from 'lucide-react'
 import { GameIcon } from './GameIcon'
+import { isGroupEdge } from '../lib/equityGraph'
 import type { PublisherEntity, PublisherRelationType } from '../lib/types'
 
 /** 资本树视角：以顶层资本方/母体为根的缩进清单，按「谁的资本系」快速浏览。
@@ -9,7 +10,9 @@ import type { PublisherEntity, PublisherRelationType } from '../lib/types'
  *  与 SVG 图谱互补——图谱看拓扑，这里看档案：每行带关系 chip（类型+持股%）、
  *  旗下产品 icon、溯源盾，点行进详情抽屉。多母公司的主体只挂在「最强关系」的
  *  母公司下，其余母公司处显示灰字引用行（不重复展开防双计）；DFS 带 visited 防环。
- *  无任何关系的主体归到底部「独立厂商」组。纯前端、零新端点。
+ *  并组口径与集团 tab / 股权图谱共用 GROUP_EDGE_TYPES：只有控制级 + 品牌型关联进树，
+ *  纯财务参股（minority）不嵌套——只在详情卡留关联链接。无并组关系的主体归底部
+ *  「独立厂商」组（含仅有参股关系的主体）。纯前端、零新端点。
  */
 
 // 关系强度排序：多母公司时挂最强的一条下面
@@ -28,16 +31,19 @@ interface TreeRow {
 
 function buildTrees(entities: PublisherEntity[]): { trees: TreeRow[][]; independents: PublisherEntity[] } {
   const byId = new Map(entities.map(e => [e.id, e]))
+  // 入树口径 = 并组口径：只数控制级 + 品牌型关联（GROUP_EDGE_TYPES），参股不算入树。
   const inGraph = new Set<number>()
   for (const e of entities) {
-    if (e.parents.length || e.children.length) inGraph.add(e.id)
+    const has = (links: { entity_id: number; relation_type: PublisherRelationType }[]) =>
+      links.some(l => isGroupEdge(l.relation_type) && byId.has(l.entity_id))
+    if (has(e.parents) || has(e.children)) inGraph.add(e.id)
   }
 
-  // 每个主体的「主挂母公司」= 关系最强的一条（同强度取 relation_id 小的，稳定）
+  // 每个主体的「主挂母公司」= 并组关系里最强的一条（同强度取 relation_id 小的，稳定）；参股不挂。
   const primaryParent = new Map<number, number>()
   for (const e of entities) {
     const ps = e.parents
-      .filter(p => byId.has(p.entity_id))
+      .filter(p => isGroupEdge(p.relation_type) && byId.has(p.entity_id))
       .sort((a, b) => REL_RANK[a.relation_type] - REL_RANK[b.relation_type] || a.relation_id - b.relation_id)
     if (ps.length) primaryParent.set(e.id, ps[0].entity_id)
   }
@@ -65,8 +71,9 @@ function buildTrees(entities: PublisherEntity[]): { trees: TreeRow[][]; independ
       if (visited.has(e.id)) return
       visited.add(e.id)
       rows.push({ entity: e, depth, rel, ghost: false })
+      // 只展开并组关系的子节点；参股子公司不进树（在自己的资本系或独立厂区里出现）。
       const kids = e.children
-        .filter(c => byId.has(c.entity_id))
+        .filter(c => isGroupEdge(c.relation_type) && byId.has(c.entity_id))
         .sort((a, b) => REL_RANK[a.relation_type] - REL_RANK[b.relation_type] || a.relation_id - b.relation_id)
       for (const c of kids) {
         const child = byId.get(c.entity_id)!

@@ -10,6 +10,7 @@ import { PageHeader } from '../components/PageHeader'
 import { QueryError } from '../components/QueryError'
 import { PublisherGraph } from '../components/PublisherGraph'
 import { PublisherCapitalTree } from '../components/PublisherCapitalTree'
+import { GROUP_EDGE_TYPES } from '../lib/equityGraph'
 import { GameIcon } from '../components/GameIcon'
 import { useLocalStorageState } from '../lib/hooks'
 import type {
@@ -45,9 +46,8 @@ function isStaleForReview(sources: { as_of: string | null }[]): { stale: boolean
 type SortKey = 'rank' | 'default' | 'products' | 'provenance'
 const PROV_RANK: Record<string, number> = { primary: 0, secondary: 1, none: 2 }
 
-// 「集团」并组用的控制级关系：全资 / 控股 / 关联（品牌型，如莉莉丝→Farlight、元趣→Funfly）。
-// 纯财务参股（minority，如三七→星合 24%）不并组——只在卡上留关联链接。
-const GROUP_EDGE_TYPES = new Set<PublisherRelationType>(['wholly_owned', 'controlling', 'affiliate'])
+// 「集团」并组口径与股权图谱 / 资本树共用 GROUP_EDGE_TYPES（控制级 + 品牌型关联，排除参股），
+// 单一源在 lib/equityGraph，避免三视图口径各自漂移。
 // 按畅销榜名次排序的取值：sort_order 非 0 优先（人工置顶），其次最佳名次升序、无榜沉底。
 const NO_RANK = 100000
 const rankSortVal = (e: PublisherEntity) => e.best_rank ?? NO_RANK
