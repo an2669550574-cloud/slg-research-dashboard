@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { Plus, Trash2, Pencil, X, Building2, Globe, ChevronRight, Link2, ShieldCheck, Network, Search, List, Landmark, CornerDownRight, LayoutGrid, ListTree, Download as DownloadIcon, AlertTriangle } from 'lucide-react'
+import { Plus, Trash2, Pencil, X, Building2, Globe, ChevronRight, ChevronDown, Link2, ShieldCheck, Network, Search, List, Landmark, CornerDownRight, LayoutGrid, ListTree, Download as DownloadIcon, AlertTriangle, TrendingUp, Layers } from 'lucide-react'
 import { publishersApi } from '../lib/api'
 import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
@@ -42,8 +42,15 @@ function isStaleForReview(sources: { as_of: string | null }[]): { stale: boolean
   const latest = latestAsOf(sources)
   return { stale: !!latest && monthsSince(latest) >= STALE_REVIEW_MONTHS, latest }
 }
-type SortKey = 'default' | 'products' | 'provenance'
+type SortKey = 'rank' | 'default' | 'products' | 'provenance'
 const PROV_RANK: Record<string, number> = { primary: 0, secondary: 1, none: 2 }
+
+// 「集团」并组用的控制级关系：全资 / 控股 / 关联（品牌型，如莉莉丝→Farlight、元趣→Funfly）。
+// 纯财务参股（minority，如三七→星合 24%）不并组——只在卡上留关联链接。
+const GROUP_EDGE_TYPES = new Set<PublisherRelationType>(['wholly_owned', 'controlling', 'affiliate'])
+// 按畅销榜名次排序的取值：sort_order 非 0 优先（人工置顶），其次最佳名次升序、无榜沉底。
+const NO_RANK = 100000
+const rankSortVal = (e: PublisherEntity) => e.best_rank ?? NO_RANK
 
 type EntityForm = {
   name: string
@@ -86,8 +93,9 @@ export default function PublishersManage() {
   const [onlyResearched, setOnlyResearched] = useState(false)
   // 分段（全部/运营体/资本方）、排序、按股权分组——持久化用户偏好
   const [segment, setSegment] = useLocalStorageState<Segment>('pub.segment', 'all')
-  const [sortKey, setSortKey] = useLocalStorageState<SortKey>('pub.sort', 'default')
-  const [grouped, setGrouped] = useLocalStorageState<boolean>('pub.grouped', false)
+  const [sortKey, setSortKey] = useLocalStorageState<SortKey>('pub.sort', 'rank')
+  const [grouped, setGrouped] = useLocalStorageState<boolean>('pub.grouped', true)
+  const [expandedGroups, setExpandedGroups] = useState<Set<number>>(new Set())
   // 网格 / 股权图谱视图切换；图谱画全量（不受搜索/筛选影响）
   const [view, setView] = useState<'grid' | 'graph' | 'tree'>('grid')
 
@@ -170,37 +178,154 @@ export default function PublishersManage() {
       || e.aliases.some(a => a.keyword.toLowerCase().includes(q) || (a.label || '').toLowerCase().includes(q))
   })
 
-  // 展示序列：分组（按股权嵌套 DFS，母公司后紧跟子公司）或扁平排序。
-  // 网格里不做缩进，层级靠卡片上的「↳ 母公司」行表达，分组只决定顺序。
-  const displayList: PublisherEntity[] = (() => {
-    if (grouped) {
-      const visibleIds = new Set(filtered.map(e => e.id))
-      const childrenOf = new Map<number, PublisherEntity[]>()
-      filtered.forEach(e => e.parents.forEach(p => {
-        if (visibleIds.has(p.entity_id)) {
-          if (!childrenOf.has(p.entity_id)) childrenOf.set(p.entity_id, [])
-          childrenOf.get(p.entity_id)!.push(e)
-        }
-      }))
-      const hasVisibleParent = (e: PublisherEntity) => e.parents.some(p => visibleIds.has(p.entity_id))
-      const out: PublisherEntity[] = []
-      const seen = new Set<number>()
-      const visit = (e: PublisherEntity) => {
-        if (seen.has(e.id)) return  // 防环 / 防多母公司重复
-        seen.add(e.id)
-        out.push(e)
-        ;(childrenOf.get(e.id) || []).forEach(visit)
-      }
-      filtered.filter(e => !hasVisibleParent(e)).forEach(visit)
-      filtered.forEach(e => { if (!seen.has(e.id)) out.push(e) })  // 环残留兜底
-      return out
-    }
-    const sorted = [...filtered]
-    if (sortKey === 'products') sorted.sort((a, b) => (b.product_count ?? 0) - (a.product_count ?? 0))
-    else if (sortKey === 'provenance') sorted.sort((a, b) =>
+  // 扁平排序比较器。'rank'=按畅销榜名次（sort_order 非 0 人工置顶优先，其次最佳名次升序、无榜沉底）。
+  const cmpRank = (a: PublisherEntity, b: PublisherEntity) => {
+    const aPin = (a.sort_order || 0) !== 0, bPin = (b.sort_order || 0) !== 0
+    if (aPin !== bPin) return aPin ? -1 : 1
+    if (aPin && bPin && a.sort_order !== b.sort_order) return a.sort_order - b.sort_order
+    return rankSortVal(a) - rankSortVal(b) || a.name.localeCompare(b.name)
+  }
+  const sortFlat = (list: PublisherEntity[]): PublisherEntity[] => {
+    const s = [...list]
+    if (sortKey === 'products') s.sort((a, b) => (b.product_count ?? 0) - (a.product_count ?? 0))
+    else if (sortKey === 'provenance') s.sort((a, b) =>
       (PROV_RANK[a.provenance_tier] ?? 9) - (PROV_RANK[b.provenance_tier] ?? 9) || a.name.localeCompare(b.name))
-    return sorted
+    else if (sortKey === 'default') s.sort((a, b) => (a.sort_order - b.sort_order) || a.name.localeCompare(b.name))
+    else s.sort(cmpRank)  // 'rank'
+    return s
+  }
+
+  // 集团折叠瓦片：按控制级关系（GROUP_EDGE_TYPES）求连通分量，多成员=一个集团瓦片，单成员=独立卡。
+  type Tile =
+    | { kind: 'group'; key: number; root: PublisherEntity; members: PublisherEntity[]; bestRank: number }
+    | { kind: 'single'; entity: PublisherEntity }
+  const tileRank = (t: Tile) => t.kind === 'group' ? t.bestRank : rankSortVal(t.entity)
+  const tileName = (t: Tile) => t.kind === 'group' ? t.root.name : t.entity.name
+  const displayTiles: Tile[] = (() => {
+    if (!grouped) return sortFlat(filtered).map(e => ({ kind: 'single', entity: e } as Tile))
+    const ids = new Set(filtered.map(e => e.id))
+    const uf = new Map<number, number>(filtered.map(e => [e.id, e.id]))
+    const find = (x: number): number => { while (uf.get(x) !== x) { uf.set(x, uf.get(uf.get(x)!)!); x = uf.get(x)! } return x }
+    const union = (a: number, b: number) => { const ra = find(a), rb = find(b); if (ra !== rb) uf.set(ra, rb) }
+    filtered.forEach(e => e.parents.forEach(p => {
+      if (GROUP_EDGE_TYPES.has(p.relation_type) && ids.has(p.entity_id)) union(e.id, p.entity_id)
+    }))
+    const comps = new Map<number, PublisherEntity[]>()
+    filtered.forEach(e => { const r = find(e.id); (comps.get(r) ?? comps.set(r, []).get(r)!).push(e) })
+    const tiles: Tile[] = []
+    comps.forEach(members => {
+      if (members.length === 1) { tiles.push({ kind: 'single', entity: members[0] }); return }
+      const memIds = new Set(members.map(m => m.id))
+      const hasInternalParent = (e: PublisherEntity) =>
+        e.parents.some(p => GROUP_EDGE_TYPES.has(p.relation_type) && memIds.has(p.entity_id))
+      const roots = members.filter(m => !hasInternalParent(m))
+      // 组头优先：资本方（is_slg=0）> 子公司多 > id 小；无明确根则取成员第一
+      const root = [...(roots.length ? roots : members)].sort((a, b) =>
+        (Number(!b.is_slg) - Number(!a.is_slg)) || (b.children.length - a.children.length) || (a.id - b.id))[0]
+      const rest = sortFlat(members.filter(m => m.id !== root.id))
+      tiles.push({ kind: 'group', key: root.id, root, members: [root, ...rest], bestRank: Math.min(...members.map(rankSortVal)) })
+    })
+    tiles.sort((a, b) => tileRank(a) - tileRank(b) || tileName(a).localeCompare(tileName(b)))
+    return tiles
   })()
+
+  const toggleGroup = (key: number) =>
+    setExpandedGroups(s => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n })
+
+  // 单张主体卡（独立厂 + 集团展开后的成员都复用）。
+  const renderCard = (e: PublisherEntity) => {
+    const cap = isCapital(e)
+    const parent = e.parents[0]
+    return (
+      <div
+        key={e.id}
+        id={`publisher-card-${e.id}`}
+        onClick={() => setDetailId(e.id)}
+        className={`group flex flex-col border rounded-xl p-4 cursor-pointer transition-colors ${cap
+          ? 'bg-elevated/60 border-default hover:border-amber-500/40'
+          : 'bg-surface border-default hover:border-brand-500/50'}`}
+      >
+        <div className="flex items-start gap-2.5">
+          <span className={`mt-0.5 shrink-0 w-8 h-8 rounded-lg flex items-center justify-center ${cap ? 'bg-amber-500/10' : 'bg-accent/10'}`}>
+            {cap ? <Landmark size={15} className="text-amber-500" /> : <Building2 size={15} className="text-accent" />}
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5">
+              <span className={`font-display font-bold truncate ${cap ? 'text-secondary' : 'text-primary'}`}>{e.name}</span>
+              {e.hq_region && e.hq_region !== '国内' && (
+                <span className="inline-flex items-center gap-0.5 text-[10px] text-secondary shrink-0"><Globe size={10} />{e.hq_region}</span>
+              )}
+            </div>
+            <div className="text-[11px] text-muted truncate">
+              {e.name_en || (cap ? tt.capitalBadge : tt.slgBadge)}
+            </div>
+          </div>
+          <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" onClick={ev => ev.stopPropagation()}>
+            <button onClick={() => openEdit(e)} title={t.common.edit}
+              className="p-1.5 text-muted hover:text-brand-400 transition-colors"><Pencil size={13} /></button>
+            <button onClick={() => handleDelete(e)} disabled={deleteMut.isPending} title={t.common.delete}
+              className="p-1.5 text-muted hover:text-red-400 transition-colors"><Trash2 size={13} /></button>
+          </div>
+        </div>
+
+        <div className="mt-3 space-y-1.5 min-h-[34px]">
+          {e.top_products.length > 0 ? (
+            <div className="flex items-center gap-1.5">
+              {e.top_products.map(p => (
+                <GameIcon key={p.app_id} src={p.icon_url} name={p.name ?? p.app_id} className="w-8 h-8 rounded-lg" />
+              ))}
+              {!!e.product_count && e.product_count > e.top_products.length && (
+                <span className="text-[11px] text-muted font-data">+{e.product_count - e.top_products.length}</span>
+              )}
+            </div>
+          ) : (
+            <div className="text-[11px] text-muted leading-8">
+              {cap
+                ? tt.capitalNoProducts
+                : (e.sources.length > 0 || e.parents.length > 0 || e.children.length > 0)
+                  ? tt.sumNoProducts
+                  : tt.sumEmpty}
+            </div>
+          )}
+          {parent && (
+            <div className="flex items-center gap-1 text-[11px] text-muted min-w-0">
+              <CornerDownRight size={11} className="shrink-0" />
+              <span className="truncate">
+                {tt.sumParent} {parent.name}（{tt.relationTypes[parent.relation_type]}{parent.stake_pct != null ? ' ' + tt.stakeSuffix(parent.stake_pct) : ''}）{e.parents.length > 1 ? ' 等' : ''}
+              </span>
+            </div>
+          )}
+        </div>
+
+        <div className="mt-auto pt-3 flex items-center gap-2 text-[11px] text-muted font-data border-t border-default/60">
+          {e.best_rank != null && (
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-brand-500/10 text-brand-300 font-medium"
+              title={e.best_rank_market ?? ''}>
+              <TrendingUp size={10} />{tt.rankChip(e.best_rank, e.best_rank_market ?? '')}
+            </span>
+          )}
+          {!!e.product_count && <span>{tt.statProducts} <b className="text-secondary font-medium">{e.product_count}</b></span>}
+          {e.aliases.length > 0 && <span>{tt.statAliases} <b className="text-secondary font-medium">{e.aliases.length}</b></span>}
+          {e.children.length > 0 && <span>{tt.statChildren} <b className="text-secondary font-medium">{e.children.length}</b></span>}
+          {e.sources.length > 0 && <span>{tt.statSources} <b className="text-secondary font-medium">{e.sources.length}</b></span>}
+          <span className="ml-auto inline-flex items-center gap-1.5">
+            {isStaleForReview(e.sources).stale && (
+              <AlertTriangle size={12} className="text-amber-500">
+                <title>{tt.reviewStale(latestAsOf(e.sources)!)}</title>
+              </AlertTriangle>
+            )}
+            <ShieldCheck
+              size={13}
+              className={e.provenance_tier === 'primary' ? 'text-emerald-400' : e.provenance_tier === 'secondary' ? 'text-amber-500' : 'text-muted/40'}
+            >
+              <title>{e.provenance_tier === 'primary' ? tt.provPrimary : e.provenance_tier === 'secondary' ? tt.provSecondary : tt.provNone}</title>
+            </ShieldCheck>
+            <ChevronRight size={13} className="text-muted/50 group-hover:text-secondary group-hover:translate-x-0.5 transition-all" />
+          </span>
+        </div>
+      </div>
+    )
+  }
 
   const detail = detailId != null ? entities.find(e => e.id === detailId) ?? null : null
 
@@ -382,20 +507,20 @@ export default function PublishersManage() {
                   </button>
                 ))}
               </div>
-              {/* 按股权分组（开则忽略排序、母公司后紧跟子公司）*/}
+              {/* 集团折叠：开则按控制级股权把树收成一张可展开的集团卡 */}
               <button
                 onClick={() => setGrouped(!grouped)}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${grouped ? 'bg-brand-600 text-white border-transparent' : 'bg-elevated text-secondary hover:text-primary border-default'}`}
               >
                 <Network size={12} />{tt.groupByEquity}
               </button>
-              {/* 排序（分组态禁用，因层级即序）*/}
+              {/* 排序（分组态下决定集团/独立卡之间及组内成员次序）*/}
               <select
                 value={sortKey}
                 onChange={e => setSortKey(e.target.value as SortKey)}
-                disabled={grouped}
                 className="bg-elevated border border-default rounded-lg px-2.5 py-1.5 text-xs text-primary focus:outline-none focus:border-brand-500 disabled:opacity-40"
               >
+                <option value="rank">{tt.sortRank}</option>
                 <option value="default">{tt.sortDefault}</option>
                 <option value="products">{tt.sortProducts}</option>
                 <option value="provenance">{tt.sortProvenance}</option>
@@ -420,93 +545,53 @@ export default function PublishersManage() {
         <div className="text-center text-muted text-sm py-12 bg-surface border border-default rounded-xl">{tt.emptyFiltered}</div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {displayList.map(e => {
-            const cap = isCapital(e)
-            const parent = e.parents[0]
+          {displayTiles.map(tile => {
+            if (tile.kind === 'single') return renderCard(tile.entity)
+            const open = expandedGroups.has(tile.key)
+            const totalProducts = tile.members.reduce((s, m) => s + (m.product_count ?? 0), 0)
+            const groupIcons = tile.members.flatMap(m => m.top_products).slice(0, 5)
             return (
               <div
-                key={e.id}
-                id={`publisher-card-${e.id}`}
-                onClick={() => setDetailId(e.id)}
-                className={`group flex flex-col border rounded-xl p-4 cursor-pointer transition-colors ${cap
-                  ? 'bg-elevated/60 border-default hover:border-amber-500/40'
-                  : 'bg-surface border-default hover:border-brand-500/50'}`}
+                key={`g-${tile.key}`}
+                className={`flex flex-col border rounded-xl border-brand-500/30 bg-elevated/40 ${open ? 'sm:col-span-2 xl:col-span-3' : ''}`}
               >
-                {/* 头：类型图标 + 名字（英文名次行）+ 操作 */}
-                <div className="flex items-start gap-2.5">
-                  <span className={`mt-0.5 shrink-0 w-8 h-8 rounded-lg flex items-center justify-center ${cap ? 'bg-amber-500/10' : 'bg-accent/10'}`}>
-                    {cap ? <Landmark size={15} className="text-amber-500" /> : <Building2 size={15} className="text-accent" />}
+                <button
+                  onClick={() => toggleGroup(tile.key)}
+                  title={tt.groupExpandHint}
+                  className="flex items-center gap-2.5 p-4 text-left w-full"
+                >
+                  <span className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center bg-brand-500/10">
+                    <Layers size={15} className="text-brand-400" />
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
-                      <span className={`font-display font-bold truncate ${cap ? 'text-secondary' : 'text-primary'}`}>{e.name}</span>
-                      {e.hq_region && e.hq_region !== '国内' && (
-                        <span className="inline-flex items-center gap-0.5 text-[10px] text-secondary shrink-0"><Globe size={10} />{e.hq_region}</span>
-                      )}
+                      <span className="font-display font-bold text-primary truncate">{tile.root.name}</span>
+                      <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-brand-500/15 text-brand-300 font-medium">{tt.groupBadge}</span>
                     </div>
                     <div className="text-[11px] text-muted truncate">
-                      {e.name_en || (cap ? tt.capitalBadge : tt.slgBadge)}
+                      {tt.groupMembers(tile.members.length)} · {tt.statProducts} {totalProducts}
                     </div>
                   </div>
-                  <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" onClick={ev => ev.stopPropagation()}>
-                    <button onClick={() => openEdit(e)} title={t.common.edit}
-                      className="p-1.5 text-muted hover:text-brand-400 transition-colors"><Pencil size={13} /></button>
-                    <button onClick={() => handleDelete(e)} disabled={deleteMut.isPending} title={t.common.delete}
-                      className="p-1.5 text-muted hover:text-red-400 transition-colors"><Trash2 size={13} /></button>
+                  {tile.bestRank < NO_RANK && (
+                    <span className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-brand-500/10 text-brand-300 text-[11px] font-medium font-data">
+                      <TrendingUp size={10} />{tt.groupBestRank(tile.bestRank)}
+                    </span>
+                  )}
+                  {open
+                    ? <ChevronDown size={15} className="shrink-0 text-muted" />
+                    : <ChevronRight size={15} className="shrink-0 text-muted" />}
+                </button>
+                {open ? (
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 p-3 pt-0">
+                    {tile.members.map(renderCard)}
                   </div>
-                </div>
-
-                {/* 身：产品图标条（运营体）/ 控股说明（资本方）+ 母公司行 */}
-                <div className="mt-3 space-y-1.5 min-h-[34px]">
-                  {e.top_products.length > 0 ? (
-                    <div className="flex items-center gap-1.5">
-                      {e.top_products.map(p => (
-                        <GameIcon key={p.app_id} src={p.icon_url} name={p.name ?? p.app_id} className="w-8 h-8 rounded-lg" />
-                      ))}
-                      {!!e.product_count && e.product_count > e.top_products.length && (
-                        <span className="text-[11px] text-muted font-data">+{e.product_count - e.top_products.length}</span>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="text-[11px] text-muted leading-8">
-                      {cap
-                        ? tt.capitalNoProducts
-                        : (e.sources.length > 0 || e.parents.length > 0 || e.children.length > 0)
-                          ? tt.sumNoProducts
-                          : tt.sumEmpty}
-                    </div>
-                  )}
-                  {parent && (
-                    <div className="flex items-center gap-1 text-[11px] text-muted min-w-0">
-                      <CornerDownRight size={11} className="shrink-0" />
-                      <span className="truncate">
-                        {tt.sumParent} {parent.name}（{tt.relationTypes[parent.relation_type]}{parent.stake_pct != null ? ' ' + tt.stakeSuffix(parent.stake_pct) : ''}）{e.parents.length > 1 ? ' 等' : ''}
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                {/* 脚：统计 + 溯源状态（盾标）+ 展开箭头 */}
-                <div className="mt-auto pt-3 flex items-center gap-2 text-[11px] text-muted font-data border-t border-default/60">
-                  {!!e.product_count && <span>{tt.statProducts} <b className="text-secondary font-medium">{e.product_count}</b></span>}
-                  {e.aliases.length > 0 && <span>{tt.statAliases} <b className="text-secondary font-medium">{e.aliases.length}</b></span>}
-                  {e.children.length > 0 && <span>{tt.statChildren} <b className="text-secondary font-medium">{e.children.length}</b></span>}
-                  {e.sources.length > 0 && <span>{tt.statSources} <b className="text-secondary font-medium">{e.sources.length}</b></span>}
-                  <span className="ml-auto inline-flex items-center gap-1.5">
-                    {isStaleForReview(e.sources).stale && (
-                      <AlertTriangle size={12} className="text-amber-500">
-                        <title>{tt.reviewStale(latestAsOf(e.sources)!)}</title>
-                      </AlertTriangle>
-                    )}
-                    <ShieldCheck
-                      size={13}
-                      className={e.provenance_tier === 'primary' ? 'text-emerald-400' : e.provenance_tier === 'secondary' ? 'text-amber-500' : 'text-muted/40'}
-                    >
-                      <title>{e.provenance_tier === 'primary' ? tt.provPrimary : e.provenance_tier === 'secondary' ? tt.provSecondary : tt.provNone}</title>
-                    </ShieldCheck>
-                    <ChevronRight size={13} className="text-muted/50 group-hover:text-secondary group-hover:translate-x-0.5 transition-all" />
-                  </span>
-                </div>
+                ) : groupIcons.length > 0 && (
+                  <div className="px-4 pb-4 -mt-1 flex items-center gap-1.5">
+                    {groupIcons.map(p => (
+                      <GameIcon key={p.app_id} src={p.icon_url} name={p.name ?? p.app_id} className="w-7 h-7 rounded-md" />
+                    ))}
+                  </div>
+                )}
               </div>
             )
           })}
