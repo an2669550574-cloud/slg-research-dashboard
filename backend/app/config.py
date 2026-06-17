@@ -47,9 +47,13 @@ class Settings(BaseSettings):
     SENSOR_TOWER_RANKING_CATEGORY_IOS: str = "7017"
     SENSOR_TOWER_RANKING_CATEGORY_ANDROID: str = "game_strategy"
     SENSOR_TOWER_RANKING_LIMIT: int = 100
-    # Android 名字/图标靠抓 Google Play 商品页（无批量接口，一个包名一次请求）。
-    # 只补前 N 个：榜尾对竞品监控无意义，限量压低耗时与封 IP 风险。
-    SENSOR_TOWER_ANDROID_ENRICH_LIMIT: int = 60
+    # Android 名字/图标/发行商靠抓 Google Play 商品页（无批量接口，一个包名一次
+    # 请求，零 ST 配额）。只补前 N 个：榜尾对竞品监控无意义，限量压低耗时与封 IP
+    # 风险。60→200：US 安卓畅销策略榜 #61-200 段密集分布已建档主体的产品
+    # （com.elex / com.camelgames / com.kingsgroup / com.plarium / com.innogames /
+    # com.tap4fun 等），富化只到 60 时这些行 publisher=None、无法按马甲归一；提到
+    # 200 让其补到发行商字段后自动接回资本树（并发 8、纯 GP 抓取，约 3.3× 耗时）。
+    SENSOR_TOWER_ANDROID_ENRICH_LIMIT: int = 200
     # 日榜前 N 名补真实下载/收入。sales_report_estimates 的 app_ids 支持逗号
     # 批量 → 一次调用拿全部 N 个，每市场每天仅 +1 次配额。0 = 关闭（日榜
     # 不显示下载收入，去详情页看）。
