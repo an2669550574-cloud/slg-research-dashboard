@@ -701,10 +701,13 @@ export const zh = {
     },
     stakeSuffix: (n: number) => `持股 ${n}%`,
     noteOptionalPlaceholder: '备注（可选，如持股口径/退出史）',
-    // 列表 / 股权图谱视图
+    // 集团 / 列表 / 股权图谱 / 资本树视图
+    viewGroups: '集团',
     viewList: '列表',
     viewGraph: '股权图谱',
     viewTree: '资本树',
+    sectionGroups: (n: number) => `资本集团（${n}）`,
+    sectionIndependents: (n: number) => `独立厂商（${n}）`,
     treeHint: '以顶层资本方/母体为根的层级清单；行内 chip 为股权关系（虚线下划线=有备注可悬停），多母公司主体挂最强关系下、其余处灰字引用。',
     treeMembers: (n: number) => `${n} 个主体`,
     treeNoChildren: '暂无已录入的下层主体',
