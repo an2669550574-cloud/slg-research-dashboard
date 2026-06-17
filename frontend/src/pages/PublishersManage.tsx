@@ -91,13 +91,13 @@ export default function PublishersManage() {
   const [detailId, setDetailId] = useState<number | null>(null)
   const [search, setSearch] = useState('')
   const [onlyResearched, setOnlyResearched] = useState(false)
-  // 分段（全部/运营体/资本方）、排序、按股权分组——持久化用户偏好
+  // 分段（全部/运营体/资本方）、排序——持久化用户偏好
   const [segment, setSegment] = useLocalStorageState<Segment>('pub.segment', 'all')
   const [sortKey, setSortKey] = useLocalStorageState<SortKey>('pub.sort', 'rank')
-  const [grouped, setGrouped] = useLocalStorageState<boolean>('pub.grouped', true)
   const [expandedGroups, setExpandedGroups] = useState<Set<number>>(new Set())
-  // 网格 / 股权图谱视图切换；图谱画全量（不受搜索/筛选影响）
-  const [view, setView] = useState<'grid' | 'graph' | 'tree'>('grid')
+  // 视图：集团（默认，先看资本集团分布）/ 列表（全部主体扁平按名次）/ 股权图谱 / 资本树。
+  // 图谱/资本树画全量（不受搜索/筛选影响）。
+  const [view, setView] = useLocalStorageState<'groups' | 'grid' | 'graph' | 'tree'>('pub.view', 'groups')
 
   const isEditing = mode.kind === 'edit'
   const isOpen = mode.kind !== 'closed'
@@ -195,14 +195,10 @@ export default function PublishersManage() {
     return s
   }
 
-  // 集团折叠瓦片：按控制级关系（GROUP_EDGE_TYPES）求连通分量，多成员=一个集团瓦片，单成员=独立卡。
-  type Tile =
-    | { kind: 'group'; key: number; root: PublisherEntity; members: PublisherEntity[]; bestRank: number }
-    | { kind: 'single'; entity: PublisherEntity }
-  const tileRank = (t: Tile) => t.kind === 'group' ? t.bestRank : rankSortVal(t.entity)
-  const tileName = (t: Tile) => t.kind === 'group' ? t.root.name : t.entity.name
-  const displayTiles: Tile[] = (() => {
-    if (!grouped) return sortFlat(filtered).map(e => ({ kind: 'single', entity: e } as Tile))
+  // 「集团」视图数据：按控制级关系（GROUP_EDGE_TYPES）求连通分量。多成员=集团（一张可展开
+  // 集团卡），单成员=独立厂商（单独成区，不与集团卡混排）。「列表」视图则全部扁平按名次。
+  type GroupTile = { key: number; root: PublisherEntity; members: PublisherEntity[]; bestRank: number }
+  const { groups, independents } = (() => {
     const ids = new Set(filtered.map(e => e.id))
     const uf = new Map<number, number>(filtered.map(e => [e.id, e.id]))
     const find = (x: number): number => { while (uf.get(x) !== x) { uf.set(x, uf.get(uf.get(x)!)!); x = uf.get(x)! } return x }
@@ -212,9 +208,10 @@ export default function PublishersManage() {
     }))
     const comps = new Map<number, PublisherEntity[]>()
     filtered.forEach(e => { const r = find(e.id); (comps.get(r) ?? comps.set(r, []).get(r)!).push(e) })
-    const tiles: Tile[] = []
+    const grp: GroupTile[] = []
+    const solo: PublisherEntity[] = []
     comps.forEach(members => {
-      if (members.length === 1) { tiles.push({ kind: 'single', entity: members[0] }); return }
+      if (members.length === 1) { solo.push(members[0]); return }
       const memIds = new Set(members.map(m => m.id))
       const hasInternalParent = (e: PublisherEntity) =>
         e.parents.some(p => GROUP_EDGE_TYPES.has(p.relation_type) && memIds.has(p.entity_id))
@@ -223,14 +220,66 @@ export default function PublishersManage() {
       const root = [...(roots.length ? roots : members)].sort((a, b) =>
         (Number(!b.is_slg) - Number(!a.is_slg)) || (b.children.length - a.children.length) || (a.id - b.id))[0]
       const rest = sortFlat(members.filter(m => m.id !== root.id))
-      tiles.push({ kind: 'group', key: root.id, root, members: [root, ...rest], bestRank: Math.min(...members.map(rankSortVal)) })
+      grp.push({ key: root.id, root, members: [root, ...rest], bestRank: Math.min(...members.map(rankSortVal)) })
     })
-    tiles.sort((a, b) => tileRank(a) - tileRank(b) || tileName(a).localeCompare(tileName(b)))
-    return tiles
+    grp.sort((a, b) => a.bestRank - b.bestRank || a.root.name.localeCompare(b.root.name))
+    return { groups: grp, independents: sortFlat(solo) }
   })()
+  const flatList = sortFlat(filtered)
 
   const toggleGroup = (key: number) =>
     setExpandedGroups(s => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n })
+
+  // 一张可展开集团卡（折叠态：组头 + 最佳名次 + 产品图标条；展开态：占满整行铺成员卡）。
+  const renderGroupCard = (tile: GroupTile) => {
+    const open = expandedGroups.has(tile.key)
+    const totalProducts = tile.members.reduce((s, m) => s + (m.product_count ?? 0), 0)
+    const groupIcons = tile.members.flatMap(m => m.top_products).slice(0, 5)
+    return (
+      <div
+        key={`g-${tile.key}`}
+        className={`flex flex-col border rounded-xl border-brand-500/30 bg-elevated/40 ${open ? 'sm:col-span-2 xl:col-span-3' : ''}`}
+      >
+        <button
+          onClick={() => toggleGroup(tile.key)}
+          title={tt.groupExpandHint}
+          className="flex items-center gap-2.5 p-4 text-left w-full"
+        >
+          <span className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center bg-brand-500/10">
+            <Layers size={15} className="text-brand-400" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5">
+              <span className="font-display font-bold text-primary truncate">{tile.root.name}</span>
+              <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-brand-500/15 text-brand-300 font-medium">{tt.groupBadge}</span>
+            </div>
+            <div className="text-[11px] text-muted truncate">
+              {tt.groupMembers(tile.members.length)} · {tt.statProducts} {totalProducts}
+            </div>
+          </div>
+          {tile.bestRank < NO_RANK && (
+            <span className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-brand-500/10 text-brand-300 text-[11px] font-medium font-data">
+              <TrendingUp size={10} />{tt.groupBestRank(tile.bestRank)}
+            </span>
+          )}
+          {open
+            ? <ChevronDown size={15} className="shrink-0 text-muted" />
+            : <ChevronRight size={15} className="shrink-0 text-muted" />}
+        </button>
+        {open ? (
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 p-3 pt-0">
+            {tile.members.map(renderCard)}
+          </div>
+        ) : groupIcons.length > 0 && (
+          <div className="px-4 pb-4 -mt-1 flex items-center gap-1.5">
+            {groupIcons.map(p => (
+              <GameIcon key={p.app_id} src={p.icon_url} name={p.name ?? p.app_id} className="w-7 h-7 rounded-md" />
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   // 单张主体卡（独立厂 + 集团展开后的成员都复用）。
   const renderCard = (e: PublisherEntity) => {
@@ -461,18 +510,18 @@ export default function PublishersManage() {
       {!isLoading && !isError && entities.length > 0 && (
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex gap-1 bg-elevated rounded-lg p-1">
-            {(['grid', 'graph', 'tree'] as const).map(v => (
+            {(['groups', 'grid', 'graph', 'tree'] as const).map(v => (
               <button
                 key={v}
                 onClick={() => setView(v)}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${view === v ? 'bg-brand-600 text-white' : 'text-secondary hover:text-primary'}`}
               >
-                {v === 'grid' ? <LayoutGrid size={12} /> : v === 'graph' ? <Network size={12} /> : <ListTree size={12} />}
-                {v === 'grid' ? tt.viewList : v === 'graph' ? tt.viewGraph : tt.viewTree}
+                {v === 'groups' ? <Layers size={12} /> : v === 'grid' ? <LayoutGrid size={12} /> : v === 'graph' ? <Network size={12} /> : <ListTree size={12} />}
+                {v === 'groups' ? tt.viewGroups : v === 'grid' ? tt.viewList : v === 'graph' ? tt.viewGraph : tt.viewTree}
               </button>
             ))}
           </div>
-          {view === 'grid' && (
+          {(view === 'grid' || view === 'groups') && (
             <>
               <div className="relative flex-1 min-w-[180px] max-w-xs">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
@@ -507,14 +556,7 @@ export default function PublishersManage() {
                   </button>
                 ))}
               </div>
-              {/* 集团折叠：开则按控制级股权把树收成一张可展开的集团卡 */}
-              <button
-                onClick={() => setGrouped(!grouped)}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${grouped ? 'bg-brand-600 text-white border-transparent' : 'bg-elevated text-secondary hover:text-primary border-default'}`}
-              >
-                <Network size={12} />{tt.groupByEquity}
-              </button>
-              {/* 排序（分组态下决定集团/独立卡之间及组内成员次序）*/}
+              {/* 排序：集团视图里决定集团/独立厂之间及组内成员次序；列表视图决定整体次序 */}
               <select
                 value={sortKey}
                 onChange={e => setSortKey(e.target.value as SortKey)}
@@ -543,58 +585,36 @@ export default function PublishersManage() {
         <PublisherCapitalTree entities={entities} onSelectEntity={setDetailId} />
       ) : filtered.length === 0 ? (
         <div className="text-center text-muted text-sm py-12 bg-surface border border-default rounded-xl">{tt.emptyFiltered}</div>
+      ) : view === 'groups' ? (
+        <div className="space-y-6">
+          {/* 集团区：资本集团折叠卡（一打开先看这个） */}
+          {groups.length > 0 && (
+            <section className="space-y-3">
+              <div className="flex items-center gap-2 text-xs font-medium text-secondary">
+                <Layers size={13} className="text-brand-400" />
+                {tt.sectionGroups(groups.length)}
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {groups.map(renderGroupCard)}
+              </div>
+            </section>
+          )}
+          {/* 独立厂商区：无控制级股权关系的单体，单独成区不与集团卡混排 */}
+          {independents.length > 0 && (
+            <section className="space-y-3">
+              <div className="flex items-center gap-2 text-xs font-medium text-secondary">
+                <Building2 size={13} className="text-accent" />
+                {tt.sectionIndependents(independents.length)}
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {independents.map(renderCard)}
+              </div>
+            </section>
+          )}
+        </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {displayTiles.map(tile => {
-            if (tile.kind === 'single') return renderCard(tile.entity)
-            const open = expandedGroups.has(tile.key)
-            const totalProducts = tile.members.reduce((s, m) => s + (m.product_count ?? 0), 0)
-            const groupIcons = tile.members.flatMap(m => m.top_products).slice(0, 5)
-            return (
-              <div
-                key={`g-${tile.key}`}
-                className={`flex flex-col border rounded-xl border-brand-500/30 bg-elevated/40 ${open ? 'sm:col-span-2 xl:col-span-3' : ''}`}
-              >
-                <button
-                  onClick={() => toggleGroup(tile.key)}
-                  title={tt.groupExpandHint}
-                  className="flex items-center gap-2.5 p-4 text-left w-full"
-                >
-                  <span className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center bg-brand-500/10">
-                    <Layers size={15} className="text-brand-400" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-display font-bold text-primary truncate">{tile.root.name}</span>
-                      <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-brand-500/15 text-brand-300 font-medium">{tt.groupBadge}</span>
-                    </div>
-                    <div className="text-[11px] text-muted truncate">
-                      {tt.groupMembers(tile.members.length)} · {tt.statProducts} {totalProducts}
-                    </div>
-                  </div>
-                  {tile.bestRank < NO_RANK && (
-                    <span className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-brand-500/10 text-brand-300 text-[11px] font-medium font-data">
-                      <TrendingUp size={10} />{tt.groupBestRank(tile.bestRank)}
-                    </span>
-                  )}
-                  {open
-                    ? <ChevronDown size={15} className="shrink-0 text-muted" />
-                    : <ChevronRight size={15} className="shrink-0 text-muted" />}
-                </button>
-                {open ? (
-                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 p-3 pt-0">
-                    {tile.members.map(renderCard)}
-                  </div>
-                ) : groupIcons.length > 0 && (
-                  <div className="px-4 pb-4 -mt-1 flex items-center gap-1.5">
-                    {groupIcons.map(p => (
-                      <GameIcon key={p.app_id} src={p.icon_url} name={p.name ?? p.app_id} className="w-7 h-7 rounded-md" />
-                    ))}
-                  </div>
-                )}
-              </div>
-            )
-          })}
+          {flatList.map(renderCard)}
         </div>
       )}
 
