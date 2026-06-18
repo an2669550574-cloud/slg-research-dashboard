@@ -169,8 +169,12 @@ export default function PublishersManage() {
   const isCapital = (e: PublisherEntity) => !e.is_slg
   const q = search.trim().toLowerCase()
   const filtered = entities.filter(e => {
-    if (segment === 'operator' && isCapital(e)) return false
-    if (segment === 'capital' && !isCapital(e)) return false
+    // 集团视图忽略「运营体/资本方」分段——集团本就是资本方+运营体混合，按运营体过滤会把
+    // 资本方根节点（如世纪华通）剔除，整组散架成独立厂。分段只对「列表」视图生效。
+    if (view !== 'groups') {
+      if (segment === 'operator' && isCapital(e)) return false
+      if (segment === 'capital' && !isCapital(e)) return false
+    }
     if (onlyResearched && !isResearched(e)) return false
     if (!q) return true
     return e.name.toLowerCase().includes(q)
@@ -533,18 +537,20 @@ export default function PublishersManage() {
                   className="w-full bg-elevated border border-default rounded-lg pl-9 pr-3 py-2 text-sm text-primary placeholder:text-muted focus:outline-none focus:border-brand-500"
                 />
               </div>
-              {/* 分段：全部 / 运营体 / 资本方 */}
-              <div className="flex gap-1 bg-elevated rounded-lg p-1">
-                {(['all', 'operator', 'capital'] as const).map(v => (
-                  <button
-                    key={v}
-                    onClick={() => setSegment(v)}
-                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${segment === v ? 'bg-brand-600 text-white' : 'text-secondary hover:text-primary'}`}
-                  >
-                    {tt.segments[v]}
-                  </button>
-                ))}
-              </div>
+              {/* 分段：全部 / 运营体 / 资本方——只对「列表」视图有意义；集团视图混合资本方+运营体，隐藏避免误导 */}
+              {view !== 'groups' && (
+                <div className="flex gap-1 bg-elevated rounded-lg p-1">
+                  {(['all', 'operator', 'capital'] as const).map(v => (
+                    <button
+                      key={v}
+                      onClick={() => setSegment(v)}
+                      className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${segment === v ? 'bg-brand-600 text-white' : 'text-secondary hover:text-primary'}`}
+                    >
+                      {tt.segments[v]}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="flex gap-1 bg-elevated rounded-lg p-1">
                 {([false, true] as const).map(v => (
                   <button
