@@ -261,16 +261,16 @@ export default function PublishersManage() {
               <span className="font-display font-bold text-primary truncate">{tile.root.name}</span>
               <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-brand-500/15 text-brand-300 font-medium">{tt.groupBadge}</span>
             </div>
-            <div className="text-[11px] text-muted truncate">
-              {tt.groupMembers(tile.members.length)} · {tt.statProducts} {totalProducts}
+            <div className="text-[11px] text-muted flex items-center gap-1.5 min-w-0">
+              <span className="truncate">{tt.groupMembers(tile.members.length)} · {tt.statProducts} {totalProducts}</span>
+              {tile.bestRank < NO_RANK && (
+                <span className="shrink-0 inline-flex items-center gap-1 text-brand-300 font-data"
+                  title={tile.bestMarket ?? ''}>
+                  <TrendingUp size={10} />{tt.groupBestRank(tile.bestRank, tile.bestMarket ?? '')}
+                </span>
+              )}
             </div>
           </div>
-          {tile.bestRank < NO_RANK && (
-            <span className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-brand-500/10 text-brand-300 text-[11px] font-medium font-data"
-              title={tile.bestMarket ?? ''}>
-              <TrendingUp size={10} />{tt.groupBestRank(tile.bestRank, tile.bestMarket ?? '')}
-            </span>
-          )}
           {open
             ? <ChevronDown size={15} className="shrink-0 text-muted" />
             : <ChevronRight size={15} className="shrink-0 text-muted" />}
