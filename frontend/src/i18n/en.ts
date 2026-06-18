@@ -714,7 +714,7 @@ export const en: Translations = {
     rankNone: 'Unranked',
     groupBadge: 'Group',
     groupMembers: (n: number) => `${n} entities`,
-    groupBestRank: (rank: number) => `Best #${rank}`,
+    groupBestRank: (rank: number, market: string) => market ? `Best #${rank} ${market}` : `Best #${rank}`,
     groupExpandHint: 'Click to expand members',
     capitalBadge: 'Capital',
     capitalNoProducts: 'Holding entity · no direct products',

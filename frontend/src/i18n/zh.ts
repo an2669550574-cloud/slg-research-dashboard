@@ -730,7 +730,7 @@ export const zh = {
     rankNone: '未上榜',
     groupBadge: '集团',
     groupMembers: (n: number) => `${n} 家主体`,
-    groupBestRank: (rank: number) => `最佳畅销 #${rank}`,
+    groupBestRank: (rank: number, market: string) => market ? `最佳畅销 ${market} #${rank}` : `最佳畅销 #${rank}`,
     groupExpandHint: '点击展开成员',
     capitalBadge: '资本方',
     capitalNoProducts: '控股母体 · 无直营产品',

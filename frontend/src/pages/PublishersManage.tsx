@@ -201,7 +201,7 @@ export default function PublishersManage() {
 
   // 「集团」视图数据：按控制级关系（GROUP_EDGE_TYPES）求连通分量。多成员=集团（一张可展开
   // 集团卡），单成员=独立厂商（单独成区，不与集团卡混排）。「列表」视图则全部扁平按名次。
-  type GroupTile = { key: number; root: PublisherEntity; members: PublisherEntity[]; bestRank: number }
+  type GroupTile = { key: number; root: PublisherEntity; members: PublisherEntity[]; bestRank: number; bestMarket: string | null }
   const { groups, independents } = (() => {
     const ids = new Set(filtered.map(e => e.id))
     const uf = new Map<number, number>(filtered.map(e => [e.id, e.id]))
@@ -224,7 +224,11 @@ export default function PublishersManage() {
       const root = [...(roots.length ? roots : members)].sort((a, b) =>
         (Number(!b.is_slg) - Number(!a.is_slg)) || (b.children.length - a.children.length) || (a.id - b.id))[0]
       const rest = sortFlat(members.filter(m => m.id !== root.id))
-      grp.push({ key: root.id, root, members: [root, ...rest], bestRank: Math.min(...members.map(rankSortVal)) })
+      // 集团最佳名次取自「best_rank 最小」的成员——连同其命中市场一并带出，卡上才知道是哪国榜。
+      const top = members.reduce<PublisherEntity | null>(
+        (b, m) => (m.best_rank != null && (b == null || m.best_rank < b.best_rank!)) ? m : b, null)
+      grp.push({ key: root.id, root, members: [root, ...rest],
+        bestRank: top?.best_rank ?? NO_RANK, bestMarket: top?.best_rank_market ?? null })
     })
     grp.sort((a, b) => a.bestRank - b.bestRank || a.root.name.localeCompare(b.root.name))
     return { groups: grp, independents: sortFlat(solo) }
@@ -262,8 +266,9 @@ export default function PublishersManage() {
             </div>
           </div>
           {tile.bestRank < NO_RANK && (
-            <span className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-brand-500/10 text-brand-300 text-[11px] font-medium font-data">
-              <TrendingUp size={10} />{tt.groupBestRank(tile.bestRank)}
+            <span className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-brand-500/10 text-brand-300 text-[11px] font-medium font-data"
+              title={tile.bestMarket ?? ''}>
+              <TrendingUp size={10} />{tt.groupBestRank(tile.bestRank, tile.bestMarket ?? '')}
             </span>
           )}
           {open
