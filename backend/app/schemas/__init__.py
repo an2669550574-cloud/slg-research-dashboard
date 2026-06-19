@@ -23,7 +23,7 @@ from app.schemas.publisher import (
     PublisherSourceOut, PublisherSourceCreate,
     PublisherItunesArtistOut, PublisherItunesArtistCreate,
     PublisherRelationCreate, PublisherRelationLinkOut,
-    PublisherProductOut, PublisherTopProductOut,
+    PublisherProductOut, PublisherTopProductOut, PublisherGapOut,
 )
 
 __all__ = [
@@ -79,4 +79,5 @@ __all__ = [
     "PublisherRelationLinkOut",
     "PublisherProductOut",
     "PublisherTopProductOut",
+    "PublisherGapOut",
 ]

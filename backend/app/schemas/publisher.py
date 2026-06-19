@@ -200,3 +200,16 @@ class PublisherProductOut(BaseModel):
     revenue: float = 0
     matched_by: str  # "alias" | "app_id" | "radar" —— 该产品因何归属本主体
     genre: Optional[str] = None  # 雷达(radar)产品的子品类，无榜单 publisher 时作副标题兜底
+
+
+class PublisherGapOut(BaseModel):
+    """调研缺口行：近 N 天有收入、任何 alias/app_id 都没命中的 publisher。
+
+    驱动「未归属高收入发行商」提示——把 PUBLISHERS.md 里「数据驱动找缺口」从手 SQL
+    抬进 UI，进页面就看见。点「建主体」预填 publisher 名为初始 alias，省得手敲。
+    """
+    publisher: str           # 榜单原始 publisher 字符串（用作 alias keyword 起点）
+    revenue: float           # 窗口内累计收入分（across all apps under this publisher）
+    downloads: int           # 窗口内累计下载
+    app_count: int           # 该 publisher 名下涉及多少 app_id
+    top_app: PublisherTopProductOut  # 收入最高的代表 app（icon + 名）

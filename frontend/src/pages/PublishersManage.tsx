@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { Plus, Trash2, Pencil, X, Building2, Globe, ChevronRight, ChevronDown, Link2, ShieldCheck, Network, Search, List, Landmark, CornerDownRight, LayoutGrid, ListTree, Download as DownloadIcon, AlertTriangle, TrendingUp, Layers } from 'lucide-react'
+import { Plus, Trash2, Pencil, X, Building2, Globe, ChevronRight, ChevronDown, Link2, ShieldCheck, Network, Search, List, Landmark, CornerDownRight, LayoutGrid, ListTree, Download as DownloadIcon, AlertTriangle, TrendingUp, Layers, Telescope } from 'lucide-react'
 import { publishersApi } from '../lib/api'
 import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
@@ -60,9 +60,12 @@ type EntityForm = {
   brief: string
 }
 const EMPTY_FORM: EntityForm = { name: '', name_en: '', hq_region: '', is_slg: true, brief: '' }
-type Mode = { kind: 'closed' } | { kind: 'create' } | { kind: 'edit'; id: number }
+// create 可携带 prefillAlias——从「调研缺口」点「建主体」时用 publisher 名预填表单 +
+// 自动作为初始 alias 一并提交（POST / 端点已支持 aliases 内联）。
+type Mode = { kind: 'closed' } | { kind: 'create'; prefillAlias?: string } | { kind: 'edit'; id: number }
 
 const QK = ['publishers'] as const
+const GAPS_QK = ['publishers', 'gaps'] as const
 
 // 一手在前、二手在后，select 里分组直观
 const SOURCE_TYPE_ORDER: PublisherSourceType[] = [
@@ -91,6 +94,9 @@ export default function PublishersManage() {
   const [detailId, setDetailId] = useState<number | null>(null)
   const [search, setSearch] = useState('')
   const [onlyResearched, setOnlyResearched] = useState(false)
+  // 仅显示「待复核」：有溯源、最新核验日距今 ≥ STALE_REVIEW_MONTHS。把卡角小三角
+  // 标记抬成可过滤的批量动作——盘点哪些档案需要回头看。
+  const [onlyStale, setOnlyStale] = useState(false)
   // 分段（全部/运营体/资本方）、排序——持久化用户偏好
   const [segment, setSegment] = useLocalStorageState<Segment>('pub.segment', 'all')
   const [sortKey, setSortKey] = useLocalStorageState<SortKey>('pub.sort', 'rank')
@@ -106,6 +112,17 @@ export default function PublishersManage() {
     queryKey: QK,
     queryFn: () => publishersApi.list(),
   })
+  // 调研缺口：近 30 天有收入、任何主体的 alias/app_id 都没命中的发行商。零 ST 配额。
+  const { data: gaps = [], isLoading: gapsLoading } = useQuery({
+    queryKey: GAPS_QK,
+    queryFn: () => publishersApi.gaps(30, 20),
+  })
+  const [gapsOpen, setGapsOpen] = useState(false)
+  // 全库待复核数（不受当前 filter 影响）——给 toggle 加 badge，告诉用户「全库 N 个待复核」
+  const staleCount = useMemo(
+    () => entities.filter(e => isStaleForReview(e.sources).stale).length,
+    [entities],
+  )
 
   const invalidate = () => qc.invalidateQueries({ queryKey: QK })
 
@@ -127,7 +144,15 @@ export default function PublishersManage() {
   })
 
   function closeForm() { setMode({ kind: 'closed' }); setForm(EMPTY_FORM) }
-  function openCreate() { setMode({ kind: 'create' }); setForm(EMPTY_FORM) }
+  function openCreate(prefill?: { name?: string; alias?: string }) {
+    setMode({ kind: 'create', prefillAlias: prefill?.alias })
+    setForm({
+      ...EMPTY_FORM,
+      name: prefill?.name ?? '',
+      // name_en 留空，让用户先决定中文主体名；prefill?.name 已写到 name 里供编辑
+    })
+    window.scrollTo({ top: 0 })
+  }
   function openEdit(e: PublisherEntity) {
     setMode({ kind: 'edit', id: e.id })
     setForm({
@@ -143,15 +168,20 @@ export default function PublishersManage() {
     ev.preventDefault()
     const name = form.name.trim()
     if (!name) { toast.error(tt.nameRequired); return }
-    const payload = {
+    const payload: PublisherEntityCreate = {
       name,
       name_en: form.name_en.trim() || null,
       hq_region: form.hq_region || null,
       is_slg: form.is_slg,
       brief: form.brief.trim() || null,
     }
-    if (mode.kind === 'create') createMut.mutate(payload)
-    else if (mode.kind === 'edit') updateMut.mutate({ id: mode.id, data: payload })
+    if (mode.kind === 'create') {
+      // 从「调研缺口」点过来的：把 publisher 名作为初始 alias 一并提交，省去手动再加。
+      if (mode.prefillAlias) payload.aliases = [{ keyword: mode.prefillAlias }]
+      createMut.mutate(payload)
+    } else if (mode.kind === 'edit') {
+      updateMut.mutate({ id: mode.id, data: payload })
+    }
   }
 
   const handleDelete = (e: PublisherEntity) => {
@@ -167,42 +197,50 @@ export default function PublishersManage() {
     e.sources.length > 0 || e.parents.length > 0 || e.children.length > 0
   // 资本方 = 非 SLG 运营体（is_slg=0 的纯控股/投资节点，如世纪华通/腾讯）
   const isCapital = (e: PublisherEntity) => !e.is_slg
-  const q = search.trim().toLowerCase()
-  const filtered = entities.filter(e => {
-    // 集团视图忽略「运营体/资本方」分段——集团本就是资本方+运营体混合，按运营体过滤会把
-    // 资本方根节点（如世纪华通）剔除，整组散架成独立厂。分段只对「列表」视图生效。
-    if (view !== 'groups') {
-      if (segment === 'operator' && isCapital(e)) return false
-      if (segment === 'capital' && !isCapital(e)) return false
-    }
-    if (onlyResearched && !isResearched(e)) return false
-    if (!q) return true
-    return e.name.toLowerCase().includes(q)
-      || (e.name_en || '').toLowerCase().includes(q)
-      || e.aliases.some(a => a.keyword.toLowerCase().includes(q) || (a.label || '').toLowerCase().includes(q))
-  })
+
+  // ── 派生数据 memo 化：entities ~100 条 + 连通分量 + 排序，搜索框输入时
+  //    避免每个 keystroke 重算 filtered/groups/flatList（旧实现每次 render 全跑）。
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return entities.filter(e => {
+      // 集团视图忽略「运营体/资本方」分段——集团本就是资本方+运营体混合，按运营体过滤会把
+      // 资本方根节点（如世纪华通）剔除，整组散架成独立厂。分段只对「列表」视图生效。
+      if (view !== 'groups') {
+        if (segment === 'operator' && isCapital(e)) return false
+        if (segment === 'capital' && !isCapital(e)) return false
+      }
+      if (onlyResearched && !isResearched(e)) return false
+      if (onlyStale && !isStaleForReview(e.sources).stale) return false
+      if (!q) return true
+      return e.name.toLowerCase().includes(q)
+        || (e.name_en || '').toLowerCase().includes(q)
+        || e.aliases.some(a => a.keyword.toLowerCase().includes(q) || (a.label || '').toLowerCase().includes(q))
+    })
+  }, [entities, search, view, segment, onlyResearched, onlyStale])
 
   // 扁平排序比较器。'rank'=按畅销榜名次（sort_order 非 0 人工置顶优先，其次最佳名次升序、无榜沉底）。
-  const cmpRank = (a: PublisherEntity, b: PublisherEntity) => {
-    const aPin = (a.sort_order || 0) !== 0, bPin = (b.sort_order || 0) !== 0
-    if (aPin !== bPin) return aPin ? -1 : 1
-    if (aPin && bPin && a.sort_order !== b.sort_order) return a.sort_order - b.sort_order
-    return rankSortVal(a) - rankSortVal(b) || a.name.localeCompare(b.name)
-  }
-  const sortFlat = (list: PublisherEntity[]): PublisherEntity[] => {
-    const s = [...list]
-    if (sortKey === 'products') s.sort((a, b) => (b.product_count ?? 0) - (a.product_count ?? 0))
-    else if (sortKey === 'provenance') s.sort((a, b) =>
-      (PROV_RANK[a.provenance_tier] ?? 9) - (PROV_RANK[b.provenance_tier] ?? 9) || a.name.localeCompare(b.name))
-    else if (sortKey === 'default') s.sort((a, b) => (a.sort_order - b.sort_order) || a.name.localeCompare(b.name))
-    else s.sort(cmpRank)  // 'rank'
-    return s
-  }
+  const sortFlat = useMemo(() => {
+    const cmpRank = (a: PublisherEntity, b: PublisherEntity) => {
+      const aPin = (a.sort_order || 0) !== 0, bPin = (b.sort_order || 0) !== 0
+      if (aPin !== bPin) return aPin ? -1 : 1
+      if (aPin && bPin && a.sort_order !== b.sort_order) return a.sort_order - b.sort_order
+      return rankSortVal(a) - rankSortVal(b) || a.name.localeCompare(b.name)
+    }
+    return (list: PublisherEntity[]): PublisherEntity[] => {
+      const s = [...list]
+      if (sortKey === 'products') s.sort((a, b) => (b.product_count ?? 0) - (a.product_count ?? 0))
+      else if (sortKey === 'provenance') s.sort((a, b) =>
+        (PROV_RANK[a.provenance_tier] ?? 9) - (PROV_RANK[b.provenance_tier] ?? 9) || a.name.localeCompare(b.name))
+      else if (sortKey === 'default') s.sort((a, b) => (a.sort_order - b.sort_order) || a.name.localeCompare(b.name))
+      else s.sort(cmpRank)  // 'rank'
+      return s
+    }
+  }, [sortKey])
 
   // 「集团」视图数据：按控制级关系（GROUP_EDGE_TYPES）求连通分量。多成员=集团（一张可展开
   // 集团卡），单成员=独立厂商（单独成区，不与集团卡混排）。「列表」视图则全部扁平按名次。
   type GroupTile = { key: number; root: PublisherEntity; members: PublisherEntity[]; bestRank: number; bestMarket: string | null }
-  const { groups, independents } = (() => {
+  const { groups, independents } = useMemo(() => {
     const ids = new Set(filtered.map(e => e.id))
     const uf = new Map<number, number>(filtered.map(e => [e.id, e.id]))
     const find = (x: number): number => { while (uf.get(x) !== x) { uf.set(x, uf.get(uf.get(x)!)!); x = uf.get(x)! } return x }
@@ -232,8 +270,8 @@ export default function PublishersManage() {
     })
     grp.sort((a, b) => a.bestRank - b.bestRank || a.root.name.localeCompare(b.root.name))
     return { groups: grp, independents: sortFlat(solo) }
-  })()
-  const flatList = sortFlat(filtered)
+  }, [filtered, sortFlat])
+  const flatList = useMemo(() => sortFlat(filtered), [filtered, sortFlat])
 
   const toggleGroup = (key: number) =>
     setExpandedGroups(s => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n })
@@ -515,6 +553,70 @@ export default function PublishersManage() {
         </form>
       )}
 
+      {/* 调研缺口区块：近 30 天有收入、任何主体都未归属的 publisher。
+          折叠态显示数量；展开列 top 20，点「建主体」预填 publisher 名为初始 alias。 */}
+      {!isLoading && !isError && (gapsLoading || gaps.length > 0) && (
+        <section className="border border-amber-500/30 bg-amber-500/[0.04] rounded-xl">
+          <button
+            onClick={() => setGapsOpen(o => !o)}
+            className="w-full flex items-center gap-2.5 px-4 py-3 text-left"
+            title={tt.gapsHint}
+          >
+            <span className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center bg-amber-500/15">
+              <Telescope size={14} className="text-amber-400" />
+            </span>
+            <span className="font-display text-sm font-semibold text-primary">
+              {gapsLoading ? tt.gapsLoading : tt.gapsTitle(gaps.length)}
+            </span>
+            <span className="ml-auto text-[11px] text-muted">
+              {gapsOpen ? tt.gapsCollapse : tt.gapsExpand}
+            </span>
+            {gapsOpen
+              ? <ChevronDown size={15} className="text-muted" />
+              : <ChevronRight size={15} className="text-muted" />}
+          </button>
+          {gapsOpen && (
+            <div className="border-t border-amber-500/20 px-4 py-3">
+              {gaps.length === 0 ? (
+                <div className="text-[12px] text-muted py-2">{tt.gapsEmpty}</div>
+              ) : (
+                <>
+                  <div className="text-[11px] text-muted mb-3">{tt.gapsHint}</div>
+                  <div className="grid gap-2">
+                    {gaps.map(g => (
+                      <div
+                        key={g.publisher}
+                        className="flex items-center gap-2.5 bg-elevated/60 border border-default/60 rounded-lg px-3 py-2"
+                      >
+                        <GameIcon src={g.top_app.icon_url} name={g.top_app.name ?? g.publisher} className="w-8 h-8 rounded-md shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <div className="font-display text-sm text-primary truncate">{g.publisher}</div>
+                          <div className="text-[11px] text-muted truncate">
+                            {g.top_app.name ?? g.top_app.app_id} · {tt.gapsAppCount(g.app_count)}
+                          </div>
+                        </div>
+                        <div className="hidden sm:flex flex-col items-end shrink-0 font-data text-[11px] text-secondary">
+                          <span>{fmtMoney(g.revenue)}</span>
+                          <span className="text-muted">↓ {fmtNum(g.downloads)}</span>
+                        </div>
+                        <button
+                          onClick={() => openCreate({ name: g.publisher, alias: g.publisher })}
+                          title={tt.gapsCreateHint}
+                          className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-medium text-white bg-accent hover:brightness-110 transition-all"
+                        >
+                          <Plus size={11} />
+                          {tt.gapsCreate}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
       {/* 筛选栏：视图切换 + 搜索 + 只看有调研数据 + 计数（搜索/筛选只作用于网格） */}
       {!isLoading && !isError && entities.length > 0 && (
         <div className="flex flex-wrap items-center gap-3">
@@ -567,6 +669,20 @@ export default function PublishersManage() {
                   </button>
                 ))}
               </div>
+              {/* 仅待复核：>12 月没核验的有源主体；staleCount=0 时按钮隐藏（没活干就别显示） */}
+              {staleCount > 0 && (
+                <button
+                  onClick={() => setOnlyStale(v => !v)}
+                  title={tt.onlyStaleHint}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${onlyStale
+                    ? 'bg-amber-500/15 border-amber-500/50 text-amber-300'
+                    : 'bg-elevated border-default text-secondary hover:text-primary'}`}
+                >
+                  <AlertTriangle size={12} />
+                  {tt.onlyStale}
+                  <span className="font-data text-[10px] opacity-80">{staleCount}</span>
+                </button>
+              )}
               {/* 排序：集团视图里决定集团/独立厂之间及组内成员次序；列表视图决定整体次序 */}
               <select
                 value={sortKey}

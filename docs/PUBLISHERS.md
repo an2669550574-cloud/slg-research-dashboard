@@ -28,7 +28,7 @@
 
 ## 建档 / 溯源方法论
 
-1. **数据驱动找缺口**：扫 `game_rankings` 里有收入、却没被任何 alias/app_id 归属的发行商 = 漏网厂 / 潜在集团成员。
+1. **数据驱动找缺口**：扫 `game_rankings` 里有收入、却没被任何 alias/app_id 归属的发行商 = 漏网厂 / 潜在集团成员。**已抬进 UI**——`/publishers` 顶部「调研缺口」折叠卡列近 30 天 top 20 未归属发行商，点「建主体」预填 publisher 名为初始 alias（端点 `GET /api/publishers/gaps`，零 ST 配额）。
 2. **游戏名指认母体**：旗下产品名最能定公司（三国志战略版→灵犀/阿里；Wolf Game→爱奇艺；Lands of Jail→益世界）。
 3. **关系类型按证据强弱**：`wholly_owned`（收购公告/100%）> `controlling`（媒体桥 + 同开发者账号）> `affiliate`（仅聚类/弱）> `minority`（纯参股，**不并组**）。查不到股权登记就别用 wholly_owned。
 4. **溯源分级**：registry / official_filing / official_platform / official_domain = 一手；media / reference / analysis / self_report = 二手。归属断言尽量挂一手；查不到就标 unverified，别臆测。

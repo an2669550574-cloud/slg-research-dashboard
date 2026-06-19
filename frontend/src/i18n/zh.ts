@@ -754,6 +754,19 @@ export const zh = {
     maintLabel: '调研维护字段',
     empty: '暂无厂商主体，点击"添加主体"录入第一个',
     slgBadge: 'SLG',
+    // 调研缺口区块（顶部折叠卡）：未归属高收入 publisher
+    gapsTitle: (n: number) => `调研缺口（${n} 个未归属高收入发行商）`,
+    gapsHint: '近 30 天有收入、但任何主体的马甲 / app_id 都未命中的发行商。点「建主体」预填名字与初始 alias。',
+    gapsLoading: '正在扫描缺口…',
+    gapsEmpty: '近 30 天榜单覆盖到的高收入发行商都已归属，无缺口。',
+    gapsExpand: '展开调研缺口',
+    gapsCollapse: '收起调研缺口',
+    gapsAppCount: (n: number) => n > 1 ? `${n} 款` : '1 款',
+    gapsCreate: '建主体',
+    gapsCreateHint: '用此 publisher 名预填新建主体表单 + 初始 alias',
+    // 仅待复核切换（按钮带 badge 数）
+    onlyStale: '仅待复核',
+    onlyStaleHint: '只看「最新核验日距今 ≥ 12 月」的有源主体——盘点哪些档案该回头复核',
   },
   ownProductPicker: {
     label: '选择自家产品',
