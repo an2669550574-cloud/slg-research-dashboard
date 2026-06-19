@@ -63,6 +63,7 @@ import type {
   PublisherRelationLink,
   PublisherRelationCreate,
   PublisherProduct,
+  PublisherGap,
   WechatAccount,
   WechatAccountCandidate,
 } from './types'
@@ -374,6 +375,9 @@ export const publishersApi = {
     api.delete(`/publishers/${id}/relations/${relationId}`).then(r => r.data),
   products: (id: number, days = 30): Promise<PublisherProduct[]> =>
     api.get(`/publishers/${id}/products`, { params: { days } }).then(r => r.data),
+  // 调研缺口：近 N 天有收入、任何 alias/app_id 都没命中的 publisher，提示新建主体。
+  gaps: (days = 30, limit = 20): Promise<PublisherGap[]> =>
+    api.get('/publishers/gaps', { params: { days, limit } }).then(r => r.data),
 }
 
 // 订阅公众号：看板维护新品监测日报要搜哪些行业号。零 ST 配额（走 wechat-api）。

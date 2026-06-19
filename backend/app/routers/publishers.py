@@ -8,6 +8,7 @@
 子序列匹配 + app_ids 精确匹配，跨已监测市场窗口合计下载/收入，零 ST 配额、纯本地库。
 """
 import re
+import time
 from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func, or_, and_, delete as sa_delete
@@ -26,7 +27,7 @@ from app.schemas import (
     PublisherSourceOut, PublisherSourceCreate,
     PublisherItunesArtistOut, PublisherItunesArtistCreate,
     PublisherRelationCreate, PublisherRelationLinkOut, PublisherProductOut,
-    PublisherTopProductOut,
+    PublisherTopProductOut, PublisherGapOut,
 )
 from app.services.slg_publishers import load_index_from_db
 from app.services.provenance import is_primary, provenance_tier
@@ -139,6 +140,24 @@ async def _ranking_pairs(db: AsyncSession):
     return [(app_id, pub, name, icon, rev) for app_id, pub, name, icon, rev in res.all()]
 
 
+# 进程内 TTL cache：榜单同步是定时任务（非请求触发），60s 陈旧不影响判断。
+# 把 game_rankings 全表 GROUP BY 从「每次 list 跑一遍」降到「每分钟跑一遍」。
+# alias/app_id 的写操作不需要 invalidate——它们不改 game_rankings 本身，匹配在 cache 外算。
+_PAIRS_CACHE_TTL = 60.0
+_pairs_cache: tuple[float, list] | None = None
+_rank_cache: tuple[float, dict[str, tuple[int, str]]] | None = None
+
+
+async def _ranking_pairs_cached(db: AsyncSession):
+    global _pairs_cache
+    now = time.monotonic()
+    if _pairs_cache and now - _pairs_cache[0] < _PAIRS_CACHE_TTL:
+        return _pairs_cache[1]
+    pairs = await _ranking_pairs(db)
+    _pairs_cache = (now, pairs)
+    return pairs
+
+
 async def _rank_by_app(db: AsyncSession) -> dict[str, tuple[int, str]]:
     """{app_id: (跨市场最佳名次, 命中市场如 "JP/android")}。只看各 (国家,平台) **最新一期**
     快照——反映「当前畅销」而非历史最好，供「按畅销榜名次」排序。零 ST 配额、纯本地库。"""
@@ -161,6 +180,16 @@ async def _rank_by_app(db: AsyncSession) -> dict[str, tuple[int, str]]:
         if cur is None or rank < cur[0]:
             best[app_id] = (rank, f"{country}/{platform}")
     return best
+
+
+async def _rank_by_app_cached(db: AsyncSession) -> dict[str, tuple[int, str]]:
+    global _rank_cache
+    now = time.monotonic()
+    if _rank_cache and now - _rank_cache[0] < _PAIRS_CACHE_TTL:
+        return _rank_cache[1]
+    rb = await _rank_by_app(db)
+    _rank_cache = (now, rb)
+    return rb
 
 
 def _match_for_entity(pairs, alias_kw_tokens, app_id_set, itunes_products=(), rank_by_app=None):
@@ -202,6 +231,83 @@ def _match_for_entity(pairs, alias_kw_tokens, app_id_set, itunes_products=(), ra
             if hit and (best_rank is None or hit[0] < best_rank):
                 best_rank, best_market = hit
     return len(matched), top, best_rank, best_market
+
+
+def _compute_all_matches(
+    pairs,
+    by_alias: dict[int, list],
+    by_appid: dict[int, list],
+    itunes_by_entity: dict[int, list[tuple]],
+    rank_by_app: dict[str, tuple[int, str]] | None,
+    entity_ids,
+):
+    """list 端点专用：一次过算所有 entity 的 (count, top3, best_rank, best_market)。
+
+    倒排索引：alias 的第一个 token → [(kw_tokens, entity_id), ...]。扫一遍 pairs，
+    每行 publisher 算一次 tokens，按位置 i 查 first-token 候选再校验剩余 tokens。
+    复杂度从 O(entities × pairs × aliases) 降到 O(pairs × token_candidates)。
+    单 entity 端点（get/create/update 返回值）继续走 _match_for_entity（N=1 不需要倒排）。
+    """
+    # 倒排：first_token → [(kw_tokens, entity_id), ...]
+    alias_idx: dict[str, list[tuple[tuple[str, ...], int]]] = {}
+    for eid, aliases in by_alias.items():
+        for a in aliases:
+            t = tuple(_toks(a.keyword))
+            if t:
+                alias_idx.setdefault(t[0], []).append((t, eid))
+    # app_id → [entity_id, ...]（一个 app_id 理论上可挂多个主体，保险起见用 list）
+    app_id_owners: dict[str, list[int]] = {}
+    for eid, app_ids in by_appid.items():
+        for a in app_ids:
+            app_id_owners.setdefault(a.app_id, []).append(eid)
+
+    # entity_id → {app_id: (revenue, name, icon)}
+    matched: dict[int, dict[str, tuple[float, str, str]]] = {eid: {} for eid in entity_ids}
+
+    for app_id, pub, name, icon, rev in pairs:
+        for eid in app_id_owners.get(app_id, ()):
+            matched[eid][app_id] = (rev or 0, name, icon)
+        if not pub:
+            continue
+        pub_tokens = _toks(pub)
+        if not pub_tokens:
+            continue
+        hit_eids: set[int] = set()  # 同一 (app_id,pub) 被同主体多 alias 命中只记一次
+        for i, tok in enumerate(pub_tokens):
+            for kw_tokens, eid in alias_idx.get(tok, ()):
+                if eid in hit_eids:
+                    continue
+                n = len(kw_tokens)
+                if i + n > len(pub_tokens):
+                    continue
+                if tuple(pub_tokens[i:i + n]) == kw_tokens:
+                    matched[eid][app_id] = (rev or 0, name, icon)
+                    hit_eids.add(eid)
+
+    out: dict[int, tuple[int, list, int | None, str | None]] = {}
+    for eid in entity_ids:
+        m = matched[eid]
+        seen_names = {(n or "").strip().lower() for _, n, _ in m.values() if n}
+        for track_id, iname, artwork, _genre in itunes_by_entity.get(eid, ()):
+            if track_id in m:
+                continue
+            key = (iname or "").strip().lower()
+            if key and key in seen_names:
+                continue
+            if key:
+                seen_names.add(key)
+            m[track_id] = (0, iname, artwork)
+        ordered = sorted(m.items(), key=lambda kv: -kv[1][0])
+        top = [PublisherTopProductOut(app_id=aid, name=v[1], icon_url=v[2]) for aid, v in ordered[:3]]
+        best_rank: int | None = None
+        best_market: str | None = None
+        if rank_by_app:
+            for aid in m:
+                hit = rank_by_app.get(aid)
+                if hit and (best_rank is None or hit[0] < best_rank):
+                    best_rank, best_market = hit
+        out[eid] = (len(m), top, best_rank, best_market)
+    return out
 
 
 async def _itunes_products_by_entity(db: AsyncSession) -> dict[int, list[tuple]]:
@@ -257,8 +363,8 @@ async def list_publishers(db: AsyncSession = Depends(get_db)):
     all_artists = (await db.execute(select(PublisherItunesArtist).order_by(PublisherItunesArtist.id))).scalars().all()
     all_sources = (await db.execute(select(PublisherSource).order_by(PublisherSource.id))).scalars().all()
     all_relations = (await db.execute(select(PublisherRelation).order_by(PublisherRelation.id))).scalars().all()
-    pairs = await _ranking_pairs(db)
-    rank_by_app = await _rank_by_app(db)
+    pairs = await _ranking_pairs_cached(db)
+    rank_by_app = await _rank_by_app_cached(db)
     itunes_by_entity = await _itunes_products_by_entity(db)
 
     by_alias: dict[int, list[PublisherAlias]] = {}
@@ -281,17 +387,15 @@ async def list_publishers(db: AsyncSession = Depends(get_db)):
         by_parents.setdefault(r.child_id, []).append(_rel_link(r, r.parent_id, name_map))
         by_children.setdefault(r.parent_id, []).append(_rel_link(r, r.child_id, name_map))
 
+    entity_ids = [e.id for e in entities]
+    match_by_entity = _compute_all_matches(
+        pairs, by_alias, by_appid, itunes_by_entity, rank_by_app, entity_ids)
+
     out = []
     for e in entities:
-        aliases = by_alias.get(e.id, [])
-        app_ids = by_appid.get(e.id, [])
-        sources = by_source.get(e.id, [])
-        kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
-        app_id_set = {a.app_id for a in app_ids}
-        count, top, best_rank, best_market = _match_for_entity(
-            pairs, kw_tokens, app_id_set, itunes_by_entity.get(e.id, []), rank_by_app)
+        count, top, best_rank, best_market = match_by_entity[e.id]
         out.append(_build_out(
-            e, aliases, app_ids, sources,
+            e, by_alias.get(e.id, []), by_appid.get(e.id, []), by_source.get(e.id, []),
             by_parents.get(e.id, []), by_children.get(e.id, []),
             count, itunes_artists=by_artist.get(e.id, []), top_products=top,
             best_rank=best_rank, best_market=best_market,
@@ -317,8 +421,8 @@ async def create_publisher(data: PublisherEntityCreate, db: AsyncSession = Depen
     aliases, app_ids = await _children(e.id, db)
     sources = await _sources(e.id, db)
     parents, children = await _relations(e.id, db)
-    pairs = await _ranking_pairs(db)
-    rank_by_app = await _rank_by_app(db)
+    pairs = await _ranking_pairs_cached(db)
+    rank_by_app = await _rank_by_app_cached(db)
     kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
     count, top, best_rank, best_market = _match_for_entity(
         pairs, kw_tokens, {a.app_id for a in app_ids},
@@ -328,14 +432,82 @@ async def create_publisher(data: PublisherEntityCreate, db: AsyncSession = Depen
                       best_rank=best_rank, best_market=best_market)
 
 
+@router.get("/gaps", response_model=list[PublisherGapOut])
+async def list_publisher_gaps(
+    days: int = Query(30, ge=1, le=365),
+    limit: int = Query(20, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+):
+    """调研缺口：近 N 天有收入、且任何 alias/app_id 都没命中的 publisher，按累计
+    收入降序 top N。把 PUBLISHERS.md 里「数据驱动找缺口」从手 SQL 抬进 UI：
+    进页面就看见漏网厂，点「建主体」预填 publisher 名为初始 alias。零 ST 配额。
+
+    必须先于 GET /{entity_id} 声明，否则 'gaps' 会被 int 路径捕获 → 422。
+    """
+    aliases = (await db.execute(select(PublisherAlias))).scalars().all()
+    pinned = (await db.execute(select(PublisherAppId.app_id))).scalars().all()
+    alias_kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
+    app_id_set = set(pinned)
+
+    end = utcnow_naive().date()
+    start = end - timedelta(days=days - 1)
+    res = await db.execute(
+        select(
+            GameRanking.app_id,
+            func.max(GameRanking.publisher).label("pub"),
+            func.max(GameRanking.name).label("name"),
+            func.max(GameRanking.icon_url).label("icon"),
+            func.sum(GameRanking.revenue).label("rev"),
+            func.sum(GameRanking.downloads).label("dl"),
+        ).where(
+            GameRanking.date >= start.isoformat(),
+            GameRanking.date <= end.isoformat(),
+            GameRanking.publisher.is_not(None),
+            GameRanking.publisher != "",
+        ).group_by(GameRanking.app_id)
+    )
+
+    # publisher 归一键（去标点/大小写）→ 桶；同名 publisher 跨 app 合算。
+    # 用 normalize 后的 token 序列做键，让 "Kabam Games Ltd." 和 "Kabam Games" 合并。
+    by_pub: dict[str, dict] = {}
+    for app_id, pub, name, icon, rev, dl in res.all():
+        revv = float(rev or 0)
+        if revv <= 0:
+            continue
+        if app_id in app_id_set:
+            continue  # 已被 app_id 精确钉
+        pub_tokens = _toks(pub)
+        if alias_kw_tokens and any(_kw_hit(pub_tokens, kt) for kt in alias_kw_tokens):
+            continue  # 已被某主体的 alias 命中
+        key = " ".join(pub_tokens) if pub_tokens else (pub or "").lower()
+        if not key:
+            continue
+        bucket = by_pub.setdefault(key, {"display": pub, "revenue": 0.0, "downloads": 0, "apps": []})
+        bucket["revenue"] += revv
+        bucket["downloads"] += int(dl or 0)
+        bucket["apps"].append((revv, app_id, name, icon))
+
+    items: list[PublisherGapOut] = []
+    for b in by_pub.values():
+        b["apps"].sort(key=lambda x: -x[0])
+        rev, aid, nm, ic = b["apps"][0]
+        items.append(PublisherGapOut(
+            publisher=b["display"], revenue=b["revenue"], downloads=b["downloads"],
+            app_count=len(b["apps"]),
+            top_app=PublisherTopProductOut(app_id=aid, name=nm, icon_url=ic),
+        ))
+    items.sort(key=lambda x: -x.revenue)
+    return items[:limit]
+
+
 @router.get("/{entity_id}", response_model=PublisherEntityOut)
 async def get_publisher(entity_id: int, db: AsyncSession = Depends(get_db)):
     e = await _get_entity_or_404(entity_id, db)
     aliases, app_ids = await _children(entity_id, db)
     sources = await _sources(entity_id, db)
     parents, children = await _relations(entity_id, db)
-    pairs = await _ranking_pairs(db)
-    rank_by_app = await _rank_by_app(db)
+    pairs = await _ranking_pairs_cached(db)
+    rank_by_app = await _rank_by_app_cached(db)
     kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
     count, top, best_rank, best_market = _match_for_entity(
         pairs, kw_tokens, {a.app_id for a in app_ids},
@@ -356,8 +528,8 @@ async def update_publisher(entity_id: int, data: PublisherEntityUpdate, db: Asyn
     aliases, app_ids = await _children(entity_id, db)
     sources = await _sources(entity_id, db)
     parents, children = await _relations(entity_id, db)
-    pairs = await _ranking_pairs(db)
-    rank_by_app = await _rank_by_app(db)
+    pairs = await _ranking_pairs_cached(db)
+    rank_by_app = await _rank_by_app_cached(db)
     kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
     count, top, best_rank, best_market = _match_for_entity(
         pairs, kw_tokens, {a.app_id for a in app_ids},

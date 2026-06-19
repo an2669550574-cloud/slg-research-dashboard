@@ -226,6 +226,68 @@ async def test_get_404(client):
 
 
 @pytest.mark.asyncio
+async def test_gaps_excludes_attributed_and_groups_by_publisher(client):
+    """缺口端点：alias 命中 / app_id 钉 / 收入为 0 都不算缺口；同 publisher 多 app 合算。
+    CJK 数据走一遍——publisher 字段中文不能被规范化吃掉。"""
+    today = _today()
+    await _seed_rankings([
+        # 已 alias 命中（kabam）→ 不算缺口
+        ("hit.1", today, 1, 100, 80.0, "US", "ios", "已归属", "Kabam Games Ltd"),
+        # 已 app_id 钉 → 不算缺口
+        ("pin.1", today, 2, 50, 40.0, "US", "ios", "钉住的", "Some Studio"),
+        # 漏网厂 A：两个 app 都归 "Mystery Studio"，应合算
+        ("gap.a1", today, 3, 200, 60.0, "US", "ios", "漏网游戏一", "Mystery Studio"),
+        ("gap.a2", today, 4, 100, 30.0, "JP", "android", "漏网游戏二", "Mystery Studio"),
+        # 漏网厂 B：中文 publisher
+        ("gap.b1", today, 5, 150, 45.0, "CN", "ios", "国产漏网", "未知中文厂商"),
+        # 收入 0 不计入
+        ("zero.1", today, 6, 999, 0.0, "US", "ios", "无收入", "Free Studio"),
+    ])
+    # 建一个挂 kabam alias 和 pin.1 钉住的主体
+    await client.post("/api/publishers/", json={
+        "name": "已存主体",
+        "aliases": [{"keyword": "kabam"}],
+        "app_ids": [{"app_id": "pin.1"}],
+    })
+    gaps = (await client.get("/api/publishers/gaps")).json()
+    pubs = {g["publisher"]: g for g in gaps}
+    assert "Kabam Games Ltd" not in pubs  # alias 命中
+    assert "Some Studio" not in pubs       # app_id 钉
+    assert "Free Studio" not in pubs       # 收入 0
+    assert "Mystery Studio" in pubs
+    assert pubs["Mystery Studio"]["app_count"] == 2
+    assert pubs["Mystery Studio"]["revenue"] == 90.0  # 60 + 30
+    assert pubs["Mystery Studio"]["downloads"] == 300  # 200 + 100
+    assert pubs["Mystery Studio"]["top_app"]["app_id"] == "gap.a1"  # 收入高的代表
+    assert "未知中文厂商" in pubs
+    assert pubs["未知中文厂商"]["app_count"] == 1
+    # 按收入降序
+    revs = [g["revenue"] for g in gaps]
+    assert revs == sorted(revs, reverse=True)
+
+
+@pytest.mark.asyncio
+async def test_gaps_respects_window_and_limit(client):
+    """days 窗外的不算；limit 截断。"""
+    from datetime import date, timedelta as td
+    today_d = date.fromisoformat(_today())
+    long_ago = (today_d - td(days=60)).isoformat()
+    today = today_d.isoformat()
+    await _seed_rankings([
+        ("old.1", long_ago, 1, 100, 999.0, "US", "ios", "古早", "Ancient Studio"),
+        ("new.1", today, 1, 100, 10.0, "US", "ios", "近期", "Fresh Studio"),
+    ])
+    gaps = (await client.get("/api/publishers/gaps", params={"days": 30})).json()
+    pubs = {g["publisher"] for g in gaps}
+    assert "Fresh Studio" in pubs
+    assert "Ancient Studio" not in pubs  # 60 天前不在 30 天窗口
+
+    # limit=1：截断
+    one = (await client.get("/api/publishers/gaps", params={"limit": 1})).json()
+    assert len(one) <= 1
+
+
+@pytest.mark.asyncio
 async def test_seed_publishers_idempotent(client):
     """直接调 scheduler.seed_publishers_if_empty 两次：只灌一次，主体数 = 种子全集。"""
     import importlib
