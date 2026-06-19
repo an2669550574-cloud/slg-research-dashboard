@@ -132,6 +132,21 @@ def _tokens(s: Optional[str]) -> list[str]:
     return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).split()
 
 
+# camelCase / PascalCase 边界拆分：`LilithGames` → `["lilith", "games"]`，让
+# 单 token alias（如 `lilith`）能命中没空格的连写 publisher 名。is_slg_publisher
+# 会同时尝试这条路径和原 _tokens 路径，所以保留历史 compact 形式 alias 兼容
+# （如 `lilithgames` / `camelstudio` / `topwar`）仍命中各自的连写 publisher。
+_CAMEL_BOUNDARY_1 = re.compile(r"([a-z0-9])([A-Z])")
+_CAMEL_BOUNDARY_2 = re.compile(r"([A-Z]+)([A-Z][a-z])")
+
+
+def _tokens_split_camel(s: Optional[str]) -> list[str]:
+    s = s or ""
+    s = _CAMEL_BOUNDARY_1.sub(r"\1 \2", s)
+    s = _CAMEL_BOUNDARY_2.sub(r"\1 \2", s)
+    return re.sub(r"[^a-z0-9]+", " ", s.lower()).split()
+
+
 # ── 内存索引：运行时 is_slg 查这里。DB 为源，启动 load、CRUD 后 refresh。 ──
 _alias_tokens: list[tuple[str, ...]] = []  # 每个马甲 keyword 的连续 token 串
 _app_ids: set[str] = set()
@@ -178,17 +193,26 @@ async def load_index_from_db() -> int:
 def is_slg_publisher(publisher: Optional[str]) -> bool:
     """publisher 的 token 序列里出现任一马甲 keyword（作为连续子序列）即 True。
 
+    两条 token 路径都尝试：原 _tokens（按非字母数字切，保留 compact 形式如
+    `lilithgames`）+ _tokens_split_camel（额外按 camelCase 边界切，让 `LilithGames`
+    也能命中 `lilith` 单 token alias）。任一命中即 True。
+
     publisher 为空（如 Android 富化失败没抓到发行商）→ False：宁可在「仅 SLG」
     视图漏掉、让用户切「全部策略」补看，也不污染默认视图。
     """
-    toks = _tokens(publisher)
-    if not toks:
+    primary = _tokens(publisher)
+    if not primary:
         return False
-    for kw in _alias_tokens:
-        n = len(kw)
-        for i in range(len(toks) - n + 1):
-            if tuple(toks[i:i + n]) == kw:
-                return True
+    seqs: list[list[str]] = [primary]
+    camel = _tokens_split_camel(publisher)
+    if camel and camel != primary:
+        seqs.append(camel)
+    for toks in seqs:
+        for kw in _alias_tokens:
+            n = len(kw)
+            for i in range(len(toks) - n + 1):
+                if tuple(toks[i:i + n]) == kw:
+                    return True
     return False
 
 
