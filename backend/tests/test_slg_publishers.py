@@ -55,6 +55,26 @@ def test_token_match_is_word_boundary_not_substring():
     assert is_slg_publisher("IGG Singapore") is True
 
 
+@pytest.mark.parametrize("publisher,expected", [
+    # camelCase 连写：单 token alias（如种子里的 `lilith`）应能命中没空格的连写形式，
+    # 不再依赖手动补 compact alias（如 `lilithgames`）
+    ("LilithGames", True),     # 莉莉丝
+    ("KingsGroup", True),       # FunPlus 系
+    ("LongTech", True),         # 龙腾简合 alias=long tech
+    # PascalCase 反向防误判：camelCase 拆出的 token 不能误中无关 alias
+    ("TriggerGames", False),    # 'igg' 不能误命中 split 出的 token
+    ("RiggerStudios", False),
+    # 全大写一段（无 camelCase 边界可拆）应保持旧行为
+    ("FUNFLY", True),
+    ("STILLFRONT", True),
+    # camelCase 连写也不应破坏既有 compact alias 兼容（CamelStudio 走 compact alias 路径）
+    ("CamelStudio", True),
+])
+def test_camelcase_publisher_matches_via_split(publisher, expected):
+    from app.services.slg_publishers import is_slg_publisher
+    assert is_slg_publisher(publisher) is expected
+
+
 @pytest.mark.parametrize("app_id,publisher", [
     ("6476261995", "Level Infinite"),          # Age of Empires Mobile（iOS）
     ("com.proximabeta.aoemobile", "Level Infinite"),  # 同（Android）
