@@ -809,15 +809,6 @@ export interface PublisherTopProduct {
   icon_url: string | null
 }
 
-/** 调研缺口：近 N 天有收入、任何 alias/app_id 都没命中的 publisher。 */
-export interface PublisherGap {
-  publisher: string
-  revenue: number
-  downloads: number
-  app_count: number
-  top_app: PublisherTopProduct
-}
-
 export interface PublisherAliasCreate {
   keyword: string
   label?: string | null

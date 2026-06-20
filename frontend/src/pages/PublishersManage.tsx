@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { Plus, Trash2, Pencil, X, Building2, Globe, ChevronRight, ChevronDown, Link2, ShieldCheck, Network, Search, List, Landmark, CornerDownRight, LayoutGrid, ListTree, Download as DownloadIcon, AlertTriangle, TrendingUp, Layers, Telescope } from 'lucide-react'
+import { Plus, Trash2, Pencil, X, Building2, Globe, ChevronRight, ChevronDown, Link2, ShieldCheck, Network, Search, List, Landmark, CornerDownRight, LayoutGrid, ListTree, Download as DownloadIcon, AlertTriangle, TrendingUp, Layers } from 'lucide-react'
 import { publishersApi } from '../lib/api'
 import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
@@ -60,12 +60,9 @@ type EntityForm = {
   brief: string
 }
 const EMPTY_FORM: EntityForm = { name: '', name_en: '', hq_region: '', is_slg: true, brief: '' }
-// create 可携带 prefillAlias——从「调研缺口」点「建主体」时用 publisher 名预填表单 +
-// 自动作为初始 alias 一并提交（POST / 端点已支持 aliases 内联）。
-type Mode = { kind: 'closed' } | { kind: 'create'; prefillAlias?: string } | { kind: 'edit'; id: number }
+type Mode = { kind: 'closed' } | { kind: 'create' } | { kind: 'edit'; id: number }
 
 const QK = ['publishers'] as const
-const GAPS_QK = ['publishers', 'gaps'] as const
 
 // 一手在前、二手在后，select 里分组直观
 const SOURCE_TYPE_ORDER: PublisherSourceType[] = [
@@ -112,12 +109,6 @@ export default function PublishersManage() {
     queryKey: QK,
     queryFn: () => publishersApi.list(),
   })
-  // 调研缺口：近 30 天有收入、任何主体的 alias/app_id 都没命中的发行商。零 ST 配额。
-  const { data: gaps = [], isLoading: gapsLoading } = useQuery({
-    queryKey: GAPS_QK,
-    queryFn: () => publishersApi.gaps(30, 20),
-  })
-  const [gapsOpen, setGapsOpen] = useState(false)
   // 全库待复核数（不受当前 filter 影响）——给 toggle 加 badge，告诉用户「全库 N 个待复核」
   const staleCount = useMemo(
     () => entities.filter(e => isStaleForReview(e.sources).stale).length,
@@ -144,15 +135,7 @@ export default function PublishersManage() {
   })
 
   function closeForm() { setMode({ kind: 'closed' }); setForm(EMPTY_FORM) }
-  function openCreate(prefill?: { name?: string; alias?: string }) {
-    setMode({ kind: 'create', prefillAlias: prefill?.alias })
-    setForm({
-      ...EMPTY_FORM,
-      name: prefill?.name ?? '',
-      // name_en 留空，让用户先决定中文主体名；prefill?.name 已写到 name 里供编辑
-    })
-    window.scrollTo({ top: 0 })
-  }
+  function openCreate() { setMode({ kind: 'create' }); setForm(EMPTY_FORM) }
   function openEdit(e: PublisherEntity) {
     setMode({ kind: 'edit', id: e.id })
     setForm({
@@ -175,13 +158,8 @@ export default function PublishersManage() {
       is_slg: form.is_slg,
       brief: form.brief.trim() || null,
     }
-    if (mode.kind === 'create') {
-      // 从「调研缺口」点过来的：把 publisher 名作为初始 alias 一并提交，省去手动再加。
-      if (mode.prefillAlias) payload.aliases = [{ keyword: mode.prefillAlias }]
-      createMut.mutate(payload)
-    } else if (mode.kind === 'edit') {
-      updateMut.mutate({ id: mode.id, data: payload })
-    }
+    if (mode.kind === 'create') createMut.mutate(payload)
+    else if (mode.kind === 'edit') updateMut.mutate({ id: mode.id, data: payload })
   }
 
   const handleDelete = (e: PublisherEntity) => {
@@ -551,70 +529,6 @@ export default function PublishersManage() {
             </button>
           </div>
         </form>
-      )}
-
-      {/* 调研缺口区块：近 30 天有收入、任何主体都未归属的 publisher。
-          折叠态显示数量；展开列 top 20，点「建主体」预填 publisher 名为初始 alias。 */}
-      {!isLoading && !isError && (gapsLoading || gaps.length > 0) && (
-        <section className="border border-amber-500/30 bg-amber-500/[0.04] rounded-xl">
-          <button
-            onClick={() => setGapsOpen(o => !o)}
-            className="w-full flex items-center gap-2.5 px-4 py-3 text-left"
-            title={tt.gapsHint}
-          >
-            <span className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center bg-amber-500/15">
-              <Telescope size={14} className="text-amber-400" />
-            </span>
-            <span className="font-display text-sm font-semibold text-primary">
-              {gapsLoading ? tt.gapsLoading : tt.gapsTitle(gaps.length)}
-            </span>
-            <span className="ml-auto text-[11px] text-muted">
-              {gapsOpen ? tt.gapsCollapse : tt.gapsExpand}
-            </span>
-            {gapsOpen
-              ? <ChevronDown size={15} className="text-muted" />
-              : <ChevronRight size={15} className="text-muted" />}
-          </button>
-          {gapsOpen && (
-            <div className="border-t border-amber-500/20 px-4 py-3">
-              {gaps.length === 0 ? (
-                <div className="text-[12px] text-muted py-2">{tt.gapsEmpty}</div>
-              ) : (
-                <>
-                  <div className="text-[11px] text-muted mb-3">{tt.gapsHint}</div>
-                  <div className="grid gap-2">
-                    {gaps.map(g => (
-                      <div
-                        key={g.publisher}
-                        className="flex items-center gap-2.5 bg-elevated/60 border border-default/60 rounded-lg px-3 py-2"
-                      >
-                        <GameIcon src={g.top_app.icon_url} name={g.top_app.name ?? g.publisher} className="w-8 h-8 rounded-md shrink-0" />
-                        <div className="min-w-0 flex-1">
-                          <div className="font-display text-sm text-primary truncate">{g.publisher}</div>
-                          <div className="text-[11px] text-muted truncate">
-                            {g.top_app.name ?? g.top_app.app_id} · {tt.gapsAppCount(g.app_count)}
-                          </div>
-                        </div>
-                        <div className="hidden sm:flex flex-col items-end shrink-0 font-data text-[11px] text-secondary">
-                          <span>{fmtMoney(g.revenue)}</span>
-                          <span className="text-muted">↓ {fmtNum(g.downloads)}</span>
-                        </div>
-                        <button
-                          onClick={() => openCreate({ name: g.publisher, alias: g.publisher })}
-                          title={tt.gapsCreateHint}
-                          className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-medium text-white bg-accent hover:brightness-110 transition-all"
-                        >
-                          <Plus size={11} />
-                          {tt.gapsCreate}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-        </section>
       )}
 
       {/* 筛选栏：视图切换 + 搜索 + 只看有调研数据 + 计数（搜索/筛选只作用于网格） */}

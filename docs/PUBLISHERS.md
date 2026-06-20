@@ -28,7 +28,7 @@
 
 ## 建档 / 溯源方法论
 
-1. **数据驱动找缺口**：扫 `game_rankings` 里有收入、却没被任何 alias/app_id 归属的发行商 = 漏网厂 / 潜在集团成员。**已抬进 UI**——`/publishers` 顶部「调研缺口」折叠卡列近 30 天 top 20 未归属发行商，点「建主体」预填 publisher 名为初始 alias（端点 `GET /api/publishers/gaps`，零 ST 配额）。
+1. **数据驱动找缺口**：扫 `game_rankings` 里有收入、却没被任何 alias/app_id 归属的发行商 = 漏网厂 / 潜在集团成员。**端点为 `GET /api/publishers/gaps?days=30&limit=20`**（零 ST 配额、按累计收入降序、按 publisher 名归一合并）。曾在前端做过顶部折叠卡 UI，6/19 撤掉——稳态下 top 20 里 17 个是已知非 SLG 巨头（Niantic/Supercell/EA/Chess.com 等），噪声 ≫ 信号；等做完「缺口忽略名单」（按 publisher/app_id 持久化忽略）能把 top 收敛到 2~3 个真信号时再决定是否抬回 UI。当前用法：`curl -H "x-api-key: $K" "$HOST/api/publishers/gaps"` 或写周报脚本消费。
 2. **游戏名指认母体**：旗下产品名最能定公司（三国志战略版→灵犀/阿里；Wolf Game→爱奇艺；Lands of Jail→益世界）。
 3. **关系类型按证据强弱**：`wholly_owned`（收购公告/100%）> `controlling`（媒体桥 + 同开发者账号）> `affiliate`（仅聚类/弱）> `minority`（纯参股，**不并组**）。查不到股权登记就别用 wholly_owned。
 4. **溯源分级**：registry / official_filing / official_platform / official_domain = 一手；media / reference / analysis / self_report = 二手。归属断言尽量挂一手；查不到就标 unverified，别臆测。
