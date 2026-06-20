@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { Plus, Trash2, Pencil, X, Building2, Globe, ChevronRight, ChevronDown, Link2, ShieldCheck, Network, Search, List, Landmark, CornerDownRight, LayoutGrid, ListTree, Download as DownloadIcon, AlertTriangle, TrendingUp, Layers } from 'lucide-react'
+import { Plus, Trash2, Pencil, X, Building2, Globe, ChevronRight, ChevronDown, Link2, ShieldCheck, Network, Search, List, Landmark, CornerDownRight, LayoutGrid, ListTree, Download as DownloadIcon, AlertTriangle, TrendingUp, Layers, Activity } from 'lucide-react'
 import { publishersApi } from '../lib/api'
 import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
@@ -439,6 +439,22 @@ export default function PublishersManage() {
     ])
     toast.success(t.common.exported(rows.length))
   }
+  // 关系导出：以「本主体 → 子公司/关联」视角展开，每条 child 关系一行。
+  // 用 children 而不是 parents 避免对偶关系重复（每条 relation 在 DB 里只存一行 parent_id+child_id）。
+  function exportRelations() {
+    const rows = filtered.flatMap(e => e.children.map(c => ({ parent: e, child: c })))
+    if (rows.length === 0) { toast.error(t.common.noExportData); return }
+    downloadCsv(`publishers-relations-${date}.csv`, rows, [
+      { header: tt.exportColParentName, get: r => r.parent.name },
+      { header: tt.exportColParentId, get: r => r.parent.id },
+      { header: tt.exportColChildName, get: r => r.child.name },
+      { header: tt.exportColChildId, get: r => r.child.entity_id },
+      { header: tt.exportColRelType, get: r => tt.relationTypes[r.child.relation_type] ?? r.child.relation_type },
+      { header: tt.exportColStakePct, get: r => r.child.stake_pct ?? '' },
+      { header: tt.exportColRelNote, get: r => r.child.note ?? '' },
+    ])
+    toast.success(t.common.exported(rows.length))
+  }
 
   return (
     <div className="px-4 sm:px-7 py-5 sm:py-7 max-w-[1500px] mx-auto space-y-5">
@@ -458,6 +474,14 @@ export default function PublishersManage() {
         >
           <DownloadIcon size={14} />
           <span className="hidden sm:inline">{tt.exportSources}</span>
+        </button>
+        <button
+          onClick={exportRelations}
+          title={tt.exportRelationsHint}
+          className="flex items-center gap-2 px-3.5 py-2.5 rounded-lg font-data text-xs text-secondary border border-default hover:border-strong hover:text-primary bg-surface/60 transition-colors"
+        >
+          <DownloadIcon size={14} />
+          <span className="hidden sm:inline">{tt.exportRelations}</span>
         </button>
         <button
           onClick={() => isOpen ? closeForm() : openCreate()}
@@ -610,6 +634,8 @@ export default function PublishersManage() {
                 <option value="provenance">{tt.sortProvenance}</option>
               </select>
               <span className="font-data text-[11px] text-muted">{tt.countShown(filtered.length, entities.length)}</span>
+              {/* 数据健康度小卡：tier 分布 + 待补 backlog（hover 看详细）。不喧宾夺主、点不打开抽屉。 */}
+              <HealthChip />
             </>
           )}
         </div>
@@ -1217,6 +1243,42 @@ function BriefDisplay({ brief, emptyText, historyLabel }: {
       {main && <p className="text-sm text-primary/90 leading-relaxed whitespace-pre-wrap">{main}</p>}
       {stamps.length > 0 && <BriefHistory stamps={stamps} label={historyLabel(stamps.length)} />}
     </div>
+  )
+}
+
+/** 健康度小卡：一行简数 + hover tooltip 看详细。后端 `/api/publishers/health` 数据。
+ *  零侵入挂在筛选栏末尾，让用户一眼知道还有多少 backlog；点不打开任何抽屉。 */
+function HealthChip() {
+  const t = useT()
+  const tt = t.publishersManage
+  const { data: h } = useQuery({
+    queryKey: ['publishers', 'health'],
+    queryFn: () => publishersApi.health(),
+  })
+  if (!h) return null
+  const primaryPct = h.total > 0 ? Math.round((h.tier_primary / h.total) * 100) : 0
+  // 任意一项 backlog > 0 → 灰色提示态；全部清零 → 绿色
+  const hasBacklog = h.empty_brief + h.no_sources + h.no_primary_source + h.cn_no_chinese_name + h.stale_review > 0
+  const tip = [
+    tt.healthTipTotal(h.total),
+    tt.healthTipTier(h.tier_primary, h.tier_secondary, h.tier_none),
+    h.no_sources > 0      && tt.healthTipNoSrc(h.no_sources),
+    h.no_primary_source > 0 && tt.healthTipNoPri(h.no_primary_source),
+    h.empty_brief > 0     && tt.healthTipEmptyBrief(h.empty_brief),
+    h.cn_no_chinese_name > 0 && tt.healthTipNoCnName(h.cn_no_chinese_name),
+    h.stale_review > 0    && tt.healthTipStale(h.stale_review),
+    h.no_relations > 0    && tt.healthTipNoRels(h.no_relations),
+  ].filter(Boolean).join('\n')
+  return (
+    <span
+      title={tip}
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-data border ${hasBacklog
+        ? 'border-default text-muted bg-elevated/40'
+        : 'border-emerald-500/30 text-emerald-300 bg-emerald-500/10'}`}
+    >
+      <Activity size={10} />
+      {tt.healthChip(primaryPct)}
+    </span>
   )
 }
 

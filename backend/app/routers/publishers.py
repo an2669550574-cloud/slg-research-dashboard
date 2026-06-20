@@ -27,7 +27,7 @@ from app.schemas import (
     PublisherSourceOut, PublisherSourceCreate,
     PublisherItunesArtistOut, PublisherItunesArtistCreate,
     PublisherRelationCreate, PublisherRelationLinkOut, PublisherProductOut,
-    PublisherTopProductOut, PublisherGapOut,
+    PublisherTopProductOut, PublisherGapOut, PublisherHealthOut,
 )
 from app.services.slg_publishers import load_index_from_db
 from app.services.provenance import is_primary, provenance_tier
@@ -430,6 +430,99 @@ async def create_publisher(data: PublisherEntityCreate, db: AsyncSession = Depen
     return _build_out(e, aliases, app_ids, sources, parents, children, count,
                       itunes_artists=await _itunes_artists(e.id, db), top_products=top,
                       best_rank=best_rank, best_market=best_market)
+
+
+@router.get("/health", response_model=PublisherHealthOut)
+async def publisher_health(db: AsyncSession = Depends(get_db)):
+    """主体模块数据健康度自检——把多轮 audit sweep 用的手写脚本固化成端点。
+
+    维度：溯源 tier 分布 / 待补 backlog / 命名 backlog / 复核 backlog / 总量统计。
+    零 ST 配额、纯本地 DB；驱动 PublishersManage 顶部健康度小卡 + curl 周报场景。
+    必须先于 GET /{entity_id} 声明，否则 'health' 会被 int 路径捕获 → 422。
+    """
+    from datetime import datetime
+    entities = (await db.execute(select(PublisherEntity))).scalars().all()
+    aliases = (await db.execute(select(PublisherAlias))).scalars().all()
+    app_ids = (await db.execute(select(PublisherAppId))).scalars().all()
+    sources = (await db.execute(select(PublisherSource))).scalars().all()
+    relations = (await db.execute(select(PublisherRelation))).scalars().all()
+
+    aliases_by_eid: dict[int, int] = {}
+    for a in aliases:
+        aliases_by_eid[a.entity_id] = aliases_by_eid.get(a.entity_id, 0) + 1
+    appids_by_eid: dict[int, int] = {}
+    for a in app_ids:
+        appids_by_eid[a.entity_id] = appids_by_eid.get(a.entity_id, 0) + 1
+    sources_by_eid: dict[int, list] = {}
+    for s in sources:
+        sources_by_eid.setdefault(s.entity_id, []).append(s)
+    rels_by_eid: dict[int, int] = {}
+    for r in relations:
+        rels_by_eid[r.parent_id] = rels_by_eid.get(r.parent_id, 0) + 1
+        rels_by_eid[r.child_id] = rels_by_eid.get(r.child_id, 0) + 1
+
+    tier_primary = tier_secondary = tier_none = 0
+    empty_brief = no_sources = no_primary_source = no_relations = 0
+    no_aliases_no_appids = cn_no_chinese_name = stale_review = 0
+    capital_entities = 0
+    brief_lens: list[int] = []
+    now = datetime.utcnow()
+
+    for e in entities:
+        srcs = sources_by_eid.get(e.id, [])
+        n_pri = sum(1 for s in srcs if is_primary(s.source_type))
+        tier = provenance_tier([s.source_type for s in srcs])
+        if tier == "primary":
+            tier_primary += 1
+        elif tier == "secondary":
+            tier_secondary += 1
+        else:
+            tier_none += 1
+
+        blen = len((e.brief or "").strip())
+        brief_lens.append(blen)
+        if blen == 0:
+            empty_brief += 1
+        if not srcs:
+            no_sources += 1
+        elif n_pri == 0:
+            no_primary_source += 1
+        if rels_by_eid.get(e.id, 0) == 0:
+            no_relations += 1
+        if aliases_by_eid.get(e.id, 0) == 0 and appids_by_eid.get(e.id, 0) == 0:
+            no_aliases_no_appids += 1
+        # 国内厂未中文化：hq=国内 但 name 全无 CJK
+        if e.hq_region == "国内" and not any("一" <= c <= "鿿" for c in (e.name or "")):
+            cn_no_chinese_name += 1
+        if not e.is_slg:
+            capital_entities += 1
+        # 复核 backlog：有源、最新 as_of ≥ 12 个月（与前端 isStaleForReview 同口径）
+        as_ofs = [s.as_of for s in srcs if s.as_of]
+        if as_ofs:
+            latest = max(as_ofs)  # ISO 字符串排序对 YYYY-MM-DD 前缀有序
+            try:
+                # 容忍 "YYYY" / "YYYY-MM" / "YYYY-MM-DD"
+                parts = latest.split("-")
+                y, m, d = int(parts[0]), int(parts[1]) if len(parts) > 1 else 1, int(parts[2]) if len(parts) > 2 else 1
+                months = (now.year - y) * 12 + (now.month - m) - (1 if now.day < d else 0)
+                if months >= 12:
+                    stale_review += 1
+            except (ValueError, IndexError):
+                pass
+
+    total = len(entities)
+    return PublisherHealthOut(
+        total=total,
+        tier_primary=tier_primary, tier_secondary=tier_secondary, tier_none=tier_none,
+        empty_brief=empty_brief, no_sources=no_sources, no_primary_source=no_primary_source,
+        no_relations=no_relations, no_aliases_no_appids=no_aliases_no_appids,
+        cn_no_chinese_name=cn_no_chinese_name, stale_review=stale_review,
+        total_aliases=len(aliases), total_app_ids=len(app_ids),
+        total_sources=len(sources), total_relations=len(relations),
+        capital_entities=capital_entities,
+        avg_brief_len=(sum(brief_lens) // total) if total else 0,
+        max_brief_len=max(brief_lens) if brief_lens else 0,
+    )
 
 
 @router.get("/gaps", response_model=list[PublisherGapOut])

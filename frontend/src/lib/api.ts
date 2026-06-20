@@ -63,6 +63,7 @@ import type {
   PublisherRelationLink,
   PublisherRelationCreate,
   PublisherProduct,
+  PublisherHealth,
   WechatAccount,
   WechatAccountCandidate,
 } from './types'
@@ -374,6 +375,9 @@ export const publishersApi = {
     api.delete(`/publishers/${id}/relations/${relationId}`).then(r => r.data),
   products: (id: number, days = 30): Promise<PublisherProduct[]> =>
     api.get(`/publishers/${id}/products`, { params: { days } }).then(r => r.data),
+  // 数据健康度自检：覆盖 tier 分布 + 待补/命名/复核 backlog + 总量。
+  health: (): Promise<PublisherHealth> =>
+    api.get('/publishers/health').then(r => r.data),
 }
 
 // 订阅公众号：看板维护新品监测日报要搜哪些行业号。零 ST 配额（走 wechat-api）。
