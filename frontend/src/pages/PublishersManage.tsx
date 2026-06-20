@@ -13,6 +13,7 @@ import { PublisherCapitalTree } from '../components/PublisherCapitalTree'
 import { GROUP_EDGE_TYPES } from '../lib/equityGraph'
 import { GameIcon } from '../components/GameIcon'
 import { useLocalStorageState } from '../lib/hooks'
+import { parseBrief, type BriefStamp } from '../lib/briefStamps'
 import type {
   PublisherEntity, PublisherEntityCreate, PublisherEntityUpdate,
   PublisherSourceCreate, PublisherSourceType,
@@ -827,12 +828,12 @@ function PublisherDetailDrawer({ entity: e, entities, onClose, onEdit, onDelete 
 
         {/* 抽屉体（滚动区） */}
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
-          {/* 公司介绍（业务最先看）*/}
+          {/* 公司介绍（业务最先看）。多轮溯源后 brief 常含【调研更新/复查 negative】戳记，
+              主 brief 顶部直接显示、戳记折叠到「调研历史」区——抽屉一目了然。
+              编辑模式（form）仍是全文本，不受影响。 */}
           <div>
             <div className="text-[11px] text-secondary mb-1">{tt.briefSectionLabel}</div>
-            {e.brief
-              ? <p className="text-sm text-primary/90 leading-relaxed whitespace-pre-wrap">{e.brief}</p>
-              : <p className="text-xs text-muted">{tt.briefEmpty}</p>}
+            <BriefDisplay brief={e.brief} emptyText={tt.briefEmpty} historyLabel={tt.briefHistoryLabel} />
           </div>
 
           {/* 旗下 SLG 产品（打开即自动加载·零 ST 配额）*/}
@@ -1192,6 +1193,59 @@ function PublisherProducts({ entityId }: { entityId: number }) {
           </div>
         </button>
       ))}
+    </div>
+  )
+}
+
+// brief 戳记的徽章配色：约定 3 种常见 label，其它走默认灰
+const STAMP_VARIANTS: Record<string, string> = {
+  '调研更新':    'bg-brand-500/15 text-brand-300 border-brand-500/30',
+  '调研负面发现': 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+  '复查 negative': 'bg-muted/15 text-muted border-default',
+}
+
+/** brief 渲染：主 brief 顶部、戳记折叠到「调研历史」区。无 brief 显示 emptyText。 */
+function BriefDisplay({ brief, emptyText, historyLabel }: {
+  brief: string | null | undefined
+  emptyText: string
+  historyLabel: (n: number) => string
+}) {
+  const { main, stamps } = parseBrief(brief)
+  if (!brief) return <p className="text-xs text-muted">{emptyText}</p>
+  return (
+    <div className="space-y-2">
+      {main && <p className="text-sm text-primary/90 leading-relaxed whitespace-pre-wrap">{main}</p>}
+      {stamps.length > 0 && <BriefHistory stamps={stamps} label={historyLabel(stamps.length)} />}
+    </div>
+  )
+}
+
+function BriefHistory({ stamps, label }: { stamps: BriefStamp[]; label: string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="inline-flex items-center gap-1 text-[11px] text-muted hover:text-secondary transition-colors"
+      >
+        {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+        {label}
+      </button>
+      {open && (
+        <ul className="mt-2 space-y-2.5">
+          {stamps.map((s, i) => (
+            <li key={i} className="border-l-2 border-default pl-3 space-y-1">
+              <div className="flex items-center gap-1.5 text-[10px]">
+                <span className={`px-1.5 py-0.5 rounded border ${STAMP_VARIANTS[s.label] ?? 'bg-elevated text-muted border-default'}`}>
+                  {s.label}
+                </span>
+                {s.date && <span className="font-data text-muted">{s.date}</span>}
+              </div>
+              <p className="text-[12px] text-secondary/90 leading-relaxed whitespace-pre-wrap">{s.content}</p>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }

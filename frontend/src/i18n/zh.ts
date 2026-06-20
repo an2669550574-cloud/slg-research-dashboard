@@ -750,6 +750,7 @@ export const zh = {
     // 展开后业务优先版面
     briefSectionLabel: '公司介绍',
     briefEmpty: '暂无公司介绍，点右上角铅笔补充',
+    briefHistoryLabel: (n: number) => `调研历史（${n}）`,
     productsSectionLabel: '旗下 SLG 产品',
     maintLabel: '调研维护字段',
     empty: '暂无厂商主体，点击"添加主体"录入第一个',
