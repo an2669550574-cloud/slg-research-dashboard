@@ -733,6 +733,7 @@ export const en: Translations = {
     sumNoProducts: 'No charting products (profile on file)',
     briefSectionLabel: 'Company overview',
     briefEmpty: 'No overview yet — click the pencil to add',
+    briefHistoryLabel: (n: number) => `Research history (${n})`,
     productsSectionLabel: 'SLG products',
     maintLabel: 'Research data',
     empty: 'No publishers yet, click "Add Publisher" to add the first',
