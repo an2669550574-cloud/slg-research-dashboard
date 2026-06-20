@@ -809,6 +809,28 @@ export interface PublisherTopProduct {
   icon_url: string | null
 }
 
+/** 主体模块数据健康度快照——驱动顶部健康度小卡 + curl 自检脚本。 */
+export interface PublisherHealth {
+  total: number
+  tier_primary: number
+  tier_secondary: number
+  tier_none: number
+  empty_brief: number
+  no_sources: number
+  no_primary_source: number
+  no_relations: number
+  no_aliases_no_appids: number
+  cn_no_chinese_name: number
+  stale_review: number
+  total_aliases: number
+  total_app_ids: number
+  total_sources: number
+  total_relations: number
+  capital_entities: number
+  avg_brief_len: number
+  max_brief_len: number
+}
+
 export interface PublisherAliasCreate {
   keyword: string
   label?: string | null

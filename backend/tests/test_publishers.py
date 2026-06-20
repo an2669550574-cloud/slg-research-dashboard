@@ -288,6 +288,61 @@ async def test_gaps_respects_window_and_limit(client):
 
 
 @pytest.mark.asyncio
+async def test_health_endpoint_covers_audit_dimensions(client):
+    """/health 端点：覆盖 tier 分布 + 待补/命名/复核 backlog + 总量。空库 + 加几个主体验各维度。"""
+    # 空库基线
+    h = (await client.get("/api/publishers/health")).json()
+    assert h["total"] == 0
+    assert h["tier_primary"] == 0 and h["tier_none"] == 0
+
+    # 主体 A：完整（有 brief + 一手源 + 关系 + 中文名）
+    eid_a = (await client.post("/api/publishers/", json={
+        "name": "灵犀互娱 Lingxi", "hq_region": "国内",
+        "brief": "国内 SLG 大厂；阿里游戏旗下；三国志战略版研发。",
+        "aliases": [{"keyword": "lingxi"}],
+    })).json()["id"]
+    await client.post(f"/api/publishers/{eid_a}/sources", json={
+        "url": "https://lingxigames.com", "title": "官网",
+        "source_type": "official_domain", "as_of": "2026-06-20",
+    })
+    # 主体 B：浅度（仅二手源、英文名国内厂、无关系）
+    eid_b = (await client.post("/api/publishers/", json={
+        "name": "ShallowCo", "hq_region": "国内", "brief": "测试浅度国内主体待补中文名",
+    })).json()["id"]
+    await client.post(f"/api/publishers/{eid_b}/sources", json={
+        "url": "https://example.com/article", "title": "媒体报道",
+        "source_type": "media", "as_of": "2024-01-01",  # > 12 个月 → stale
+    })
+    # 主体 C：纯壳（无 brief、无源、无 alias/appid）
+    await client.post("/api/publishers/", json={"name": "EmptyShell"})
+    # 关系：A ←→ A 自身不行，再建一个挂关系
+    eid_d = (await client.post("/api/publishers/", json={
+        "name": "Sub", "is_slg": True, "brief": "子公司，挂母体灵犀作示例关系"
+    })).json()["id"]
+    await client.post(f"/api/publishers/{eid_a}/relations", json={
+        "counterpart_id": eid_d, "counterpart_role": "child", "relation_type": "controlling",
+    })
+
+    h = (await client.get("/api/publishers/health")).json()
+    assert h["total"] == 4
+    assert h["tier_primary"] == 1            # A 一手
+    assert h["tier_secondary"] == 1          # B 二手
+    assert h["tier_none"] == 2               # C/D 无源
+    assert h["no_sources"] == 2              # C/D
+    assert h["no_primary_source"] == 1       # B
+    assert h["empty_brief"] == 1             # C (无 brief，<30 字)
+    assert h["no_aliases_no_appids"] == 3    # B/C/D
+    assert h["cn_no_chinese_name"] == 1      # B (国内 + 全英文)
+    assert h["stale_review"] == 1            # B (2024-01-01 > 12 个月)
+    assert h["total_aliases"] == 1
+    assert h["total_sources"] == 2
+    assert h["total_relations"] == 1
+    assert h["no_relations"] == 2            # B/C 没关系（A/D 都挂了）
+    assert h["capital_entities"] == 0        # 都是 is_slg=True 默认
+    assert h["max_brief_len"] > 0
+
+
+@pytest.mark.asyncio
 async def test_seed_publishers_idempotent(client):
     """直接调 scheduler.seed_publishers_if_empty 两次：只灌一次，主体数 = 种子全集。"""
     import importlib

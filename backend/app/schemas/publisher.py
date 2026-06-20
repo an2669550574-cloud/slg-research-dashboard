@@ -202,6 +202,37 @@ class PublisherProductOut(BaseModel):
     genre: Optional[str] = None  # 雷达(radar)产品的子品类，无榜单 publisher 时作副标题兜底
 
 
+class PublisherHealthOut(BaseModel):
+    """主体模块的数据健康度快照——把「这两轮手写的 audit 脚本」固化成端点。
+
+    驱动看板自检：
+    - 完整溯源占比 (tier_primary / total)
+    - 待补 backlog（无 brief / 无源 / 仅二手 / 无关系且非孤厂等）
+    - 命名 backlog（国内厂未中文化）
+    - 复核 backlog（>12 个月没核验的有源主体）
+
+    端点零 ST 配额、纯本地 DB；前端可调，也可 curl 出 CSV/周报。
+    """
+    total: int                       # 主体总数
+    tier_primary: int                # 有 ≥1 一手源
+    tier_secondary: int              # 仅二手源
+    tier_none: int                   # 无任何源
+    empty_brief: int                 # brief 严格为空（null / "" / 只含空白）
+    no_sources: int                  # 一条源都没挂
+    no_primary_source: int           # 至少有源但全二手
+    no_relations: int                # parents+children=0（独立厂 OR 待挂集团）
+    no_aliases_no_appids: int        # 既无 alias 又无 app_id（极端裸壳）
+    cn_no_chinese_name: int          # hq=国内 但 name 全英文
+    stale_review: int                # 有源、最新 as_of ≥ 12 个月（建议复核）
+    total_aliases: int
+    total_app_ids: int
+    total_sources: int
+    total_relations: int
+    capital_entities: int            # is_slg=False 的资本方/控股母体
+    avg_brief_len: int               # 平均 brief 字符数
+    max_brief_len: int               # 单主体最长 brief（已加戳记后会拉高）
+
+
 class PublisherGapOut(BaseModel):
     """调研缺口行：近 N 天有收入、任何 alias/app_id 都没命中的 publisher。
 
