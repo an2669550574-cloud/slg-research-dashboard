@@ -237,12 +237,18 @@ class NewcomerHistoryItem(BaseModel):
     # 读时归属：命中已建档主体（建档后无需回写，历史卡片立刻显示已归属）
     entity_id: Optional[int] = None
     entity_name: Optional[str] = None
+    # 检出时是否「回归」（baseline 之外曾出现）。0022 迁移前的历史行为 None ——
+    # 前端按真首发处理（向后兼容，缺省 = 老数据照旧显示）。
+    is_reentry: Optional[bool] = None
 
 
 class NewcomerHistoryOut(BaseModel):
     today: str
     items: list[NewcomerHistoryItem]
     days: int
+    # 各 combo 锚定的"最近快照日"，前端据此显示「截至 N 天前」新鲜度提示。
+    # 与 NewcomersOut 同口径（来自 game_rankings 的 MAX(date) per combo）。
+    as_of_by_combo: dict[str, str] = {}
 
 
 @router.get("/history", response_model=NewcomerHistoryOut)
@@ -251,10 +257,25 @@ async def get_newcomer_history(
     country: Optional[str] = Query(None),
     platform: Optional[str] = Query(None),
     topn: Optional[int] = Query(None, ge=1, le=200, description="只看名次 ≤ 此值的检出（如 50）"),
+    signal: Optional[str] = Query(
+        None, pattern="^(true_new|reentry|all)$",
+        description=(
+            "信号筛选："
+            "`true_new`(默认推荐) 仅真首发（is_reentry=False 或 NULL=老数据兼容）；"
+            "`reentry` 仅回归（is_reentry=True）；"
+            "`all` 全部不筛"
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ):
-    """已沉淀的全市场新面孔检出历史（检出即落库 + 免费源富化，零 ST 配额）。"""
+    """已沉淀的全市场新面孔检出历史（检出即落库 + 免费源富化，零 ST 配额）。
+
+    `signal` 默认不筛（all），交给前端按 is_reentry 字段决定。如果前端想让服务端
+    预筛（少传一些行）可显式传 signal=true_new 或 reentry。
+    """
     from app.models.newcomer import MarketNewcomerLog
+    from sqlalchemy import or_, func as sa_func
+    from app.models.game import GameRanking
     since = utcnow_naive() - timedelta(days=days)
     q = select(MarketNewcomerLog).where(MarketNewcomerLog.first_detected_at >= since)
     if country:
@@ -263,11 +284,23 @@ async def get_newcomer_history(
         q = q.where(MarketNewcomerLog.platform == platform.lower())
     if topn:
         q = q.where(MarketNewcomerLog.rank <= topn)
+    if signal == "true_new":
+        # NULL = 老数据未知，按真首发处理（向后兼容，老卡片照旧显示）
+        q = q.where(or_(MarketNewcomerLog.is_reentry.is_(False),
+                        MarketNewcomerLog.is_reentry.is_(None)))
+    elif signal == "reentry":
+        q = q.where(MarketNewcomerLog.is_reentry.is_(True))
     rows = (await db.execute(
         q.order_by(MarketNewcomerLog.first_detected_at.desc(), MarketNewcomerLog.rank)
     )).scalars().all()
     from app.services.newcomer_log import attribute_entities
     attributed = await attribute_entities(rows)
+    # 数据新鲜度：每 combo 最近一次已同步快照日，让前端给陈旧 combo 加 stale 提示。
+    freshness_rows = (await db.execute(
+        select(GameRanking.country, GameRanking.platform, sa_func.max(GameRanking.date))
+        .group_by(GameRanking.country, GameRanking.platform)
+    )).all()
+    as_of_by_combo = {f"{c}/{p}": d for c, p, d in freshness_rows if d}
     return NewcomerHistoryOut(
         today=utcnow_naive().strftime("%Y-%m-%d"),
         items=[
@@ -276,7 +309,7 @@ async def get_newcomer_history(
                     "id", "country", "platform", "app_id", "as_of", "name", "publisher",
                     "icon_url", "rank", "revenue", "first_detected_at",
                     "store_url", "release_date", "genre", "rating", "rating_count",
-                    "price", "description", "enrich_source")},
+                    "price", "description", "enrich_source", "is_reentry")},
                 # 落库后建档的主体读时也算 SLG——is_slg 活算（存档值只作冗余）
                 is_slg=r.is_slg or r.id in attributed,
                 entity_id=attributed.get(r.id, (None, None))[0],
@@ -286,6 +319,7 @@ async def get_newcomer_history(
             for r in rows
         ],
         days=days,
+        as_of_by_combo=as_of_by_combo,
     )
 
 

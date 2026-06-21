@@ -30,6 +30,9 @@ class MarketNewcomerLog(Base):
     rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     revenue: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     is_slg: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 检出时是否「回归」（baseline 窗口之外曾出现）。新写入 True/False；
+    # 0022 迁移前的历史行为 NULL（无法回溯当时 baseline，前端按真首发处理）。
+    is_reentry: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     first_detected_at: Mapped[datetime] = mapped_column(
         DateTime, default=utcnow_naive, index=True)
 

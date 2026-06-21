@@ -6,7 +6,7 @@ import { newcomersApi, publishersApi } from '../lib/api'
 import { formatRevenue, formatNumber } from '../lib/utils'
 import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
-import { Download as DownloadIcon, Sparkles, Info, FilePlus2, Globe2, Building2, Store, RefreshCw, Star, X, ExternalLink } from 'lucide-react'
+import { Download as DownloadIcon, Sparkles, Info, FilePlus2, Globe2, Building2, Store, RefreshCw, Star, X, ExternalLink, Repeat, Clock } from 'lucide-react'
 import { COUNTRIES, PLATFORMS, platformLabel, type Country, type Platform } from '../lib/markets'
 import { GameIcon } from '../components/GameIcon'
 import { QueryError } from '../components/QueryError'
@@ -25,15 +25,19 @@ export default function NewReleases() {
   const [mktCountry, setMktCountry] = useLocalStorageState<'all' | Country>('slg.nc.country', 'all')
   const [topn, setTopn] = useLocalStorageState<50 | 100>('slg.nc.topn', 100)
   const [days, setDays] = useLocalStorageState<30 | 90>('slg.nc.days', 90)
+  // 信号筛选：真首发(默认) / 回归 / 全部。PR #93 把回归识别出来后默认隐藏，
+  // 回归独立 tab 给运营回看「老游戏卷土重来」的情报信号。
+  const [signal, setSignal] = useLocalStorageState<'true_new' | 'reentry' | 'all'>('slg.nc.signal', 'true_new')
   const [selected, setSelected] = useState<NewcomerHistoryItem | null>(null)
 
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['newcomerHistory', mktCountry, mktPlatform, topn, days],
+    queryKey: ['newcomerHistory', mktCountry, mktPlatform, topn, days, signal],
     queryFn: () => newcomersApi.history({
       days,
       topn: topn === 100 ? undefined : topn,
       country: mktCountry === 'all' ? undefined : mktCountry,
       platform: mktPlatform === 'all' ? undefined : mktPlatform,
+      signal,
     }),
     enabled: view === 'market',
   })
@@ -186,9 +190,24 @@ export default function NewReleases() {
                 </button>
               ))}
             </div>
+            <div className="flex gap-1 bg-elevated rounded-lg p-1" title={t.newcomers.signalHint}>
+              {(['true_new', 'reentry', 'all'] as const).map(s => (
+                <button
+                  key={s}
+                  onClick={() => setSignal(s)}
+                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${signal === s ? 'bg-brand-600 text-white' : 'text-secondary hover:text-primary'}`}
+                >
+                  {s === 'true_new' && <Sparkles size={11} />}
+                  {s === 'reentry' && <Repeat size={11} />}
+                  {s === 'true_new' ? t.newcomers.signalTrueNew : s === 'reentry' ? t.newcomers.signalReentry : t.newcomers.signalAll}
+                </button>
+              ))}
+            </div>
           </>
         )}
       </div>
+
+      {view === 'market' && data?.as_of_by_combo && <StaleCombosWarning asOfByCombo={data.as_of_by_combo} today={data.today} />}
 
       {view === 'publisher' ? (
         <>
@@ -255,6 +274,14 @@ export default function NewReleases() {
                   <span className="ml-auto">{t.newcomers.detectedAt(g.as_of)}</span>
                 </div>
                 <div className="flex items-center gap-1.5">
+                  {g.is_reentry === true && (
+                    <span
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-cyan-500/15 text-cyan-400 border border-cyan-500/30"
+                      title={t.newcomers.reentryHint}
+                    >
+                      <Repeat size={10} />{t.newcomers.reentryBadge}
+                    </span>
+                  )}
                   {g.entity_name ? (
                     <span className="inline-block px-2 py-0.5 rounded-md text-[11px] font-medium bg-brand-600/15 text-brand-500">
                       {t.newcomers.attributedTo(g.entity_name)}
@@ -291,6 +318,33 @@ export default function NewReleases() {
       <div className="flex items-start gap-2 text-[11px] text-muted/80 leading-relaxed">
         <Info size={13} className="mt-0.5 shrink-0" />
         <span>{view === 'market' ? t.newcomers.note : t.newcomers.publisherNote}</span>
+      </div>
+    </div>
+  )
+}
+
+
+/** 数据新鲜度提示：把陈旧 combo（≥3 天）单独列出，让用户知道某市场榜单同步晚了。
+ *  数据来源：/history 的 as_of_by_combo（来自 game_rankings 的 MAX(date) per combo）。
+ *  阈值：≥3 天提示，≥14 天加重提示（红）。<3 天不渲染，避免视觉噪声。 */
+function StaleCombosWarning({ asOfByCombo, today }: { asOfByCombo: Record<string, string>; today: string }) {
+  const t = useT()
+  const todayMs = Date.parse(today + 'T00:00:00Z')
+  const stale = Object.entries(asOfByCombo)
+    .map(([combo, d]) => ({ combo, d, days: Math.floor((todayMs - Date.parse(d + 'T00:00:00Z')) / 86400000) }))
+    .filter(x => x.days >= 3)
+    .sort((a, b) => b.days - a.days)
+  if (stale.length === 0) return null
+  return (
+    <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-amber-500/5 border border-amber-500/20 text-[11px] font-data">
+      <Clock size={12} className="mt-0.5 shrink-0 text-amber-400" />
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-secondary">
+        <span className="text-amber-400 font-medium">{t.newcomers.stalenessHeader}</span>
+        {stale.map(s => (
+          <span key={s.combo} className={s.days >= 14 ? 'text-red-400' : 'text-amber-400/90'}>
+            {s.combo} · {t.newcomers.stalenessDaysAgo(s.days)}
+          </span>
+        ))}
       </div>
     </div>
   )
