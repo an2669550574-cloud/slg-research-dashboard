@@ -85,7 +85,8 @@ async def test_find_siblings_rejects_short_prefix(client):
 
 @pytest.mark.asyncio
 async def test_find_siblings_does_not_cross_publisher(client):
-    """跨 publisher 即使名字相同也不合（宁错放过别错合）。"""
+    """跨 publisher 即使名字相同也不合（宁错放过别错合）。两个 publisher 都没建档为
+    任何 entity 的 alias，规范化后字符串不等同 → 应判定为不同 publisher 不合并。"""
     from app.services.sibling_match import find_sibling_app_ids
     from app.database import AsyncSessionLocal
 
@@ -97,6 +98,64 @@ async def test_find_siblings_does_not_cross_publisher(client):
     async with AsyncSessionLocal() as db:
         s = await find_sibling_app_ids(db, "a")
         assert s == ["a"]
+
+
+@pytest.mark.asyncio
+async def test_find_siblings_merges_across_alias_canonicalized_publisher(client):
+    """**核心新行为**：两个 publisher 字符串都通过 `publisher_aliases` 映射到同一个 entity
+    时，视为同 publisher → 跨平台同款合并。
+
+    实景：Top Games 同时用 \"TOP GAMES INC.\"（iOS）和 \"TG Inc.\"（Android）发 Evony。
+    规范化字符串 \"topgamesinc\" vs \"tginc\" 完全不等，但建档时两个 alias 都已挂到
+    entity 15 → canonical key 用 \"@e:15\" 让它们等价。
+    """
+    from app.services.sibling_match import find_sibling_app_ids
+    from app.database import AsyncSessionLocal
+
+    today = date.today().strftime("%Y-%m-%d")
+    # Top Games 主体 + 两个 alias（覆盖两种 publisher 写法）
+    await client.post("/api/publishers/", json={
+        "name": "Top Games",
+        "aliases": [{"keyword": "top games"}, {"keyword": "tg inc"}],
+    })
+    await _seed([
+        ("ios.evony", today, 1, 200, 100.0, "US", "ios",
+         "Evony", "TOP GAMES INC."),
+        ("gp.evony", today, 2, 150, 80.0, "US", "android",
+         "Evony: The King's Return", "TG Inc."),
+    ])
+    async with AsyncSessionLocal() as db:
+        s = await find_sibling_app_ids(db, "ios.evony")
+        assert set(s) == {"ios.evony", "gp.evony"}
+        # 反向也对称（站在 Android 也能找回 iOS）
+        s2 = await find_sibling_app_ids(db, "gp.evony")
+        assert set(s2) == {"ios.evony", "gp.evony"}
+
+
+@pytest.mark.asyncio
+async def test_find_siblings_does_not_cross_different_entities(client):
+    """**反向回归**：两个 publisher 字符串映射到**不同** entity 时即使名字前缀匹配也不合
+    （宁错放过别错合）。如「Whiteout Survival」由 entity 1 发 iOS、entity 2 发 Android。"""
+    from app.services.sibling_match import find_sibling_app_ids
+    from app.database import AsyncSessionLocal
+
+    today = date.today().strftime("%Y-%m-%d")
+    await client.post("/api/publishers/", json={
+        "name": "Studio A", "aliases": [{"keyword": "studio a"}],
+    })
+    await client.post("/api/publishers/", json={
+        "name": "Studio B", "aliases": [{"keyword": "studio b"}],
+    })
+    await _seed([
+        ("ios.same", today, 1, 100, 10.0, "US", "ios",
+         "Whiteout Survival", "Studio A Limited"),
+        ("gp.same", today, 1, 80, 8.0, "US", "android",
+         "Whiteout Survival", "Studio B Inc."),
+    ])
+    async with AsyncSessionLocal() as db:
+        s = await find_sibling_app_ids(db, "ios.same")
+        # 同名但跨 entity → 不合
+        assert s == ["ios.same"]
 
 
 @pytest.mark.asyncio
