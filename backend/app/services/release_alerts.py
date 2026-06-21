@@ -170,12 +170,17 @@ def build_newcomer_lines(market: dict, publisher: dict,
     enrich: {app_id: {genre, price, release_date}}
     articles: {app_id: [WechatArticle]} 微信公众号文章
     entities: {app_id: 中文厂商主体} —— 市场新面孔补中文归属（厂商新品行自带 entity_name）
+
+    **回归过滤**：`is_reentry=True` 的项不进 digest（老游戏跌出 baseline 又回来，
+    标"新品"是误导）。is_reentry 字段在 no_baseline combo 里缺省，缺省 = False
+    = 当真首发处理（与早期行为兼容）。先过滤再 [:10] 截断，避免被回归占满名额。
     """
     enrich = enrich or {}
     articles = articles or {}
     entities = entities or {}
     lines = []
-    for n in (market.get("newcomers") or [])[:10]:
+    market_real = [n for n in (market.get("newcomers") or []) if not n.get("is_reentry")]
+    for n in market_real[:10]:
         aid = n.get("app_id")
         tag = "" if n.get("is_slg") else "  ⚠️ 新厂商待识别"
         en = enrich.get(aid) or {}
@@ -185,7 +190,8 @@ def build_newcomer_lines(market: dict, publisher: dict,
         base = f"✨ **{n['name']}** 空降 **#{n['rank']}**{tag}" + meta
         base += _articles_suffix(articles.get(aid))
         lines.append(base)
-    for n in (publisher.get("newcomers") or [])[:10]:
+    publisher_real = [n for n in (publisher.get("newcomers") or []) if not n.get("is_reentry")]
+    for n in publisher_real[:10]:
         aid = n.get("app_id")
         rank = f"#{n['rank']}" if n.get("rank") else "进榜"
         meta = _meta_line(revenue=n.get("revenue"), downloads=n.get("downloads"))

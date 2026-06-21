@@ -43,6 +43,12 @@ async def _first_appearances(
 
     detect_newcomers（全市场新面孔，Top N 门槛）与 detect_publisher_newcomers
     （已建档厂商新品，任意名次）共享这套基线比对核心。
+
+    同时返回 `historical_ids` —— baseline 窗口**之外**（更早的快照里）曾出现过的
+    app_id 集合，用于让消费方区分「真首发」(从未见过) vs「回归」(老游戏短暂跌出
+    baseline 又回来)。weekly combo (JP/KR/DE/RU) baseline = 4 周，老 SLG 产品有
+    一周漏榜就会被基线判 "首次出现"，但 historical_ids 能告诉你它其实早就上过榜。
+    digest 等高信噪需求的消费方可据此过滤；前端"新品监测"可保留两类、加 tag 展示。
     """
     today = utcnow_naive().strftime("%Y-%m-%d")
     summary: dict = {
@@ -56,6 +62,9 @@ async def _first_appearances(
         "no_baseline": False,
         # 首次出现的 GameRanking 行（已按名次升序、不限名次）。
         "rows": [],
+        # baseline 窗口之外更早出现过的 app_id 集合（用于 is_reentry 判定）。
+        # 仅当存在 baseline 时才计算；no_baseline 路径恒为空集。
+        "historical_ids": set(),
     }
 
     async with AsyncSessionLocal() as db:
@@ -93,6 +102,16 @@ async def _first_appearances(
             )
         )).scalars().all())
 
+        # 历史层：baseline 窗口之外（更早）出现过的 app_id。区分真首发 vs 回归。
+        oldest_baseline = min(prior_dates)
+        summary["historical_ids"] = set((await db.execute(
+            select(distinct(GameRanking.app_id)).where(
+                GameRanking.country == country,
+                GameRanking.platform == platform,
+                GameRanking.date < oldest_baseline,
+            )
+        )).scalars().all())
+
         # as_of 当期榜，按名次升序。
         today_rows = (await db.execute(
             select(GameRanking).where(
@@ -106,8 +125,13 @@ async def _first_appearances(
     return summary
 
 
-def _row_dict(r) -> dict:
-    return {
+def _row_dict(r, *, historical_ids: Optional[set] = None) -> dict:
+    """GameRanking → 行字典。给了 historical_ids 时附 `is_reentry` 字段。
+
+    is_reentry=True 表示该 app_id 在 baseline 窗口之前的更早快照里出现过——
+    属于"老游戏跌出 baseline 又回来"的回归，不是真首发。digest 据此过滤。
+    """
+    out = {
         "app_id": r.app_id,
         "name": r.name or r.app_id,
         "publisher": r.publisher,
@@ -116,6 +140,9 @@ def _row_dict(r) -> dict:
         "revenue": r.revenue,
         "downloads": r.downloads,
     }
+    if historical_ids is not None:
+        out["is_reentry"] = r.app_id in historical_ids
+    return out
 
 
 async def detect_newcomers(
@@ -132,10 +159,11 @@ async def detect_newcomers(
     topn = topn if topn is not None else settings.NEWCOMER_TOPN
 
     base = await _first_appearances(country, platform, window)
-    summary = {k: v for k, v in base.items() if k != "rows"}
+    historical_ids = base.get("historical_ids")
+    summary = {k: v for k, v in base.items() if k not in ("rows", "historical_ids")}
     summary["newcomers"] = [
         {
-            **_row_dict(r),
+            **_row_dict(r, historical_ids=historical_ids),
             # 不参与过滤，仅供前端区分"已识别 SLG"vs"新厂商待识别"(后者最值得调研)。
             "is_slg": is_slg(r.app_id, r.publisher),
         }
@@ -210,21 +238,28 @@ async def detect_publisher_newcomers(
     *,
     window: Optional[int] = None,
     matchers: Optional[list[dict]] = None,
+    topn: Optional[int] = None,
 ) -> dict:
     """已建档厂商主体的新品：首次出现 + 发行商马甲/钉选 app_id 归属到某主体。
 
-    与 detect_newcomers 的差异：**不设 Top N 门槛**——主体可信，新品在任意名次
-    首次出现都是高信号（解决"慢慢爬榜被基线见过、永不触发"的漏报，如 Top Heroes）。
-    跨 combo 调用时可传入预加载的 matchers 避免重复查主体表。
+    与 detect_newcomers 的差异：默认 TopN 阈值更宽松（PUBLISHER_NEWCOMER_TOPN=200
+    vs NEWCOMER_TOPN=50）——主体可信，名次较深也值得关注（解决"慢慢爬榜被基线
+    见过、永不触发"的漏报，如 Top Heroes），但不再"完全不限名次"（曾让 JP/android
+    weekly 抖动产生 #137–#535 长尾刷屏 digest，2026-06-21 实测单 combo 23 项里
+    22 项是噪声）。跨 combo 调用时可传入预加载的 matchers 避免重复查主体表。
     """
     window = window if window is not None else settings.NEWCOMER_WINDOW
+    topn = topn if topn is not None else settings.PUBLISHER_NEWCOMER_TOPN
     if matchers is None:
         matchers = await _load_entity_matchers()
 
     base = await _first_appearances(country, platform, window)
-    summary = {k: v for k, v in base.items() if k != "rows"}
+    historical_ids = base.get("historical_ids")
+    summary = {k: v for k, v in base.items() if k not in ("rows", "historical_ids")}
     summary["newcomers"] = []
     for r in base["rows"]:
+        if r.rank is None or r.rank > topn:
+            continue
         pub_tokens = _tokens(r.publisher)
         for m in matchers:
             if r.app_id in m["app_ids"]:
@@ -234,7 +269,7 @@ async def detect_publisher_newcomers(
             else:
                 continue
             summary["newcomers"].append({
-                **_row_dict(r),
+                **_row_dict(r, historical_ids=historical_ids),
                 "entity_id": m["entity_id"],
                 "entity_name": m["entity_name"],
                 "matched_by": matched,

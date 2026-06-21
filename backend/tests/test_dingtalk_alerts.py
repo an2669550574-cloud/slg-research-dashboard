@@ -104,6 +104,41 @@ def test_daily_digest_human_readable_no_machine_codes():
     assert ("寒霜启示录 →", "https://apps.apple.com/us/app/id123") in btns
 
 
+def test_daily_digest_filters_reentries_from_newcomer_lines():
+    """build_newcomer_lines 跳过 is_reentry=True 的项——治 weekly combo 老 SLG 产品
+    跌出 baseline 又回来被误报"新品"刷屏 digest 的真噪声（实测 JP/android 单 combo
+    23 项里 22 项是回归）。先过滤再 [:10] 截断，避免回归占满名额把真首发挤掉。"""
+    from app.services.release_alerts import build_newcomer_lines
+
+    market = {"newcomers": [
+        {"app_id": "true_new", "rank": 5, "name": "真首发", "publisher": "X", "is_slg": True, "is_reentry": False},
+        {"app_id": "back_x",   "rank": 6, "name": "回归老游 1", "publisher": "X", "is_slg": True, "is_reentry": True},
+        {"app_id": "back_y",   "rank": 7, "name": "回归老游 2", "publisher": "X", "is_slg": True, "is_reentry": True},
+    ]}
+    publisher = {"newcomers": [
+        {"app_id": "pub_back", "entity_name": "江娱", "name": "Top War 回归", "rank": 80, "is_reentry": True},
+        {"app_id": "pub_new", "entity_name": "江娱", "name": "Top Heroes 真首发", "rank": 90, "is_reentry": False},
+    ]}
+    lines = build_newcomer_lines(market, publisher)
+    text = "\n".join(lines)
+    # 真首发都在
+    assert "真首发" in text and "Top Heroes 真首发" in text
+    # 回归全部被砍
+    assert "回归老游" not in text and "Top War 回归" not in text
+
+
+def test_daily_digest_treats_missing_is_reentry_as_true_first():
+    """no_baseline combo 的 newcomer 行不带 is_reentry 字段——按 .get() 拿 None
+    = falsy = 真首发处理（兼容性保底，避免冷库 combo 数据被全过滤）。"""
+    from app.services.release_alerts import build_newcomer_lines
+
+    market = {"newcomers": [
+        {"app_id": "x", "rank": 1, "name": "冷库新品", "publisher": "P", "is_slg": True},
+    ]}
+    lines = build_newcomer_lines(market, {"newcomers": []})
+    assert any("冷库新品" in l for l in lines)
+
+
 def test_appstore_digest():
     from app.services.release_alerts import build_appstore_digest
     assert build_appstore_digest([]) is None
