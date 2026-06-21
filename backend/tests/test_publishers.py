@@ -326,7 +326,7 @@ async def test_sibling_dedup_collapses_ios_android_same_game(client):
 @pytest.mark.asyncio
 async def test_sibling_dedup_preserves_cjk_only_independent(client):
     """纯 CJK 本地化名（normalize 后为空字符串）不参与 sibling 合并，保留为独立组。
-    这是兼容性保底——避免把无关游戏因都是 CJK 名 + 同 publisher 而误合。"""
+    这是兼容性保底——避免把无关游戏因都是 CJK 名而误合。"""
     today = _today()
     await _seed_rankings([
         ("a.cjk", today, 1, 100, 50.0, "JP", "ios", "游戏一", "Tako Games"),
@@ -337,6 +337,41 @@ async def test_sibling_dedup_preserves_cjk_only_independent(client):
     })).json()["id"]
     prods = (await client.get(f"/api/publishers/{eid}/products")).json()
     assert len(prods) == 2  # 不合并
+
+
+@pytest.mark.asyncio
+async def test_sibling_dedup_merges_across_publisher_string_variants(client):
+    """**entity scope** 内的跨 publisher 字符串同款合并：
+    同一家公司不同法人/分公司常用不同 publisher 字符串发 iOS/Android（"TOP GAMES INC." vs
+    "TG Inc."、"IGG SINGAPORE PTE. LTD." vs "IGG.COM"、"InnoGames GmbH" vs "InnoGames"），
+    但它们的 alias 已全归到同一 entity。`_dedup_siblings` 不再做 publisher 字符串等价检查，
+    完全按名字 prefix ≥5 字符在 entity 内合并，把这些「真同款」收编。
+    回归 2026-06 上线的 sibling dedup 在线上 26 个 SLG 主体里漏合 ~46 条产品 row 的问题。"""
+    today = _today()
+    await _seed_rankings([
+        # Evony iOS（"TOP GAMES INC."）+ Android（"TG Inc."），都属同一家
+        ("ios.evony", today, 1, 200, 100.0, "US", "ios",     "Evony",                    "TOP GAMES INC."),
+        ("gp.evony",  today, 2, 150,  80.0, "US", "android", "Evony: The King's Return", "TG Inc."),
+        # 另一款独立游戏（确保不被误合）
+        ("ios.other", today, 3,  50,  20.0, "US", "ios",     "Valkyrie Raid",            "TG Inc."),
+    ])
+    eid = (await client.post("/api/publishers/", json={
+        "name": "Top Games",
+        "aliases": [{"keyword": "top games"}, {"keyword": "tg inc"}],
+    })).json()["id"]
+    prods = (await client.get(f"/api/publishers/{eid}/products")).json()
+    by_name = {p["name"]: p for p in prods}
+    # Evony iOS + Android 应合成 1 行（而非 2 行）
+    assert len(prods) == 2, f"expected 2 deduped products (Evony merged + Valkyrie), got {len(prods)}: {[p['name'] for p in prods]}"
+    # 合并后偏好「最长含 Latin 名」→ "Evony: The King's Return"
+    assert "Evony: The King's Return" in by_name
+    assert by_name["Evony: The King's Return"]["revenue"] == 180.0  # 100 + 80
+    assert by_name["Evony: The King's Return"]["downloads"] == 350  # 200 + 150
+    assert "Valkyrie Raid" in by_name
+    # list 端点 product_count 也对齐
+    lst = (await client.get("/api/publishers/")).json()
+    e = next(x for x in lst if x["id"] == eid)
+    assert e["product_count"] == 2
 
 
 @pytest.mark.asyncio
