@@ -424,37 +424,6 @@ export default function PublishersManage() {
     ])
     toast.success(t.common.exported(filtered.length))
   }
-  function exportSources() {
-    const rows = filtered.flatMap(e => e.sources.map(s => ({ e, s })))
-    if (rows.length === 0) { toast.error(t.common.noExportData); return }
-    downloadCsv(`publishers-sources-${date}.csv`, rows, [
-      { header: tt.exportColName, get: r => r.e.name },
-      { header: tt.exportColSrcType, get: r => tt.sourceTypes[r.s.source_type] ?? r.s.source_type },
-      { header: tt.exportColSrcPrimary, get: r => r.s.is_primary ? tt.primaryTag : tt.secondaryTag },
-      { header: tt.exportColSrcConfidence, get: r => r.s.confidence ?? '' },
-      { header: tt.exportColLatestReview, get: r => r.s.as_of ?? '' },
-      { header: tt.exportColSrcTitle, get: r => r.s.title ?? '' },
-      { header: 'URL', get: r => r.s.url },
-      { header: tt.exportColSrcNote, get: r => r.s.note ?? '' },
-    ])
-    toast.success(t.common.exported(rows.length))
-  }
-  // 关系导出：以「本主体 → 子公司/关联」视角展开，每条 child 关系一行。
-  // 用 children 而不是 parents 避免对偶关系重复（每条 relation 在 DB 里只存一行 parent_id+child_id）。
-  function exportRelations() {
-    const rows = filtered.flatMap(e => e.children.map(c => ({ parent: e, child: c })))
-    if (rows.length === 0) { toast.error(t.common.noExportData); return }
-    downloadCsv(`publishers-relations-${date}.csv`, rows, [
-      { header: tt.exportColParentName, get: r => r.parent.name },
-      { header: tt.exportColParentId, get: r => r.parent.id },
-      { header: tt.exportColChildName, get: r => r.child.name },
-      { header: tt.exportColChildId, get: r => r.child.entity_id },
-      { header: tt.exportColRelType, get: r => tt.relationTypes[r.child.relation_type] ?? r.child.relation_type },
-      { header: tt.exportColStakePct, get: r => r.child.stake_pct ?? '' },
-      { header: tt.exportColRelNote, get: r => r.child.note ?? '' },
-    ])
-    toast.success(t.common.exported(rows.length))
-  }
 
   return (
     <div className="px-4 sm:px-7 py-5 sm:py-7 max-w-[1500px] mx-auto space-y-5">
@@ -466,22 +435,6 @@ export default function PublishersManage() {
         >
           <DownloadIcon size={14} />
           <span className="hidden sm:inline">{tt.exportOverview}</span>
-        </button>
-        <button
-          onClick={exportSources}
-          title={tt.exportSourcesHint}
-          className="flex items-center gap-2 px-3.5 py-2.5 rounded-lg font-data text-xs text-secondary border border-default hover:border-strong hover:text-primary bg-surface/60 transition-colors"
-        >
-          <DownloadIcon size={14} />
-          <span className="hidden sm:inline">{tt.exportSources}</span>
-        </button>
-        <button
-          onClick={exportRelations}
-          title={tt.exportRelationsHint}
-          className="flex items-center gap-2 px-3.5 py-2.5 rounded-lg font-data text-xs text-secondary border border-default hover:border-strong hover:text-primary bg-surface/60 transition-colors"
-        >
-          <DownloadIcon size={14} />
-          <span className="hidden sm:inline">{tt.exportRelations}</span>
         </button>
         <button
           onClick={() => isOpen ? closeForm() : openCreate()}
