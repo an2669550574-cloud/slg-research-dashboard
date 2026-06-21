@@ -142,6 +142,11 @@ class Settings(BaseSettings):
     NEWCOMER_TOPN: int = 50
     # 历史沉淀口径（market_newcomer_log）：比日报 Top50 宽，页面可筛 Top50/100。
     NEWCOMER_HISTORY_TOPN: int = 100
+    # 厂商主体新品（publisher newcomers）的名次阈值。原本无阈值导致 weekly combo
+    # 长尾抖动（老 SLG 产品因 4 周内有一周漏榜被误报"新品"）刷屏 digest——
+    # JP/android 实测单 combo 23 项里 22 项是 #137–#535 的长尾噪声。设 200 让
+    # 真正值得关注的中段新品仍能命中，砍掉榜尾。
+    PUBLISHER_NEWCOMER_TOPN: int = 200
 
     # ── App Store 清单雷达（免费 iTunes lookup，零 ST 配额）──────────────
     # 每轮对每个开发者账号扫这些 storefront（逗号小写）。SLG 几乎都先软启动：

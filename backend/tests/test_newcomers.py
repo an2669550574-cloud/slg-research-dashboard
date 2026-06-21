@@ -126,6 +126,47 @@ async def test_no_data_returns_empty(client):
 
 
 @pytest.mark.asyncio
+async def test_newcomer_distinguishes_true_first_from_reentry(client):
+    """检测层区分「真首发」(从未见过) vs 「回归」(老游戏跌出 baseline 又回来)——
+    通过 is_reentry 字段透传给消费方（digest 据此过滤、前端可加 tag 展示）。
+
+    实景：weekly combo 老 SLG 产品（"old_reentry"）在更早快照里出现过、最近 W 周
+    跌出基线、本期回来。和「真首发」（"true_new"）从未出现过的同期 newcomer 一起返回，
+    分别打 is_reentry=True/False。
+    """
+    from app.services.newcomers import detect_newcomers
+    # baseline 窗口之外的更早快照里出现过：算回归
+    await _seed("2026-04-01", [("a", 1, None, SLG_PUB), ("old_reentry", 5, None, SLG_PUB)])
+    # baseline 窗口（4 个快照）
+    await _seed("2026-05-08", [("a", 1, None, SLG_PUB)])
+    await _seed("2026-05-15", [("a", 1, None, SLG_PUB)])
+    await _seed("2026-05-22", [("a", 1, None, SLG_PUB)])
+    await _seed("2026-05-29", [("a", 1, None, SLG_PUB)])
+    # as_of：两个 newcomer 同时进榜
+    await _seed("2026-06-05", [
+        ("a", 1, None, SLG_PUB),
+        ("old_reentry", 4, None, SLG_PUB),  # 04-01 见过，算回归
+        ("true_new", 6, None, SLG_PUB),     # 全历史从未见过，算真首发
+    ])
+
+    s = await detect_newcomers("US", "ios", window=4, topn=50)
+    flags = {n["name"]: n["is_reentry"] for n in s["newcomers"]}
+    assert flags == {"old_reentry": True, "true_new": False}
+
+
+@pytest.mark.asyncio
+async def test_no_baseline_combo_has_no_is_reentry_field(client):
+    """no_baseline 路径（早期 return）不会附加 is_reentry——保留缺省语义，
+    消费方按 `n.get('is_reentry')` 取值时拿到 None（falsy = 当真首发处理，
+    避免冷库 combo 上来就被 digest 全过滤）。"""
+    from app.services.newcomers import detect_newcomers
+    await _seed("2026-05-15", [("a", 1, None, SLG_PUB), ("b", 2, None, SLG_PUB)])
+    s = await detect_newcomers("US", "ios", window=4, topn=50)
+    assert s["no_baseline"] is True
+    assert s["newcomers"] == []  # no_baseline 还是空，行为不变
+
+
+@pytest.mark.asyncio
 async def test_anchors_latest_snapshot_not_today(client):
     """as_of 取最近一次已同步快照(可早于今天)，页面始终有内容。"""
     from app.services.newcomers import detect_newcomers
@@ -241,6 +282,65 @@ async def test_publisher_newcomer_alias_match_any_rank(client):
     assert n["entity_name"] == "江娱互动测试"
     assert n["matched_by"] == "alias"
     assert n["rank"] == 80
+
+
+@pytest.mark.asyncio
+async def test_publisher_newcomer_respects_publisher_topn_default(client):
+    """默认 PUBLISHER_NEWCOMER_TOPN=200 砍掉榜尾长尾。在 #200 内（含 #200）的命中，
+    #201+ 即使首次出现也不报——治 JP/android weekly 抖动产生 #535 类长尾刷屏 digest。"""
+    from app.services.newcomers import detect_publisher_newcomers
+    await _mk_entity(client, "TopN 测试", aliases=["river game"])
+    await _seed("2026-05-08", [("anchor", 1, None, "River Game HK Limited")])
+    await _seed("2026-05-15", [
+        ("anchor", 1, None, "River Game HK Limited"),
+        ("on_edge", 200, None, "River Game HK Limited"),  # 恰好 #200，进
+        ("too_deep", 201, None, "River Game HK Limited"),  # #201 排除
+    ])
+    s = await detect_publisher_newcomers("US", "ios", window=4)
+    names = [n["name"] for n in s["newcomers"]]
+    assert "on_edge" in names
+    assert "too_deep" not in names
+
+
+@pytest.mark.asyncio
+async def test_publisher_newcomer_respects_explicit_topn_override(client):
+    """显式传 topn 覆盖默认值——API 调用方可放宽收紧门槛。"""
+    from app.services.newcomers import detect_publisher_newcomers
+    await _mk_entity(client, "覆盖测试", aliases=["river game"])
+    await _seed("2026-05-08", [("anchor", 1, None, "River Game HK Limited")])
+    await _seed("2026-05-15", [
+        ("anchor", 1, None, "River Game HK Limited"),
+        ("low_rank", 300, None, "River Game HK Limited"),
+    ])
+    # 默认 topn=200，#300 不报
+    s_default = await detect_publisher_newcomers("US", "ios", window=4)
+    assert [n["name"] for n in s_default["newcomers"]] == []
+    # 显式放宽到 500，#300 报
+    s_loose = await detect_publisher_newcomers("US", "ios", window=4, topn=500)
+    assert [n["name"] for n in s_loose["newcomers"]] == ["low_rank"]
+
+
+@pytest.mark.asyncio
+async def test_publisher_newcomer_is_reentry_field(client):
+    """detect_publisher_newcomers 也透传 is_reentry——digest 用它过滤回归。"""
+    from app.services.newcomers import detect_publisher_newcomers
+    await _mk_entity(client, "回归测试", aliases=["river game"])
+    # baseline 之外的更早快照
+    await _seed("2026-04-01", [("old_back", 50, None, "River Game HK Limited")])
+    # baseline 4 个快照内不见
+    await _seed("2026-05-08", [("anchor", 1, None, "River Game HK Limited")])
+    await _seed("2026-05-15", [("anchor", 1, None, "River Game HK Limited")])
+    await _seed("2026-05-22", [("anchor", 1, None, "River Game HK Limited")])
+    await _seed("2026-05-29", [("anchor", 1, None, "River Game HK Limited")])
+    # as_of：回归 + 真首发同时上
+    await _seed("2026-06-05", [
+        ("anchor", 1, None, "River Game HK Limited"),
+        ("old_back", 60, None, "River Game HK Limited"),
+        ("true_new", 100, None, "River Game HK Limited"),
+    ])
+    s = await detect_publisher_newcomers("US", "ios", window=4)
+    flags = {n["name"]: n["is_reentry"] for n in s["newcomers"]}
+    assert flags == {"old_back": True, "true_new": False}
 
 
 @pytest.mark.asyncio
