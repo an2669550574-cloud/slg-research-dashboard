@@ -211,9 +211,10 @@ def _match_for_entity(pairs, alias_kw_tokens, app_id_set, itunes_products=(), ra
       旗下产品，含**未上榜的软启动新品**（如新厂商主打新品）——这类产品永远进不了
       榜单聚合，只能从雷达补。无收入、publisher 未知，故不参与跨平台 sibling 合并。
 
-    跨平台去重：matched 按 app_id 聚集后，过 _dedup_siblings 把同 publisher 同款 iOS+Android
-    合并成一组（同款规则 = sibling_match 既定规则）。product_count = 去重后组数，top3 = 组级
-    收入 top3。best_rank 仍按所有 member app_id 取最小（同款多平台谁名次高用谁）。"""
+    跨平台去重：matched 按 app_id 聚集后，过 _dedup_siblings 按 entity-scope 名字 prefix
+    合并 iOS+Android 同款（无需 publisher 字符串等价——同 entity 内的 alias 已锚定）。
+    product_count = 去重后组数，top3 = 组级收入 top3。best_rank 仍按所有 member app_id 取最小
+    （同款多平台谁名次高用谁）。"""
     matched: dict[str, tuple[float, str, str, str | None]] = {}  # app_id -> (revenue, name, icon, publisher)
     for app_id, pub, name, icon, rev in pairs:
         hit = app_id in app_id_set or (
@@ -229,7 +230,7 @@ def _match_for_entity(pairs, alias_kw_tokens, app_id_set, itunes_products=(), ra
             continue  # 同名跨平台去重（雷达里 iOS+GP 各一条同款）
         if key:
             seen_names.add(key)
-        matched[track_id] = (0, name, artwork, None)  # publisher 未知 → sibling 合并跳过
+        matched[track_id] = (0, name, artwork, None)  # 雷达 app 也参与 entity-scope sibling 合并（按名字）
     groups = _dedup_siblings(matched)
     top = [PublisherTopProductOut(app_id=g["app_id"], name=g["name"], icon_url=g["icon_url"]) for g in groups[:3]]
     best_rank: int | None = None
@@ -252,19 +253,29 @@ def _norm_for_sibling(s: str | None) -> str:
 
 
 def _dedup_siblings(matched: dict[str, tuple]) -> list[dict]:
-    """跨平台同款游戏去重（同发行商 + 名字 prefix 子序列匹配 ≥5）。
+    """**entity-scoped** 跨平台同款游戏去重（名字 prefix 子序列匹配 ≥5）。
 
     输入 matched: {app_id: (revenue, name, icon, publisher_or_None)}
     输出每组一行：{app_id (代表=收入最高的 member), name (本组里最长 Latin 名，否则原名),
                   icon_url, revenue (本组合计), downloads (始终 0，调用方按需补), member_app_ids}
     按 revenue 降序排好。
 
-    规则同 services/sibling_match.py（详情页跨平台合并复用）：normalize 后
-    publisher 相同 + 一方 name 是另一方的 prefix 且短端 ≥5 字符 = 同款。这能合并
-    iOS+Android 同 publisher 同名（"Whiteout Survival" / "Whiteout Survival" 完全相同 →
-    norm 后等价 → prefix 自匹配）、以及 "Top War" + "Top War: Battle Game" 这类带后缀
-    差异的跨平台 listing。CJK-only 本地化名（norm 后为空）不参与匹配 → 保留为独立组，
-    与原行为兼容。雷达产品 publisher=None 时也保留为独立组（不知 publisher 不敢合并）。
+    **前提：调用方保证 matched 内所有 app_id 都属于同一个 entity**（通过 alias/app_id
+    钉死命中）。本函数仅按名字 prefix 合并，不再校验 publisher 字符串等价。理由：
+    同一家公司不同法人/分公司/简写常用不同 publisher 字符串（"TG Inc." vs "TOP GAMES INC."、
+    "IGG SINGAPORE PTE. LTD." vs "IGG.COM"、"InnoGames GmbH" vs "InnoGames"、
+    "Leyi Classic Games" vs "LEXIANGCO.,LIMITED"），而它们的 alias 已全部归到同一 entity——
+    再加 publisher 字符串等价检查会把这些合法的跨平台同款拒之门外。
+
+    名字 prefix ≥5 字符是核心安全网：能合并 "Whiteout Survival"/"Whiteout Survival"
+    自匹配、"Evony"/"Evony: The King's Return" 这类带后缀差异的同款；同时阻止
+    "Last War" vs "Last Z" 这类只共享 4 字符前缀的不同游戏被误合。
+
+    CJK-only 本地化名（norm 后为空字符串）不参与匹配 → 保留为独立组，避免
+    "游戏一"/"游戏二" 这类无锚名因 norm 后都为空被误合。
+
+    与 services/sibling_match.py（详情页全表扫描、无 entity scope）有意分流：
+    那里保留 publisher 字符串等价检查作为安全网，本函数不需要。
     """
     if not matched:
         return []
@@ -286,13 +297,11 @@ def _dedup_siblings(matched: dict[str, tuple]) -> list[dict]:
             parent[ri] = rj
 
     for i in range(n):
-        npi, nni = enriched[i][5], enriched[i][6]
-        if not npi or not nni:
-            continue  # 无 publisher 或纯 CJK 名 → 不参与合并
+        nni = enriched[i][6]
+        if not nni:
+            continue  # 纯 CJK 名 norm 后空 → 不参与合并
         for j in range(i + 1, n):
-            npj, nnj = enriched[j][5], enriched[j][6]
-            if not npj or npj != npi:
-                continue  # 必须同 publisher（normalize 后等价）
+            nnj = enriched[j][6]
             if not nnj:
                 continue
             short, long = (nni, nnj) if len(nni) <= len(nnj) else (nnj, nni)
@@ -386,7 +395,7 @@ def _compute_all_matches(
                 continue
             if key:
                 seen_names.add(key)
-            m[track_id] = (0, iname, artwork, None)  # publisher 未知 → sibling 合并跳过
+            m[track_id] = (0, iname, artwork, None)  # 雷达 app 也参与 entity-scope sibling 合并（按名字）
         groups = _dedup_siblings(m)
         top = [PublisherTopProductOut(app_id=g["app_id"], name=g["name"], icon_url=g["icon_url"]) for g in groups[:3]]
         best_rank: int | None = None
