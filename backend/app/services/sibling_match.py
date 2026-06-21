@@ -2,15 +2,23 @@
 `game_rankings` 里会以两套 app_id 各自累积数据。详情页/聚合视图想以"游戏"
 为单位展示时，需要把这些 app_id 视为同一族。
 
-与前端 `lib/aggregateMerge.ts` **同款规则**——同 publisher（规范化等同）+
-名字一方是另一方的规范化前缀且短的 ≥ 5 字符 → 同款。规则源于经验：
-publisher 在 iOS/Play 之间常只差大小写/标点（"Century Games Pte. Ltd." vs
-"Century Games PTE. LTD."）；名字一致或有"Game/Plus"之类后缀差异；超短公共
-前缀容易把"Z" 误合"ZGame"，故设 5 字符门槛。
+与前端 `lib/aggregateMerge.ts` **同款规则**——同 publisher + 名字一方是
+另一方的规范化前缀且短的 ≥ 5 字符 → 同款。
+
+"同 publisher" 用两段判断（任一命中即同）：
+1. 规范化字符串等同（覆盖 "Century Games Pte. Ltd." vs "Century Games PTE. LTD."
+   这类只差大小写/标点的常见 case）；
+2. **两个 publisher 字符串通过 `publisher_aliases` 表都映射到同一个 entity**——
+   覆盖 "TOP GAMES INC." vs "TG Inc."、"InnoGames GmbH" vs "InnoGames"、
+   "RiverGame" vs "River Game HK Limited" 这类同公司不同法人/简写。alias 表
+   已是建档时的 ground truth；不查 alias 表会把这些同款拒之门外。
 
 名字归一时优先取 US 行（country='US'）的，因为它通常是开发商提交的英文原名；
 KR/JP 行往往是本地化（"킹샷:Kingshot"/"ホワイトアウト・サバイバル"），规范化
 后跟其它平台的英文版不前缀匹配。
+
+仍然没有 entity 映射的 publisher（独立小厂、未建档主体），保留原"normalize 后等同"
+的保守判断——找不到锚就只返自己，绝不跨未知边界乱合。
 """
 from __future__ import annotations
 
@@ -21,6 +29,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.game import GameRanking
+from app.models.publisher import PublisherAlias
 
 _NORM_RE = re.compile(r"[^a-z0-9]+")
 
@@ -28,6 +37,57 @@ _NORM_RE = re.compile(r"[^a-z0-9]+")
 def normalize_ident(s: Optional[str]) -> str:
     """去大小写、删非字母数字。'Last War:Survival Game' → 'lastwarsurvivalgame'。"""
     return _NORM_RE.sub("", (s or "").lower())
+
+
+def _toks(s: Optional[str]) -> list[str]:
+    """同 routers/publishers._toks / services/slg_publishers._toks：小写 + 按非字母数字分词。"""
+    return [t for t in _NORM_RE.split((s or "").lower()) if t]
+
+
+def _kw_hit(pub_tokens: list[str], kw_tokens: tuple[str, ...]) -> bool:
+    """kw_tokens 作为**连续子序列**出现在 pub_tokens 即命中（同 routers/publishers._kw_hit）。"""
+    n = len(kw_tokens)
+    if n == 0:
+        return False
+    for i in range(len(pub_tokens) - n + 1):
+        if tuple(pub_tokens[i:i + n]) == kw_tokens:
+            return True
+    return False
+
+
+async def _publisher_to_entity_map(
+    db: AsyncSession, publisher_strs: set[str]
+) -> dict[str, int]:
+    """对每个 publisher 字符串，返回它命中的 entity_id；没命中则不在 dict 里。
+
+    用 publisher_aliases 全表 + token 子序列匹配（与 routers/publishers 同口径），
+    避免漏算同一公司的不同法人/简写。一个字符串理论上只该命中一个 entity（alias
+    建档纪律），多命中时取首个。"""
+    if not publisher_strs:
+        return {}
+    res = await db.execute(select(PublisherAlias.entity_id, PublisherAlias.keyword))
+    alias_list = [(eid, tuple(_toks(kw))) for eid, kw in res.all()]
+    alias_list = [(eid, kt) for eid, kt in alias_list if kt]
+    out: dict[str, int] = {}
+    for pub in publisher_strs:
+        pub_toks = _toks(pub)
+        if not pub_toks:
+            continue
+        for eid, kt in alias_list:
+            if _kw_hit(pub_toks, kt):
+                out[pub] = eid
+                break
+    return out
+
+
+def _pub_key(pub: str, pub_to_eid: dict[str, int]) -> str:
+    """publisher 的「规范化身份键」：命中 entity 时用 \"@e:{eid}\"（覆盖跨法人/简写同公司），
+    未命中时退回 normalize_ident(pub)（保住未建档主体的保守等同语义）。"""
+    eid = pub_to_eid.get(pub)
+    if eid is not None:
+        return f"@e:{eid}"
+    n = normalize_ident(pub)
+    return n if n else ""
 
 
 def _is_sibling(target_name_n: str, candidate_name_n: str) -> bool:
@@ -62,10 +122,16 @@ async def find_sibling_app_ids(db: AsyncSession, target_app_id: str) -> list[str
     if not target:
         return [target_app_id]
     target_name, target_pub = target
-    tpub = normalize_ident(target_pub)
     tname = normalize_ident(target_name)
-    if not tpub:
+    if not target_pub:
         # 没 publisher 锚——不敢跨匹配，保守只返自己。
+        return [target_app_id]
+
+    # 一次查全表 alias，建 publisher_str → entity_id 映射（去重后传入避免重复 token 化）。
+    pub_strs = {pub for _, pub in canonical.values() if pub}
+    pub_to_eid = await _publisher_to_entity_map(db, pub_strs)
+    tkey = _pub_key(target_pub, pub_to_eid)
+    if not tkey:
         return [target_app_id]
 
     result: list[str] = []
@@ -73,7 +139,7 @@ async def find_sibling_app_ids(db: AsyncSession, target_app_id: str) -> list[str
         if app_id == target_app_id:
             result.append(app_id)
             continue
-        if normalize_ident(publisher) != tpub:
+        if _pub_key(publisher, pub_to_eid) != tkey:
             continue
         if not _is_sibling(tname, normalize_ident(name)):
             continue
