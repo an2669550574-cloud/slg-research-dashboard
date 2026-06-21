@@ -11,7 +11,7 @@ import re
 import time
 from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func, or_, and_, delete as sa_delete
+from sqlalchemy import select, func, or_, and_, case, delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db, utcnow_naive
@@ -127,13 +127,22 @@ async def _relations(entity_id: int, db: AsyncSession):
 
 async def _ranking_pairs(db: AsyncSession):
     """全部曾上榜 app 的 (app_id, 代表 publisher, 名字, icon, 收入分) —— 一次 GROUP BY
-    供批量算各主体旗下产品数 + 取折叠态图标锚点（按收入降序的 top3）。零 ST 配额。"""
+    供批量算各主体旗下产品数 + 取折叠态图标锚点（按收入降序的 top3）。零 ST 配额。
+
+    name/publisher/icon 都用 **US 优先 + fallback MAX**：同 iOS app_id 在 US/JP/KR 多市场
+    返回本地化名（"Whiteout Survival"/"ホワイトアウト・サバイバル"/"화이트아웃 서바이벌"），
+    MAX 按 Unicode 排序会偏向 CJK 字符吃掉 Latin 原名；用 US 行优先解 → 拿到 Latin 名，
+    跨平台 sibling 去重（_dedup_siblings）才能匹得上同款。无 US 上榜 → fallback MAX。
+    """
+    us_name = case((GameRanking.country == "US", GameRanking.name))
+    us_pub  = case((GameRanking.country == "US", GameRanking.publisher))
+    us_icon = case((GameRanking.country == "US", GameRanking.icon_url))
     res = await db.execute(
         select(
             GameRanking.app_id,
-            func.max(GameRanking.publisher),
-            func.max(GameRanking.name),
-            func.max(GameRanking.icon_url),
+            func.coalesce(func.max(us_pub), func.max(GameRanking.publisher)),
+            func.coalesce(func.max(us_name), func.max(GameRanking.name)),
+            func.coalesce(func.max(us_icon), func.max(GameRanking.icon_url)),
             func.max(GameRanking.revenue),
         ).group_by(GameRanking.app_id)
     )
@@ -200,18 +209,18 @@ def _match_for_entity(pairs, alias_kw_tokens, app_id_set, itunes_products=(), ra
     - **榜单 game_rankings**（pairs）：app_id 精确钉 或 alias token 命中代表 publisher；带收入。
     - **雷达 itunes_apps**（itunes_products，按 entity_id 直挂）：开发者账号下的 app 就是
       旗下产品，含**未上榜的软启动新品**（如新厂商主打新品）——这类产品永远进不了
-      榜单聚合，只能从雷达补。无收入。
+      榜单聚合，只能从雷达补。无收入、publisher 未知，故不参与跨平台 sibling 合并。
 
-    去重：榜单命中按 app_id；雷达产品跳过已在榜单命中集的 app_id，并按 name 去同名
-    （Top Lords 的 iOS / GP 双平台只算一款）。top3 优先有收入的（榜单来源），雷达
-    产品收入视为 0 排其后。"""
-    matched: dict[str, tuple[float, str, str]] = {}  # app_id -> (revenue, name, icon)
+    跨平台去重：matched 按 app_id 聚集后，过 _dedup_siblings 把同 publisher 同款 iOS+Android
+    合并成一组（同款规则 = sibling_match 既定规则）。product_count = 去重后组数，top3 = 组级
+    收入 top3。best_rank 仍按所有 member app_id 取最小（同款多平台谁名次高用谁）。"""
+    matched: dict[str, tuple[float, str, str, str | None]] = {}  # app_id -> (revenue, name, icon, publisher)
     for app_id, pub, name, icon, rev in pairs:
         hit = app_id in app_id_set or (
             alias_kw_tokens and any(_kw_hit(_toks(pub), kt) for kt in alias_kw_tokens))
         if hit:
-            matched[app_id] = (rev or 0, name, icon)
-    seen_names = {(n or "").strip().lower() for _, n, _ in matched.values() if n}
+            matched[app_id] = (rev or 0, name, icon, pub)
+    seen_names = {(n or "").strip().lower() for _, n, _, _ in matched.values() if n}
     for track_id, name, artwork, _genre in itunes_products:
         if track_id in matched:
             continue
@@ -220,17 +229,98 @@ def _match_for_entity(pairs, alias_kw_tokens, app_id_set, itunes_products=(), ra
             continue  # 同名跨平台去重（雷达里 iOS+GP 各一条同款）
         if key:
             seen_names.add(key)
-        matched[track_id] = (0, name, artwork)
-    ordered = sorted(matched.items(), key=lambda kv: -kv[1][0])
-    top = [PublisherTopProductOut(app_id=aid, name=v[1], icon_url=v[2]) for aid, v in ordered[:3]]
+        matched[track_id] = (0, name, artwork, None)  # publisher 未知 → sibling 合并跳过
+    groups = _dedup_siblings(matched)
+    top = [PublisherTopProductOut(app_id=g["app_id"], name=g["name"], icon_url=g["icon_url"]) for g in groups[:3]]
     best_rank: int | None = None
     best_market: str | None = None
     if rank_by_app:
-        for aid in matched:
-            hit = rank_by_app.get(aid)
-            if hit and (best_rank is None or hit[0] < best_rank):
-                best_rank, best_market = hit
-    return len(matched), top, best_rank, best_market
+        for g in groups:
+            for aid in g["member_app_ids"]:
+                hit = rank_by_app.get(aid)
+                if hit and (best_rank is None or hit[0] < best_rank):
+                    best_rank, best_market = hit
+    return len(groups), top, best_rank, best_market
+
+
+_NORM_FOR_SIBLING = re.compile(r"[^a-z0-9]")
+
+
+def _norm_for_sibling(s: str | None) -> str:
+    """与 sibling_match.normalize_ident 同口径：去大小写 + 删非字母数字（含 CJK / 标点 / 空格）。"""
+    return _NORM_FOR_SIBLING.sub("", (s or "").lower())
+
+
+def _dedup_siblings(matched: dict[str, tuple]) -> list[dict]:
+    """跨平台同款游戏去重（同发行商 + 名字 prefix 子序列匹配 ≥5）。
+
+    输入 matched: {app_id: (revenue, name, icon, publisher_or_None)}
+    输出每组一行：{app_id (代表=收入最高的 member), name (本组里最长 Latin 名，否则原名),
+                  icon_url, revenue (本组合计), downloads (始终 0，调用方按需补), member_app_ids}
+    按 revenue 降序排好。
+
+    规则同 services/sibling_match.py（详情页跨平台合并复用）：normalize 后
+    publisher 相同 + 一方 name 是另一方的 prefix 且短端 ≥5 字符 = 同款。这能合并
+    iOS+Android 同 publisher 同名（"Whiteout Survival" / "Whiteout Survival" 完全相同 →
+    norm 后等价 → prefix 自匹配）、以及 "Top War" + "Top War: Battle Game" 这类带后缀
+    差异的跨平台 listing。CJK-only 本地化名（norm 后为空）不参与匹配 → 保留为独立组，
+    与原行为兼容。雷达产品 publisher=None 时也保留为独立组（不知 publisher 不敢合并）。
+    """
+    if not matched:
+        return []
+    items = list(matched.items())
+    n = len(items)
+    enriched = [(aid, rev, name, icon, pub, _norm_for_sibling(pub), _norm_for_sibling(name))
+                for aid, (rev, name, icon, pub) in items]
+    parent = list(range(n))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(i: int, j: int) -> None:
+        ri, rj = find(i), find(j)
+        if ri != rj:
+            parent[ri] = rj
+
+    for i in range(n):
+        npi, nni = enriched[i][5], enriched[i][6]
+        if not npi or not nni:
+            continue  # 无 publisher 或纯 CJK 名 → 不参与合并
+        for j in range(i + 1, n):
+            npj, nnj = enriched[j][5], enriched[j][6]
+            if not npj or npj != npi:
+                continue  # 必须同 publisher（normalize 后等价）
+            if not nnj:
+                continue
+            short, long = (nni, nnj) if len(nni) <= len(nnj) else (nnj, nni)
+            if len(short) >= 5 and long.startswith(short):
+                union(i, j)
+
+    groups: dict[int, list[int]] = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(i)
+
+    out: list[dict] = []
+    for member_indexes in groups.values():
+        members = [enriched[i] for i in member_indexes]
+        members.sort(key=lambda m: -m[1])  # by revenue desc
+        rep_aid, rep_rev, rep_name, rep_icon, _, _, _ = members[0]
+        # 偏好最长的「含 Latin 字母」名字（同款 iOS+Android 用 US 优先后大概率拿到 Latin）
+        latin_names = [m[2] for m in members if m[2] and any('a' <= c.lower() <= 'z' for c in m[2])]
+        if latin_names:
+            rep_name = max(latin_names, key=len)
+        out.append({
+            "app_id": rep_aid,
+            "name": rep_name,
+            "icon_url": rep_icon,
+            "revenue": sum(m[1] for m in members),
+            "member_app_ids": [m[0] for m in members],
+        })
+    out.sort(key=lambda g: -g["revenue"])
+    return out
 
 
 def _compute_all_matches(
@@ -261,12 +351,12 @@ def _compute_all_matches(
         for a in app_ids:
             app_id_owners.setdefault(a.app_id, []).append(eid)
 
-    # entity_id → {app_id: (revenue, name, icon)}
-    matched: dict[int, dict[str, tuple[float, str, str]]] = {eid: {} for eid in entity_ids}
+    # entity_id → {app_id: (revenue, name, icon, publisher)}
+    matched: dict[int, dict[str, tuple[float, str, str, str | None]]] = {eid: {} for eid in entity_ids}
 
     for app_id, pub, name, icon, rev in pairs:
         for eid in app_id_owners.get(app_id, ()):
-            matched[eid][app_id] = (rev or 0, name, icon)
+            matched[eid][app_id] = (rev or 0, name, icon, pub)
         if not pub:
             continue
         pub_tokens = _toks(pub)
@@ -281,13 +371,13 @@ def _compute_all_matches(
                 if i + n > len(pub_tokens):
                     continue
                 if tuple(pub_tokens[i:i + n]) == kw_tokens:
-                    matched[eid][app_id] = (rev or 0, name, icon)
+                    matched[eid][app_id] = (rev or 0, name, icon, pub)
                     hit_eids.add(eid)
 
     out: dict[int, tuple[int, list, int | None, str | None]] = {}
     for eid in entity_ids:
         m = matched[eid]
-        seen_names = {(n or "").strip().lower() for _, n, _ in m.values() if n}
+        seen_names = {(n or "").strip().lower() for _, n, _, _ in m.values() if n}
         for track_id, iname, artwork, _genre in itunes_by_entity.get(eid, ()):
             if track_id in m:
                 continue
@@ -296,17 +386,18 @@ def _compute_all_matches(
                 continue
             if key:
                 seen_names.add(key)
-            m[track_id] = (0, iname, artwork)
-        ordered = sorted(m.items(), key=lambda kv: -kv[1][0])
-        top = [PublisherTopProductOut(app_id=aid, name=v[1], icon_url=v[2]) for aid, v in ordered[:3]]
+            m[track_id] = (0, iname, artwork, None)  # publisher 未知 → sibling 合并跳过
+        groups = _dedup_siblings(m)
+        top = [PublisherTopProductOut(app_id=g["app_id"], name=g["name"], icon_url=g["icon_url"]) for g in groups[:3]]
         best_rank: int | None = None
         best_market: str | None = None
         if rank_by_app:
-            for aid in m:
-                hit = rank_by_app.get(aid)
-                if hit and (best_rank is None or hit[0] < best_rank):
-                    best_rank, best_market = hit
-        out[eid] = (len(m), top, best_rank, best_market)
+            for g in groups:
+                for aid in g["member_app_ids"]:
+                    hit = rank_by_app.get(aid)
+                    if hit and (best_rank is None or hit[0] < best_rank):
+                        best_rank, best_market = hit
+        out[eid] = (len(groups), top, best_rank, best_market)
     return out
 
 
@@ -835,7 +926,11 @@ async def list_publisher_products(
     days: int = Query(30, ge=1, le=365),
     db: AsyncSession = Depends(get_db),
 ):
-    """主体旗下产品：窗口内跨已监测市场合计下载/收入，按收入降序。零 ST 配额。"""
+    """主体旗下产品：窗口内跨已监测市场合计下载/收入，按收入降序。零 ST 配额。
+
+    跨平台 sibling 去重（同发行商 + 名字 prefix 子序列匹配 ≥5）：iOS+Android 同款不再
+    重复占行；下载/收入按组合计。同 _compute_all_matches/_match_for_entity 口径。
+    """
     await _get_entity_or_404(entity_id, db)
     aliases, app_ids = await _children(entity_id, db)
     kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
@@ -843,12 +938,17 @@ async def list_publisher_products(
 
     end = utcnow_naive().date()
     start = end - timedelta(days=days - 1)
+    # name/publisher/icon 用 US 优先：同 iOS app_id 多市场返回本地化名时拿到 Latin 原名，
+    # sibling 跨平台合并才能稳定匹配；downloads/revenue 仍是窗口跨市场 SUM。
+    us_name = case((GameRanking.country == "US", GameRanking.name))
+    us_pub  = case((GameRanking.country == "US", GameRanking.publisher))
+    us_icon = case((GameRanking.country == "US", GameRanking.icon_url))
     res = await db.execute(
         select(
             GameRanking.app_id,
-            func.max(GameRanking.name).label("name"),
-            func.max(GameRanking.publisher).label("publisher"),
-            func.max(GameRanking.icon_url).label("icon_url"),
+            func.coalesce(func.max(us_name), func.max(GameRanking.name)).label("name"),
+            func.coalesce(func.max(us_pub), func.max(GameRanking.publisher)).label("publisher"),
+            func.coalesce(func.max(us_icon), func.max(GameRanking.icon_url)).label("icon_url"),
             func.sum(GameRanking.downloads).label("downloads"),
             func.sum(GameRanking.revenue).label("revenue"),
         ).where(
@@ -856,33 +956,48 @@ async def list_publisher_products(
             GameRanking.date <= end.isoformat(),
         ).group_by(GameRanking.app_id)
     )
-    items: list[PublisherProductOut] = []
+
+    # 先收集 per-app 行（含未去重的 (rev/dl/matched_by/publisher) 完整信息），
+    # 再过 _dedup_siblings 合成组级 PublisherProductOut。
+    matched_dict: dict[str, tuple[float, str, str, str | None]] = {}  # for dedup
+    raw_per_aid: dict[str, dict] = {}  # 给组级合计 downloads / 找代表 matched_by/publisher 用
     for r in res.all():
         if r.app_id in app_id_set:
-            matched = "app_id"
+            matched_by = "app_id"
         elif kw_tokens and _toks(r.publisher) and any(_kw_hit(_toks(r.publisher), kt) for kt in kw_tokens):
-            matched = "alias"
+            matched_by = "alias"
         else:
             continue
-        items.append(PublisherProductOut(
-            app_id=r.app_id, name=r.name, publisher=r.publisher, icon_url=r.icon_url,
-            downloads=int(r.downloads or 0), revenue=float(r.revenue or 0), matched_by=matched,
-        ))
+        rev = float(r.revenue or 0)
+        matched_dict[r.app_id] = (rev, r.name, r.icon_url, r.publisher)
+        raw_per_aid[r.app_id] = {
+            "downloads": int(r.downloads or 0), "publisher": r.publisher,
+            "matched_by": matched_by, "genre": None,
+        }
     # 并入雷达 itunes_apps（开发者账号下的 app = 旗下产品，含未上榜软启动新品），
-    # 与卡片 product_count/top_products 同口径——否则卡片有数、抽屉为空，自相矛盾。
-    matched_ids = {i.app_id for i in items}
-    seen_names = {(i.name or "").strip().lower() for i in items if i.name}
+    # 与卡片 product_count/top_products 同口径。雷达 publisher=None 故 sibling 跳过它，
+    # 保留为独立组（同款跨平台时仍按名字字面去重，见 seen_names 兜底）。
+    seen_names = {(v[1] or "").strip().lower() for v in matched_dict.values() if v[1]}
     for track_id, name, artwork, genre in await _itunes_products(entity_id, db):
-        if track_id in matched_ids:
+        if track_id in matched_dict:
             continue
         key = (name or "").strip().lower()
         if key and key in seen_names:
-            continue  # 同名跨平台去重（iOS+GP 同款）
+            continue
         if key:
             seen_names.add(key)
+        matched_dict[track_id] = (0, name, artwork, None)
+        raw_per_aid[track_id] = {"downloads": 0, "publisher": None, "matched_by": "radar", "genre": genre}
+
+    groups = _dedup_siblings(matched_dict)
+    items: list[PublisherProductOut] = []
+    for g in groups:
+        rep_aid = g["app_id"]
+        meta = raw_per_aid.get(rep_aid, {"downloads": 0, "publisher": None, "matched_by": "alias", "genre": None})
+        total_dl = sum(raw_per_aid.get(aid, {}).get("downloads", 0) for aid in g["member_app_ids"])
         items.append(PublisherProductOut(
-            app_id=track_id, name=name, publisher=None, icon_url=artwork,
-            downloads=0, revenue=0, matched_by="radar", genre=genre,
+            app_id=rep_aid, name=g["name"], publisher=meta["publisher"], icon_url=g["icon_url"],
+            downloads=total_dl, revenue=g["revenue"], matched_by=meta["matched_by"], genre=meta["genre"],
         ))
     items.sort(key=lambda x: -x.revenue)
     return items

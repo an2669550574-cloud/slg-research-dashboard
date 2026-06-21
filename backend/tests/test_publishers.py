@@ -288,6 +288,58 @@ async def test_gaps_respects_window_and_limit(client):
 
 
 @pytest.mark.asyncio
+async def test_sibling_dedup_collapses_ios_android_same_game(client):
+    """同 publisher + 名字 prefix 匹配的 iOS+Android 同款 → 合并为 1 个 product，
+    收入/下载求和；product_count + top_products + /products 三处口径一致。"""
+    today = _today()
+    await _seed_rankings([
+        # 同款 Whiteout Survival iOS + Android（US 名一致）
+        ("ios.whiteout", today, 1, 300, 100.0, "US", "ios", "Whiteout Survival", "Century Games Pte. Ltd."),
+        ("gp.whiteout",  today, 2, 200,  80.0, "US", "android", "Whiteout Survival", "Century Games PTE. LTD."),
+        # 另一款 Kingshot 仅 iOS（KR 上榜，US 没拉到 → 没有 US 优先名兜底）
+        ("ios.kingshot", today, 3, 100,  50.0, "KR", "ios", "Kingshot", "Century Games Pte. Ltd."),
+        # 无关游戏
+        ("other.app",    today, 4,  10,   5.0, "US", "ios", "无关",     "Other Studio"),
+    ])
+    eid = (await client.post("/api/publishers/", json={
+        "name": "点点测试", "aliases": [{"keyword": "century games"}],
+    })).json()["id"]
+    # /products: 应只剩 2 行（Whiteout 合并 + Kingshot 独立）
+    prods = (await client.get(f"/api/publishers/{eid}/products")).json()
+    assert len(prods) == 2, f"expected 2 deduped products, got {len(prods)}: {[p['name'] for p in prods]}"
+    by_name = {p["name"]: p for p in prods}
+    assert "Whiteout Survival" in by_name
+    # 合并后收入/下载求和
+    assert by_name["Whiteout Survival"]["revenue"] == 180.0  # 100 + 80
+    assert by_name["Whiteout Survival"]["downloads"] == 500  # 300 + 200
+    assert "Kingshot" in by_name
+    assert by_name["Kingshot"]["revenue"] == 50.0
+    # list 端点 product_count + top_products 也是去重后口径
+    lst = (await client.get("/api/publishers/")).json()
+    e = next(x for x in lst if x["id"] == eid)
+    assert e["product_count"] == 2
+    top_names = [p["name"] for p in e["top_products"]]
+    assert "Whiteout Survival" in top_names
+    assert "Kingshot" in top_names
+
+
+@pytest.mark.asyncio
+async def test_sibling_dedup_preserves_cjk_only_independent(client):
+    """纯 CJK 本地化名（normalize 后为空字符串）不参与 sibling 合并，保留为独立组。
+    这是兼容性保底——避免把无关游戏因都是 CJK 名 + 同 publisher 而误合。"""
+    today = _today()
+    await _seed_rankings([
+        ("a.cjk", today, 1, 100, 50.0, "JP", "ios", "游戏一", "Tako Games"),
+        ("b.cjk", today, 2, 100, 50.0, "JP", "ios", "游戏二", "Tako Games"),
+    ])
+    eid = (await client.post("/api/publishers/", json={
+        "name": "CJK 测试", "aliases": [{"keyword": "tako"}],
+    })).json()["id"]
+    prods = (await client.get(f"/api/publishers/{eid}/products")).json()
+    assert len(prods) == 2  # 不合并
+
+
+@pytest.mark.asyncio
 async def test_health_endpoint_covers_audit_dimensions(client):
     """/health 端点：覆盖 tier 分布 + 待补/命名/复核 backlog + 总量。空库 + 加几个主体验各维度。"""
     # 空库基线
