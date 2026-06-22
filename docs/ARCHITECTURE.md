@@ -140,9 +140,29 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 
 `build_daily_digest` 原本无长度上限——波动大的日子（movement 完全无 cap）会刷出一张超长卡。两层封顶：单 combo movement 行封 `DIGEST_MOVEMENT_TOPN`（按 空降/窜升/暴跌/收入异动 重要性保留），全卡按 combo 粒度封 `DIGEST_MAX_ITEMS`，超额折叠成「…另有 N 项，看板查看全部」（不静默丢、标题 total 仍计全部）。商店按钮也纳入新品（市场/厂商各取头条、去重封顶 5），安卓包名拼 Google Play 链接（`_store_url`），纯新品日不再无可点项。
 
+### 新厂商线索 CTA（PR #104）
+
+digest 里 `is_slg=false` 的市场新面孔，经忽略名单过滤后多是**真·未识别厂商线索**而非噪声。`build_newcomer_lines` 给这类行升级文案「⚠️ 新厂商待识别 · 建议建档」并**行内附商店页直达**（`_store_url` 拼不出则只留文案）——底部 ActionCard 按钮全局封顶 5、每 combo 仅 1 条，线索未必挤得进，行内链接保证每条都有「立即去看」入口。已归属主体的厂商新品行不打 CTA。
+
+### 微信文章 ↔ 新品名匹配（PR #105）
+
+digest 给新品行附行业公众号文章（`_match_articles_to_apps`）。匹配走 `_name_matches` 而非裸 substring：**拉丁名**词边界 + 大小写无关（"Last War" 不再误挂 "Last Warning"）；**非拉丁名**按非空白字符数设最小长度 `WECHAT_MATCH_MIN_NAME_LEN`（默认 2，砍单字"城"噪声、保留"原神"）。**刻意不引停用词表**——多字通用名（韩文"탑 로드"）无分词仍可能误挂，观察实际误挂率再定。
+
 ### 数据新鲜度
 
 `/history` 返回 `as_of_by_combo`（各 combo 最近快照日，来自 `game_rankings.MAX(date)`）；前端给 ≥3 天滞后的 combo 渲染 stale 提示条，≥14 天转红。让用户看清「JP weekly 数据截至 N 天前」而非误以为是今日榜。
+
+### 跨市场去重（前端展示，PR #103/#106）
+
+同款全球游戏（同 app_id：iOS=数字 trackId、Android=GP 包名，跨国一致且两端永不撞键）在多 combo 各检出一次，`/history`（全市场视图）与 `/publishers`（厂商新品视图）都逐市场返回多条。前端 `lib/newcomerGrouping.ts`（`groupByApp` / `groupPublisherByApp`）按 app_id 合并成一张卡 / 一行 + 多市场徽标：**最佳（最小）名次**为 headline、**最早检出**为日期、抽屉 / tooltip 列各市场名次。纯前端分组，API 未动，CSV 仍导逐市场全量（不丢粒度）。与既有**跨平台** sibling 去重（`sibling_match.py`，iOS×Android 同游戏）是**不同轴**。
+
+### 检出日志保留（PR #103）
+
+`market_newcomer_log` 检出即落库、只增不减（读路径只按 `days` 筛）。`prune_newcomer_log` 每日 03:45 UTC（回填后、备份前）删 `first_detected_at` 早于 `NEWCOMER_LOG_RETENTION_DAYS`（默认 365，≤0 关闭）的行，避免表无限膨胀。
+
+### 性能：跨 combo 查询预加载（PR #106）
+
+digest 与 `/api/newcomers/` 在 combo 循环**外**各预加载 `publisher_ignores`（ignore_keys）与主体匹配器（matchers）一次，传入 `detect_newcomers` / `detect_publisher_newcomers`（参数早已预留），避免每 combo 重查（原 ~10 combo × 4 次冗余小查询）；digest 的中文归属 pass 复用同一份 matchers。行为不变，纯减查询。
 
 ### 应用商店雷达（互补层）
 
