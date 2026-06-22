@@ -6,7 +6,7 @@ import { newcomersApi, publishersApi } from '../lib/api'
 import { formatRevenue, formatNumber } from '../lib/utils'
 import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
-import { Download as DownloadIcon, Sparkles, Info, FilePlus2, Globe2, Building2, Store, RefreshCw, Star, X, ExternalLink, Repeat, Clock } from 'lucide-react'
+import { Download as DownloadIcon, Sparkles, Info, FilePlus2, Globe2, Building2, Store, RefreshCw, Star, X, ExternalLink, Repeat, Clock, Ban } from 'lucide-react'
 import { COUNTRIES, PLATFORMS, platformLabel, type Country, type Platform } from '../lib/markets'
 import { GameIcon } from '../components/GameIcon'
 import { QueryError } from '../components/QueryError'
@@ -66,6 +66,27 @@ export default function NewReleases() {
   const handleTriage = (g: NewcomerHistoryItem) => {
     if (!window.confirm(t.newcomers.triageConfirm(g.publisher?.trim() || g.name))) return
     triageMut.mutate(g)
+  }
+
+  // 一键忽略：把确认非 SLG 的噪声新品写入 publisher_ignores（与缺口卡同一名单）。
+  // 有发行商名 → publisher 粒度（corp_squash 归一，覆盖该厂全部新品）；无名退回 app_id 粒度。
+  // /history 读时按忽略名单过滤，故 invalidate 后该行立即消失。A↔B 双动作闭环。
+  const ignoreMut = useMutation({
+    mutationFn: (g: NewcomerHistoryItem) => {
+      const pub = g.publisher?.trim()
+      return publishersApi.addIgnore(pub
+        ? { kind: 'publisher', raw_value: pub, label: pub, note: t.newcomers.ignoreNote }
+        : { kind: 'app_id', raw_value: g.app_id, label: g.name, note: t.newcomers.ignoreNote })
+    },
+    onSuccess: (row) => {
+      qc.invalidateQueries({ queryKey: ['newcomerHistory'] })
+      qc.invalidateQueries({ queryKey: ['publishers'] })
+      toast.success(t.newcomers.ignored(row.label || row.value))
+    },
+  })
+  const handleIgnore = (g: NewcomerHistoryItem) => {
+    if (!window.confirm(t.newcomers.ignoreConfirm(g.publisher?.trim() || g.name))) return
+    ignoreMut.mutate(g)
   }
 
   const items = data?.items ?? []
@@ -302,6 +323,14 @@ export default function NewReleases() {
                         className="inline-flex items-center gap-1 text-[10px] text-brand-400 hover:text-brand-300 border border-brand-500/30 hover:border-brand-500/60 rounded px-1.5 py-0.5 transition-colors disabled:opacity-50"
                       >
                         <FilePlus2 size={11} />{t.newcomers.triage}
+                      </button>
+                      <button
+                        onClick={ev => { ev.stopPropagation(); handleIgnore(g) }}
+                        disabled={ignoreMut.isPending}
+                        title={t.newcomers.ignore}
+                        className="inline-flex items-center gap-1 text-[10px] text-muted hover:text-secondary border border-default hover:border-strong rounded px-1.5 py-0.5 transition-colors disabled:opacity-50"
+                      >
+                        <Ban size={11} />{t.newcomers.ignore}
                       </button>
                     </>
                   )}

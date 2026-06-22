@@ -241,3 +241,60 @@ async def test_alerts_test_endpoint_disabled(client, monkeypatch):
     r = await client.post("/api/alerts/dingtalk/test")
     assert r.status_code == 200
     assert r.json() == {"enabled": False, "sent": False}
+
+
+def test_store_url_gp_and_ios():
+    """_store_url：iOS 数字 id → App Store；安卓包名(含 .) → Google Play；其余 None。"""
+    from app.services.release_alerts import _store_url
+    assert _store_url("123", "us", "ios") == "https://apps.apple.com/us/app/id123"
+    assert _store_url("com.dequ.m3dw2", "jp", "android") == \
+        "https://play.google.com/store/apps/details?id=com.dequ.m3dw2"
+    assert _store_url("not numeric", "us", "ios") is None      # iOS 非数字拼不出
+    assert _store_url("nopackage", "us", "android") is None    # 安卓无 . 不是包名
+
+
+def test_daily_digest_newcomer_and_android_buttons():
+    """纯新品日（无 movement）也产出商店按钮；安卓包名拼 GP 链接。"""
+    from app.services.release_alerts import build_daily_digest
+    market = {"newcomers": [{"app_id": "com.x.y", "rank": 4, "name": "安卓新游",
+                             "publisher": "P", "is_slg": False, "is_reentry": False}]}
+    per_combo = [{"country": "JP", "platform": "android", "movement": None,
+                  "market": market, "publisher": None}]
+    _, _, btns = build_daily_digest(per_combo, "2026-06-14")
+    assert ("安卓新游 →", "https://play.google.com/store/apps/details?id=com.x.y") in btns
+
+
+def test_daily_digest_movement_cap(monkeypatch):
+    """单 combo 的 movement 行被 DIGEST_MOVEMENT_TOPN 封顶，超额进折叠行。"""
+    from app.services import release_alerts as ra
+    monkeypatch.setattr("app.config.settings.DIGEST_MOVEMENT_TOPN", 2, raising=False)
+    movement = {
+        "new_entrants": [{"app_id": "1", "name": "AA", "prev_rank": None, "cur_rank": 1},
+                         {"app_id": "2", "name": "BB", "prev_rank": None, "cur_rank": 2}],
+        "surges": [{"app_id": "3", "name": "CC", "prev_rank": 10, "cur_rank": 3}],  # 第3条超 cap
+        "drops": [], "revenue_spikes": [],
+    }
+    per_combo = [{"country": "US", "platform": "ios", "movement": movement,
+                  "market": None, "publisher": None}]
+    _, text, _ = ra.build_daily_digest(per_combo, "2026-06-14")
+    assert "**AA**" in text and "**BB**" in text
+    assert "**CC**" not in text                      # movement 第3条被 cap=2 砍
+    assert "另有 **1** 项未在此展示" in text
+    assert "（3 项）" in text                          # 标题 total 仍是真实总数
+
+
+def test_daily_digest_global_cap_overflow(monkeypatch):
+    """全局 DIGEST_MAX_ITEMS 封顶：超出的整 combo 折叠成「另有 N 项」，标题 total 不变。"""
+    from app.services import release_alerts as ra
+    monkeypatch.setattr("app.config.settings.DIGEST_MAX_ITEMS", 1, raising=False)
+    def mk(n):
+        return {"newcomers": [{"app_id": str(n), "rank": n, "name": f"游{n}",
+                               "publisher": "P", "is_slg": True, "is_reentry": False}]}
+    per_combo = [
+        {"country": "US", "platform": "ios", "movement": None, "market": mk(1), "publisher": None},
+        {"country": "JP", "platform": "ios", "movement": None, "market": mk(2), "publisher": None},
+    ]
+    _, text, _ = ra.build_daily_digest(per_combo, "2026-06-14")
+    assert "游1" in text and "游2" not in text        # 第二 combo 被全局封顶
+    assert "另有 **1** 项未在此展示" in text
+    assert "（2 项）" in text                          # total 仍计全部

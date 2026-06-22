@@ -194,6 +194,10 @@ export const zh = {
     triageConfirm: (name: string) => `把「${name}」建档为待调研厂商主体？会在「厂商主体」页创建一条档案并钉住该 app_id（建档后即识别为 SLG）。`,
     triaged: (name: string) => `已建档：${name} · 去「厂商主体」补股权 / 溯源`,
     triageBrief: (game: string, market: string) => `由新品监测建档 · ${market} · ${game}`,
+    ignore: '忽略',
+    ignoreConfirm: (name: string) => `确认「${name}」非 SLG、加入忽略名单？此后该发行商不再进新品监测 / 调研缺口提示（可在「厂商主体」页恢复）。`,
+    ignored: (name: string) => `已忽略：${name} · 不再进新品 / 缺口提示`,
+    ignoreNote: '由新品监测人工标为非 SLG',
     // 真首发 vs 回归（PR #93）
     signalTrueNew: '真首发',
     signalReentry: '回归',

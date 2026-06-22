@@ -293,6 +293,12 @@ async def get_newcomer_history(
     rows = (await db.execute(
         q.order_by(MarketNewcomerLog.first_detected_at.desc(), MarketNewcomerLog.rank)
     )).scalars().all()
+    # 缺口忽略名单过滤：人工确认的非 SLG 噪声不进沉淀视图（与 /gaps、detect_newcomers
+    # 同一名单同口径）。**读时过滤而非删行**——历史日志原样保留，但前端点「忽略」后
+    # 该发行商的行立即从视图消失（无需等老化/手动清表）。
+    from app.services.newcomers import _load_ignore_keys, _is_ignored
+    ignore_pub_keys, ignore_app_ids = await _load_ignore_keys()
+    rows = [r for r in rows if not _is_ignored(r.app_id, r.publisher, ignore_pub_keys, ignore_app_ids)]
     from app.services.newcomer_log import attribute_entities
     attributed = await attribute_entities(rows)
     # 数据新鲜度：每 combo 最近一次已同步快照日，让前端给陈旧 combo 加 stale 提示。

@@ -88,17 +88,24 @@ def _meta_line(*, genre=None, revenue=None, downloads=None, entity=None) -> str:
 
 
 def _store_url(app_id: str, country: str, platform: str) -> Optional[str]:
-    """榜单行 app_id → 商店页链接。iOS 数字 id 可直拼；其余形态（包名/安卓）拼不出。"""
-    if platform == "ios" and str(app_id).isdigit():
-        return f"https://apps.apple.com/{country.lower()}/app/id{app_id}"
+    """榜单行 app_id → 商店页链接。iOS 数字 id 拼 App Store；安卓包名（含 `.`）拼
+    Google Play。其余形态（空/异常）拼不出返回 None。"""
+    aid = str(app_id or "").strip()
+    if platform == "ios" and aid.isdigit():
+        return f"https://apps.apple.com/{country.lower()}/app/id{aid}"
+    if platform == "android" and "." in aid and " " not in aid:
+        return f"https://play.google.com/store/apps/details?id={aid}"
     return None
 
 
 # ── 每日情报汇总（竞品异动 + 两层新品，全 combo 一条） ─────────────────────
 
-def build_movement_lines(s: dict, entities: Optional[dict] = None) -> list[str]:
+def build_movement_lines(s: dict, entities: Optional[dict] = None,
+                         cap: Optional[int] = None) -> list[str]:
     """movement 摘要 → 人读行。与 Sentry 的 [NEW]/[UP] 机器码刻意分离。
-    entities: {app_id: 中文厂商主体} —— 给每条补「日收入 · 下载 · 厂商归属」子行。"""
+    entities: {app_id: 中文厂商主体} —— 给每条补「日收入 · 下载 · 厂商归属」子行。
+    cap: 单 combo 展示行上限（按 空降/窜升/暴跌/收入异动 顺序保留前 cap 条，
+    砍掉重要性较低的尾部），None=不限。"""
     entities = entities or {}
 
     def _meta(e):
@@ -121,7 +128,7 @@ def build_movement_lines(s: dict, entities: Optional[dict] = None) -> list[str]:
         rk = f"现 #{e['cur_rank']} · " if e.get("cur_rank") else ""  # 收入涨跌的排名参照系
         tail = f" · 厂商 {ent}" if ent else ""
         lines.append(f"💰 **{e['name']}** {rk}收入 **{e['pct']:+.0f}%**（{_fmt_money(e['prev_revenue'])} → {_fmt_money(e['cur_revenue'])}）{tail}")
-    return lines
+    return lines[:cap] if cap else lines
 
 
 def _articles_suffix(app_articles: Optional[list]) -> str:
@@ -212,16 +219,26 @@ def build_daily_digest(per_combo: list[dict], today: str,
     """
     sections: list[str] = []
     btns: list[tuple[str, str]] = []
-    total = 0
+    cap = settings.DIGEST_MAX_ITEMS
+    mv_cap = settings.DIGEST_MOVEMENT_TOPN
+    total = 0      # 全部检出项（含未展示），进标题
+    shown = 0      # 已渲染项，触发全局封顶
+    overflow = 0   # 因封顶/movement 截断未展示的项，进折叠行（不静默丢）
     for c in per_combo:
-        mv_blocks = build_movement_lines(c["movement"], entities=entities) if c.get("movement") else []
+        mv_all = build_movement_lines(c["movement"], entities=entities) if c.get("movement") else []
         nc_blocks = (build_newcomer_lines(c.get("market") or {}, c.get("publisher") or {},
                                           enrich=c.get("enrich"), articles=articles,
                                           entities=entities)
                      if (c.get("market") or c.get("publisher")) else [])
-        if not mv_blocks and not nc_blocks:
+        if not mv_all and not nc_blocks:
             continue
-        total += len(mv_blocks) + len(nc_blocks)
+        total += len(mv_all) + len(nc_blocks)
+        if shown >= cap:
+            overflow += len(mv_all) + len(nc_blocks)  # 整 combo 因全局封顶未展示
+            continue
+        mv_blocks = mv_all[:mv_cap]
+        overflow += len(mv_all) - len(mv_blocks)       # movement 尾部超额（按重要性砍）
+        shown += len(mv_blocks) + len(nc_blocks)
         # 分组小标题（异动 / 新品）让领导一眼分清「榜在动」vs「有新东西」。
         parts = [f"**{_combo_label(c['country'], c['platform'])}**"]
         if mv_blocks:
@@ -229,16 +246,22 @@ def build_daily_digest(per_combo: list[dict], today: str,
         if nc_blocks:
             parts.append("【新品上架】\n\n" + "\n\n".join(nc_blocks))
         sections.append("\n\n".join(parts))
-        # 按钮：每 combo 取头一条异动/新品的商店页（最多 5 个，按 combo 顺序）
-        for e in ((c.get("movement") or {}).get("new_entrants") or [])[:1] + \
-                 ((c.get("movement") or {}).get("surges") or [])[:1]:
+        # 按钮：异动(空降/窜升) + 新品(市场/厂商) 各取头条直达商店页；全局最多 5、去重。
+        # 新品也产出按钮——纯新品日不再无可点项；安卓包名拼 GP 链接（_store_url）。
+        for e in (((c.get("movement") or {}).get("new_entrants") or [])[:1]
+                  + ((c.get("movement") or {}).get("surges") or [])[:1]
+                  + [n for n in ((c.get("market") or {}).get("newcomers") or []) if not n.get("is_reentry")][:1]
+                  + [n for n in ((c.get("publisher") or {}).get("newcomers") or []) if not n.get("is_reentry")][:1]):
             url = _store_url(e.get("app_id", ""), c["country"], c["platform"])
-            if url and len(btns) < 5:
+            if url and len(btns) < 5 and all(b[1] != url for b in btns):
                 btns.append((f"{e['name']} →", url))
     if not sections:
         return None
     head = f"### 📡 SLG 每日情报 · {today}（{total} 项）"
-    return f"每日情报 {today}", "\n\n---\n\n".join([head] + sections), btns
+    body = [head] + sections
+    if overflow:
+        body.append(f"> …另有 **{overflow}** 项未在此展示，看板查看全部")
+    return f"每日情报 {today}", "\n\n---\n\n".join(body), btns
 
 
 async def send_daily_digest() -> bool:

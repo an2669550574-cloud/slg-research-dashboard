@@ -230,3 +230,32 @@ def test_digest_newcomer_enrich_suffix():
     # 无富化数据时子行仅剩厂商（发行商名）一项
     lines2 = build_newcomer_lines(market, {})
     assert lines2 == ["✨ **寒霜新游** 空降 **#7**\n> 厂商 某厂"]
+
+
+@pytest.mark.asyncio
+async def test_history_filters_ignored_publishers(client):
+    """缺口忽略名单里的发行商，读时从 /history 过滤掉（行仍在表里、只是不返回），
+    未忽略的真线索照常保留——口径与 /gaps、detect_newcomers 一致（corp_squash 键）。"""
+    database = _live("app.database")
+    MarketNewcomerLog = _live("app.models.newcomer").MarketNewcomerLog
+    PublisherIgnore = _live("app.models.publisher").PublisherIgnore
+    corp_squash = _live("app.services.name_match").corp_squash
+    _tokens = _live("app.services.slg_publishers")._tokens
+
+    async with database.AsyncSessionLocal() as db:
+        db.add(MarketNewcomerLog(
+            country="SE", platform="ios", app_id="noise_app", as_of="2026-05-01",
+            name="宝可梦对战噪声", publisher="The Pokemon Company", is_slg=False, is_reentry=False,
+        ))
+        db.add(MarketNewcomerLog(
+            country="SE", platform="ios", app_id="lead_app", as_of="2026-05-01",
+            name="真 SLG 线索", publisher="Brand New SLG Co.", is_slg=False, is_reentry=False,
+        ))
+        db.add(PublisherIgnore(kind="publisher",
+                               value=corp_squash(_tokens("The Pokemon Company")),
+                               label="The Pokemon Company"))
+        await db.commit()
+
+    items = (await client.get("/api/newcomers/history?days=120&country=SE")).json()["items"]
+    assert {i["app_id"] for i in items} == {"lead_app"}, \
+        "被忽略的发行商应从 /history 过滤，未忽略线索保留"
