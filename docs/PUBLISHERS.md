@@ -76,7 +76,11 @@
 - **股东册多在付费墙后**（ACRA BizFile；opengovsg/recordowl 只给 officer 数量）→ 海外壳归属常只能靠 media + 开发者账号佐证，标 `controlling` 不标 `wholly_owned`。
 - **安卓包名钉慎用**：若该包在 game_rankings 是未富化行（name/publisher 空），钉它会在产品抽屉顶出一条空名 $0 裸行；优先用 alias，iOS 用数字 id 钉。
 - **巨头多主体扫描结论**：策略榜未归属的高收入发行商绝大多数是**非 SLG**（Niantic/Supercell/Chess.com/EA/PUBG/NetEase 荒野/KRAFTON/KONAMI/Cygames/Wizards/Voodoo/Highbrow 等），勿误归。
-- **跨平台 sibling 去重**（PR #88）：iOS+Android 同款会合并成一行 product。规则=同 publisher（normalize 后等价）+ 名字 prefix 子序列匹配 ≥5 字符（与 `services/sibling_match.py` 同口径）。CJK-only 本地化名（normalize 后为空）不参与合并——保留为独立组防止无关游戏被错合。`Valor Legends: Idle RPG` + `ベイラーレジェンド: Idle RPG` 这类「Latin 在中间不在头部」的 case 暂不合，是已知设计权衡。
+- **跨平台 sibling 去重**（PR #88 初版，#91/#92 修「同 publisher」判定）：iOS+Android 同款合并成一行 product。**两个去重入口口径不同**：
+  - **厂商抽屉/列表** `_dedup_siblings`（`routers/publishers.py`）：调用方已 entity-scoped（alias/app_id 预过滤为单 entity），**不再校验 publisher 字符串等价**，仅名字 prefix 子序列匹配 ≥5 字符即合并（PR #91）。修了同公司不同法人/简写发两平台（"TOP GAMES INC."×"TG Inc."、"IGG SINGAPORE PTE. LTD."×"IGG.COM"）漏合——曾跨 26 主体漏合 46 个 product row。
+  - **详情页/coverage/metrics** `find_sibling_app_ids`（`services/sibling_match.py`）：扫全表无 entity scope，用 `publisher_aliases` 把两个 publisher 字符串各自映射到 entity，**同 entity 或 normalize 等价**即视为同 publisher（PR #92）。
+  - 共同规则：CJK-only 本地化名（normalize 后为空）不参与合并；名字 prefix ≥5 字符。`Valor Legends: Idle RPG` + `ベイラーレジェンド` 这类「Latin 不在头部」暂不合，已知权衡。
+- **L3 跨 entity 同款维持现状不合**：同款 iOS/Android 被建档到**两个不同 entity**（如 Puzzles & Survival：iOS=BUILDING-BLOCKS / Android=37GAMES，两者都是三七互娱全资子）——**故意不合**。业务上抽屉视角正确（点母体「三七互娱」看集团合计），技术上 relation-based transitive merge 边界难定（minority 算不算 / 多层嵌套 / 跨多集团根）。
 - **SQL `MAX(name)` 偏向 CJK**：同 iOS app_id 在多市场返回本地化名时，`MAX` 按 Unicode 排序会偏向 CJK 字符；publishers router 的 `_ranking_pairs` + `list_publisher_products` 已改为 `COALESCE(MAX(CASE WHEN country='US'),MAX)` 优先 US 名解决。
 
 ## Backlog（按价值排序）

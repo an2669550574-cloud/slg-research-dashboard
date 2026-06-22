@@ -100,6 +100,44 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 
 ---
 
+## 新品监测 + 每日情报 digest
+
+新品监测（`services/newcomers.py` + `routers/newcomers.py` + 前端 `NewReleases.tsx`）和每日钉钉 digest（`services/release_alerts.py`，03:00 UTC 一张卡）共享一套「首次出现」检测核心，全程零 ST 配额、纯读本地 `game_rankings`。
+
+### 检测核心 `_first_appearances`
+
+锚定每个 combo 最近一次已同步快照（as_of，不强求等于今天——周级同步多数天无「今日」行），比对它与之前 W 个快照：当期出现、baseline W 个快照里没出现过 = 「首次出现」。
+
+| 配置 | 值 | 含义 |
+|---|---|---|
+| `NEWCOMER_WINDOW` | 4 | 回看几个快照作 baseline。US daily ≈ 4 天，JP/KR/DE/RU weekly ≈ 4 周 |
+| `NEWCOMER_TOPN` | 50 | 全市场新面孔：名次 ≤ 此值才算「新进榜」 |
+| `PUBLISHER_NEWCOMER_TOPN` | 200 | 厂商主体新品：名次 ≤ 此值（比 50 宽——主体可信，名次较深也值得看，但砍 #201+ 长尾） |
+| `NEWCOMER_HISTORY_TOPN` | 100 | 检出沉淀口径（`market_newcomer_log`），比日报宽，页面可筛 Top50/100 |
+
+`no_baseline`（冷库/首次同步、无历史快照）一律返回空——绝不把首图全员当新品。
+
+### is_reentry：真首发 vs 回归（PR #93/#94）
+
+**weekly combo 的坑**：baseline 只 4 周，任何老 SLG 产品有一周漏榜，回来时就被判「首次出现」。实测 JP/android 单 combo 23 条 publisher 新品里 22 条是这种回归噪声。
+
+`_first_appearances` 因此额外返回 `historical_ids`（baseline 窗口**之外**更早出现过的 app_id）；`_row_dict` 给每行打 `is_reentry`：
+
+- **digest**（`build_newcomer_lines`）：`is_reentry=True` 的项**直接过滤掉**（先过滤再截断 10 条，避免回归占满名额）。digest 实测 45→24 项（-47%）。
+- **检出沉淀**（`market_newcomer_log.is_reentry`，alembic 0022 起）：**保留**，让前端可区分展示。
+- **前端**（`NewReleases.tsx`）：信号 chip「真首发(默认)/回归/全部」，`/history?signal=` 服务端筛；回归卡片打 cyan badge。
+- **向后兼容**：0022 迁移前的历史行 `is_reentry=NULL`，`signal=true_new` 把 NULL 当真首发（老卡片照旧显示）。
+
+### 数据新鲜度
+
+`/history` 返回 `as_of_by_combo`（各 combo 最近快照日，来自 `game_rankings.MAX(date)`）；前端给 ≥3 天滞后的 combo 渲染 stale 提示条，≥14 天转红。让用户看清「JP weekly 数据截至 N 天前」而非误以为是今日榜。
+
+### 应用商店雷达（互补层）
+
+`/newcomers/appstore`（`itunes_releases.py` + `gp_releases.py`）：扫已建档主体的开发者账号清单 diff，捞**未上榜的软启动新品**——榜单检测永远看不到的早期信号。免费 iTunes lookup / GP 页 JSON-LD，零 ST 配额。详见 [`PUBLISHERS.md`](PUBLISHERS.md) 辅助端点表。
+
+---
+
 ## 相关文档
 
 - [`PUBLISHERS.md`](PUBLISHERS.md) — 厂商主体方法论 + 资本系速览（业务知识）
