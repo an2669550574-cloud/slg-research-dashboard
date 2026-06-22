@@ -142,6 +142,10 @@ class Settings(BaseSettings):
     NEWCOMER_TOPN: int = 50
     # 历史沉淀口径（market_newcomer_log）：比日报 Top50 宽，页面可筛 Top50/100。
     NEWCOMER_HISTORY_TOPN: int = 100
+    # 检出日志保留天数：market_newcomer_log 只增不减，每日 prune 掉
+    # first_detected_at 早于 N 天前的行（页面默认只看 90 天、最多筛 365 天，
+    # 留 365 天足够覆盖且不让表无限膨胀）。<=0 = 关闭 prune（永久保留）。
+    NEWCOMER_LOG_RETENTION_DAYS: int = 365
     # 厂商主体新品（publisher newcomers）的名次阈值。原本无阈值导致 weekly combo
     # 长尾抖动（老 SLG 产品因 4 周内有一周漏榜被误报"新品"）刷屏 digest——
     # JP/android 实测单 combo 23 项里 22 项是 #137–#535 的长尾噪声。设 200 让

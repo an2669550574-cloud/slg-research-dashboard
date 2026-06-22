@@ -199,6 +199,16 @@ async def _run_rank_backfill() -> None:
         logger.exception("Rank backfill job crashed")
 
 
+async def _run_newcomer_log_prune() -> None:
+    """定时任务包装：清理超龄检出日志（market_newcomer_log 只增不减）。
+    任务自带 retention<=0 关闭护栏；异常不拖垮 scheduler。"""
+    from app.services.newcomer_log import prune_newcomer_log
+    try:
+        await prune_newcomer_log()
+    except Exception:
+        logger.exception("Newcomer log prune job crashed")
+
+
 async def _run_itunes_releases_sync() -> None:
     """定时任务包装：应用商店开发者清单 diff（iOS 免费 iTunes API + GP 免费
     开发者页，零 ST 配额）。两侧各自含 mock/空账号护栏，异常互不拖垮、
@@ -334,6 +344,17 @@ def start_scheduler() -> None:
         _run_rank_backfill,
         CronTrigger(hour=3, minute=30, timezone="UTC"),
         id="rank_backfill",
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
+
+    # 检出日志保留清理：03:45 UTC（回填 03:30 之后、DB 备份 04:00 之前）。
+    # market_newcomer_log 检出即落库、只增不减，每日删超过 NEWCOMER_LOG_RETENTION_DAYS
+    # 的老行；retention<=0 时任务空跑无害，故无条件挂。
+    scheduler.add_job(
+        _run_newcomer_log_prune,
+        CronTrigger(hour=3, minute=45, timezone="UTC"),
+        id="newcomer_log_prune",
         replace_existing=True,
         misfire_grace_time=3600,
     )

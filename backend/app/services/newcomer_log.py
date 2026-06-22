@@ -14,7 +14,8 @@ import logging
 from typing import Optional
 
 import httpx
-from sqlalchemy import select
+from datetime import timedelta
+from sqlalchemy import delete, select
 
 from app.config import settings
 from app.database import AsyncSessionLocal, utcnow_naive
@@ -158,6 +159,27 @@ async def record_all_combos() -> dict:
         except Exception:
             logger.exception("newcomer record failed for %s/%s", country, platform)
     return total
+
+
+async def prune_newcomer_log(retention_days: Optional[int] = None) -> int:
+    """删除 first_detected_at 早于保留窗口的检出日志，返回删除行数。
+
+    market_newcomer_log 检出即落库、只增不减——读路径只按 days 筛、不影响表大小。
+    每日定时跑一次（scheduler），把超过 NEWCOMER_LOG_RETENTION_DAYS 的老行清掉，
+    避免表无限膨胀。retention<=0 视为关闭（永久保留），直接返回 0 不删。
+    """
+    days = settings.NEWCOMER_LOG_RETENTION_DAYS if retention_days is None else retention_days
+    if days <= 0:
+        return 0
+    cutoff = utcnow_naive() - timedelta(days=days)
+    async with AsyncSessionLocal() as db:
+        deleted = (await db.execute(
+            delete(MarketNewcomerLog).where(MarketNewcomerLog.first_detected_at < cutoff)
+        )).rowcount
+        await db.commit()
+    if deleted:
+        logger.info("newcomer log prune: deleted %d rows older than %d days", deleted, days)
+    return deleted or 0
 
 
 async def attribute_entities(rows) -> dict[int, tuple[int, str]]:
