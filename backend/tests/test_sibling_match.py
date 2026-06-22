@@ -133,6 +133,28 @@ async def test_find_siblings_merges_across_alias_canonicalized_publisher(client)
 
 
 @pytest.mark.asyncio
+async def test_find_siblings_maps_glued_publisher_via_squash(client):
+    """连写发行商 "Topgames.Inc" 经 corp_squash 回退映射到 alias "top games" 的 entity，
+    与正常写法 "Top Games Inc" 的同款跨平台合并。子序列配不上（["topgames","inc"] vs
+    ["top","games"]），靠 squash 等值兜底。"""
+    from app.services.sibling_match import find_sibling_app_ids
+    from app.database import AsyncSessionLocal
+
+    today = date.today().strftime("%Y-%m-%d")
+    await client.post("/api/publishers/", json={
+        "name": "Top Games", "aliases": [{"keyword": "top games"}],
+    })
+    await _seed([
+        ("ios.evony", today, 1, 200, 100.0, "US", "ios", "Evony", "Topgames.Inc"),
+        ("gp.evony", today, 2, 150, 80.0, "US", "android",
+         "Evony: The King's Return", "Top Games Inc"),
+    ])
+    async with AsyncSessionLocal() as db:
+        s = await find_sibling_app_ids(db, "ios.evony")
+        assert set(s) == {"ios.evony", "gp.evony"}
+
+
+@pytest.mark.asyncio
 async def test_find_siblings_does_not_cross_different_entities(client):
     """**反向回归**：两个 publisher 字符串映射到**不同** entity 时即使名字前缀匹配也不合
     （宁错放过别错合）。如「Whiteout Survival」由 entity 1 发 iOS、entity 2 发 Android。"""

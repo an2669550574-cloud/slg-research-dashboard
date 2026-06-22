@@ -75,6 +75,21 @@ def test_camelcase_publisher_matches_via_split(publisher, expected):
     assert is_slg_publisher(publisher) is expected
 
 
+@pytest.mark.parametrize("publisher,expected", [
+    # 连写 + 法人后缀：alias "top games"（["top","games"]）配真实发行商连写形式。
+    # 子序列要 token 边界对齐配不上，靠 corp_squash 去后缀拼接后整段等值兜底。
+    ("Topgames.Inc", True),       # squash "topgames" == alias squash "topgames"
+    ("TOPGAMES INC", True),
+    ("Topgames Pte. Ltd.", True),
+    # squash 只做**等值**不做子串：不能让短 alias 误命中更长连写名（word-boundary 回归）
+    ("Trigger Games Inc", False), # squash "triggergames" != 任何 alias squash
+    ("Topgamestudio", False),     # 多了真实词 "studio"，squash != "topgames"
+])
+def test_squash_fallback_matches_glued_corporate_names(publisher, expected):
+    from app.services.slg_publishers import is_slg_publisher
+    assert is_slg_publisher(publisher) is expected
+
+
 @pytest.mark.parametrize("app_id,publisher", [
     ("6476261995", "Level Infinite"),          # Age of Empires Mobile（iOS）
     ("com.proximabeta.aoemobile", "Level Infinite"),  # 同（Android）

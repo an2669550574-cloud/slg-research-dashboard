@@ -64,6 +64,9 @@ import type {
   PublisherRelationCreate,
   PublisherProduct,
   PublisherHealth,
+  PublisherGap,
+  PublisherIgnore,
+  PublisherIgnoreCreate,
   WechatAccount,
   WechatAccountCandidate,
 } from './types'
@@ -379,6 +382,16 @@ export const publishersApi = {
   // 数据健康度自检：覆盖 tier 分布 + 待补/命名/复核 backlog + 总量。
   health: (): Promise<PublisherHealth> =>
     api.get('/publishers/health').then(r => r.data),
+  // 调研缺口：近 N 天有收入、任何 alias/app_id 都没命中、未被忽略的 publisher。
+  gaps: (days = 30, limit = 20): Promise<PublisherGap[]> =>
+    api.get('/publishers/gaps', { params: { days, limit } }).then(r => r.data),
+  // 缺口忽略名单：把已知非 SLG 巨头从缺口里剔掉（publisher / app_id 两种粒度）。
+  ignores: (): Promise<PublisherIgnore[]> =>
+    api.get('/publishers/ignores').then(r => r.data),
+  addIgnore: (data: PublisherIgnoreCreate): Promise<PublisherIgnore> =>
+    api.post('/publishers/ignores', data).then(r => r.data),
+  deleteIgnore: (ignoreId: number): Promise<DeleteResponse> =>
+    api.delete(`/publishers/ignores/${ignoreId}`).then(r => r.data),
 }
 
 // 订阅公众号：看板维护新品监测日报要搜哪些行业号。零 ST 配额（走 wechat-api）。

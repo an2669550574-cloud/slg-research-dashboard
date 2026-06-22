@@ -244,3 +244,30 @@ class PublisherGapOut(BaseModel):
     downloads: int           # 窗口内累计下载
     app_count: int           # 该 publisher 名下涉及多少 app_id
     top_app: PublisherTopProductOut  # 收入最高的代表 app（icon + 名）
+
+
+class PublisherIgnoreOut(BaseModel):
+    """缺口忽略名单条目：被人工标为「非 SLG 主体」的发行商 / app，不再进缺口提示。"""
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    kind: Literal["publisher", "app_id"]
+    value: str               # publisher: corp_squash 归一键；app_id: 原始 app_id
+    label: Optional[str] = None  # 展示用原始名（建条目时传入的 publisher 串 / app 名）
+    note: Optional[str] = None
+    created_at: datetime
+
+
+class PublisherIgnoreCreate(BaseModel):
+    """新增忽略：raw_value 传原始串（publisher 名或 app_id）——publisher 粒度由后端
+    归一成 corp_squash 键存储，原始串落到 label 供展示。"""
+    kind: Literal["publisher", "app_id"]
+    raw_value: str           # 原始 publisher 名 或 app_id
+    label: Optional[str] = None
+    note: Optional[str] = None
+
+    @field_validator("raw_value")
+    @classmethod
+    def _non_empty(cls, v: str) -> str:
+        if not (v or "").strip():
+            raise ValueError("raw_value 不能为空")
+        return v.strip()
