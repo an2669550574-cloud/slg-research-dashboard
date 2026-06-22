@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
@@ -14,6 +14,7 @@ import { PageHeader } from '../components/PageHeader'
 import { WechatAccountsPanel } from '../components/WechatAccountsPanel'
 import { useLocalStorageState } from '../lib/hooks'
 import type { NewcomerHistoryItem, PublisherNewcomersOut } from '../lib/types'
+import { groupByApp, type GroupedNewcomer } from '../lib/newcomerGrouping'
 
 export default function NewReleases() {
   const t = useT()
@@ -28,7 +29,7 @@ export default function NewReleases() {
   // 信号筛选：真首发(默认) / 回归 / 全部。PR #93 把回归识别出来后默认隐藏，
   // 回归独立 tab 给运营回看「老游戏卷土重来」的情报信号。
   const [signal, setSignal] = useLocalStorageState<'true_new' | 'reentry' | 'all'>('slg.nc.signal', 'true_new')
-  const [selected, setSelected] = useState<NewcomerHistoryItem | null>(null)
+  const [selected, setSelected] = useState<GroupedNewcomer | null>(null)
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['newcomerHistory', mktCountry, mktPlatform, topn, days, signal],
@@ -89,7 +90,9 @@ export default function NewReleases() {
     ignoreMut.mutate(g)
   }
 
+  // CSV 仍导逐市场全量行（不丢粒度）；卡片按 app_id 跨市场合并展示。
   const items = data?.items ?? []
+  const groups = useMemo(() => groupByApp(items), [items])
 
   return (
     <div className="px-4 sm:px-7 py-5 sm:py-7 max-w-[1500px] mx-auto space-y-5">
@@ -138,8 +141,8 @@ export default function NewReleases() {
         {view === 'market' ? (
           <>
             <span>{t.newcomers.historyHint(days, topn)}</span>
-            {!isLoading && items.length > 0 && (
-              <span className="text-accent">· {t.newcomers.countSuffix(items.length)}</span>
+            {!isLoading && groups.length > 0 && (
+              <span className="text-accent">· {t.newcomers.countSuffix(groups.length)}</span>
             )}
           </>
         ) : (
@@ -253,14 +256,17 @@ export default function NewReleases() {
               </div>
             ))}
           </div>
-        ) : items.length === 0 ? (
+        ) : groups.length === 0 ? (
           <div className="bg-surface border border-default rounded-xl py-16 text-center text-muted text-sm">{t.newcomers.historyEmpty}</div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-            {items.map(g => (
+            {groups.map(gr => {
+              const g = gr.rep
+              const multi = gr.markets.length > 1
+              return (
               <div
-                key={g.id}
-                onClick={() => setSelected(g)}
+                key={gr.app_id}
+                onClick={() => setSelected(gr)}
                 className="bg-surface border border-default hover:border-strong rounded-xl p-4 cursor-pointer transition-colors space-y-3"
               >
                 <div className="flex items-start gap-3">
@@ -273,14 +279,29 @@ export default function NewReleases() {
                     <div className="text-xs text-muted truncate">{g.publisher}</div>
                   </div>
                   <div className="text-right shrink-0 space-y-1">
-                    <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold font-data bg-elevated text-secondary border border-default">
-                      {g.country} · {platformLabel(g.platform as Platform)}
-                    </span>
-                    <div className={`text-sm font-bold font-data ${g.rank == null ? 'text-muted' : g.rank <= 10 ? 'text-yellow-400' : g.rank <= 50 ? 'text-primary' : 'text-muted'}`}>
-                      #{g.rank ?? '—'}
+                    {multi ? (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold font-data bg-elevated text-secondary border border-default" title={gr.markets.map(m => `${m.country}/${m.platform} #${m.rank ?? '—'}`).join(' · ')}>
+                        <Globe2 size={10} />{t.newcomers.marketsBadge(gr.markets.length)}
+                      </span>
+                    ) : (
+                      <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold font-data bg-elevated text-secondary border border-default">
+                        {g.country} · {platformLabel(g.platform as Platform)}
+                      </span>
+                    )}
+                    <div className={`text-sm font-bold font-data ${gr.bestRank == null ? 'text-muted' : gr.bestRank <= 10 ? 'text-yellow-400' : gr.bestRank <= 50 ? 'text-primary' : 'text-muted'}`}>
+                      #{gr.bestRank ?? '—'}
                     </div>
                   </div>
                 </div>
+                {multi && (
+                  <div className="flex flex-wrap items-center gap-1">
+                    {gr.markets.map(m => (
+                      <span key={`${m.country}/${m.platform}`} className="inline-block px-1.5 py-0.5 rounded text-[10px] font-data bg-elevated/60 text-muted border border-default/60">
+                        {m.country} · {platformLabel(m.platform as Platform)} #{m.rank ?? '—'}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-data text-muted">
                   {g.genre && <span className="px-1.5 py-0.5 bg-elevated rounded text-secondary">{g.genre}</span>}
                   {g.rating != null && g.rating > 0 && (
@@ -292,10 +313,10 @@ export default function NewReleases() {
                   {g.price && <span>{t.newcomers.appstorePrice(g.price)}</span>}
                   {g.release_date && <span>{t.newcomers.appstoreReleasedAt(g.release_date)}</span>}
                   {g.revenue != null && <span className="text-emerald-400">{formatRevenue(g.revenue)}</span>}
-                  <span className="ml-auto">{t.newcomers.detectedAt(g.as_of)}</span>
+                  <span className="ml-auto">{t.newcomers.detectedAt(gr.earliestAsOf)}</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  {g.is_reentry === true && (
+                  {gr.anyReentry && (
                     <span
                       className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-cyan-500/15 text-cyan-400 border border-cyan-500/30"
                       title={t.newcomers.reentryHint}
@@ -336,13 +357,14 @@ export default function NewReleases() {
                   )}
                 </div>
               </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>
       )}
 
-      {selected && <NewcomerDrawer item={selected} onClose={() => setSelected(null)} />}
+      {selected && <NewcomerDrawer group={selected} onClose={() => setSelected(null)} />}
 
       <div className="flex items-start gap-2 text-[11px] text-muted/80 leading-relaxed">
         <Info size={13} className="mt-0.5 shrink-0" />
@@ -380,11 +402,14 @@ function StaleCombosWarning({ asOfByCombo, today }: { asOfByCombo: Record<string
 }
 
 
-/** 新面孔详情抽屉：免费源富化的描述/截图 + 商店页/看板跳转。
- *  hooks 全部在任何条件返回之前（prop 切换时 hook 数量不变）。 */
-function NewcomerDrawer({ item, onClose }: { item: NewcomerHistoryItem; onClose: () => void }) {
+/** 新面孔详情抽屉：免费源富化的描述/截图 + 各市场名次 + 商店页/看板跳转。
+ *  hooks 全部在任何条件返回之前（prop 切换时 hook 数量不变）。
+ *  跨市场合并后展示代表行（最佳名次行）的富化字段 + 全部市场的逐条检出。 */
+function NewcomerDrawer({ group, onClose }: { group: GroupedNewcomer; onClose: () => void }) {
   const t = useT()
   const navigate = useNavigate()
+  const item = group.rep
+  const multi = group.markets.length > 1
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => { if (ev.key === 'Escape') onClose() }
     window.addEventListener('keydown', onKey)
@@ -405,10 +430,12 @@ function NewcomerDrawer({ item, onClose }: { item: NewcomerHistoryItem; onClose:
         </div>
         <div className="px-5 py-4 space-y-4">
           <div className="flex flex-wrap items-center gap-2 text-[11px] font-data">
-            <span className="px-1.5 py-0.5 bg-elevated rounded text-secondary border border-default">
-              {item.country} · {platformLabel(item.platform as Platform)}
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-elevated rounded text-secondary border border-default">
+              {multi ? (<><Globe2 size={10} />{t.newcomers.marketsBadge(group.markets.length)}</>) : (<>{item.country} · {platformLabel(item.platform as Platform)}</>)}
             </span>
-            <span className={`font-bold ${item.rank != null && item.rank <= 10 ? 'text-yellow-400' : 'text-primary'}`}>#{item.rank ?? '—'}</span>
+            <span className={`font-bold ${group.bestRank != null && group.bestRank <= 10 ? 'text-yellow-400' : 'text-primary'}`}>
+              #{group.bestRank ?? '—'}{multi && group.bestRank != null && <span className="ml-1 text-muted font-normal">{t.newcomers.marketBestRank}</span>}
+            </span>
             {item.genre && <span className="px-1.5 py-0.5 bg-elevated rounded text-secondary">{item.genre}</span>}
             {item.rating != null && item.rating > 0 && (
               <span className="inline-flex items-center gap-0.5 text-amber-400">
@@ -418,8 +445,30 @@ function NewcomerDrawer({ item, onClose }: { item: NewcomerHistoryItem; onClose:
             )}
             {item.price && <span className="text-muted">{t.newcomers.appstorePrice(item.price)}</span>}
             {item.release_date && <span className="text-muted">{t.newcomers.appstoreReleasedAt(item.release_date)}</span>}
-            <span className="text-muted ml-auto">{t.newcomers.detectedAt(item.as_of)}</span>
+            <span className="text-muted ml-auto">{t.newcomers.detectedAt(group.earliestAsOf)}</span>
           </div>
+          {multi && (
+            <div>
+              <div className="text-[11px] text-muted uppercase tracking-wider mb-1.5">{t.newcomers.drawerMarkets}</div>
+              <div className="space-y-1">
+                {group.markets.map(m => (
+                  <div key={`${m.country}/${m.platform}`} className="flex items-center gap-2 text-[11px] font-data text-secondary">
+                    <span className="px-1.5 py-0.5 bg-elevated rounded border border-default w-24 shrink-0">
+                      {m.country} · {platformLabel(m.platform as Platform)}
+                    </span>
+                    <span className={`font-bold ${m.rank != null && m.rank <= 10 ? 'text-yellow-400' : 'text-primary'}`}>#{m.rank ?? '—'}</span>
+                    {m.is_reentry === true && (
+                      <span className="inline-flex items-center gap-0.5 text-cyan-400" title={t.newcomers.reentryHint}>
+                        <Repeat size={10} />{t.newcomers.reentryBadge}
+                      </span>
+                    )}
+                    {m.revenue != null && <span className="text-emerald-400">{formatRevenue(m.revenue)}</span>}
+                    <span className="text-muted ml-auto">{t.newcomers.detectedAt(m.as_of)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="flex items-center gap-2">
             {item.store_url && (
               <a href={item.store_url} target="_blank" rel="noreferrer"

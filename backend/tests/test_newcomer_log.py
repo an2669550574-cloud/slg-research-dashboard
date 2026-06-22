@@ -233,6 +233,37 @@ def test_digest_newcomer_enrich_suffix():
 
 
 @pytest.mark.asyncio
+async def test_prune_newcomer_log_drops_old_rows(client, monkeypatch):
+    """prune 删除 first_detected_at 超过保留窗口的行，窗口内的保留；retention<=0 关闭。"""
+    nl = importlib.import_module("app.services.newcomer_log")
+    database = _live("app.database")
+    MarketNewcomerLog = _live("app.models.newcomer").MarketNewcomerLog
+    now = database.utcnow_naive()
+    async with database.AsyncSessionLocal() as db:
+        # 老行（400 天前）+ 新行（10 天前）
+        old = MarketNewcomerLog(country="NO", platform="ios", app_id="old_app",
+                                as_of="2025-01-01", name="超龄检出", publisher="老厂", is_slg=True)
+        old.first_detected_at = now - timedelta(days=400)
+        fresh = MarketNewcomerLog(country="NO", platform="ios", app_id="fresh_app",
+                                  as_of="2026-06-01", name="新近检出", publisher="新厂", is_slg=True)
+        fresh.first_detected_at = now - timedelta(days=10)
+        db.add_all([old, fresh])
+        await db.commit()
+
+    # retention<=0 关闭：一行不删
+    assert await nl.prune_newcomer_log(retention_days=0) == 0
+
+    # 保留 365 天：老行删、新行留
+    deleted = await nl.prune_newcomer_log(retention_days=365)
+    assert deleted == 1
+    items = (await client.get("/api/newcomers/history?days=365&country=NO")).json()["items"]
+    assert {i["app_id"] for i in items} == {"fresh_app"}
+
+    # 幂等：再跑无可删
+    assert await nl.prune_newcomer_log(retention_days=365) == 0
+
+
+@pytest.mark.asyncio
 async def test_history_filters_ignored_publishers(client):
     """缺口忽略名单里的发行商，读时从 /history 过滤掉（行仍在表里、只是不返回），
     未忽略的真线索照常保留——口径与 /gaps、detect_newcomers 一致（corp_squash 键）。"""

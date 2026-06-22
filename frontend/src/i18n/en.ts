@@ -161,8 +161,12 @@ export const en: Translations = {
     appstoreSoftLaunch: (regions: string) => `Soft launch ${regions}`,
     appstoreRegions: (regions: string) => `Regions ${regions}`,
     // Newcomer detection history (v2: persisted + free-source enrichment)
-    historyHint: (d: number, n: number) => `Detection history · last ${d} days · logged at Top ${n} · free enrichment (iTunes/GP), zero quota`,
+    historyHint: (d: number, n: number) => `Detection history · last ${d} days · logged at Top ${n} · free enrichment (iTunes/GP), zero quota · same game merged across markets`,
     detectedAt: (d: string) => `detected ${d}`,
+    // Cross-market merge: same global game (same app_id) detected once per market, collapsed to one card + multi-market badges
+    marketsBadge: (n: number) => `${n} markets`,
+    drawerMarkets: 'Detections by market',
+    marketBestRank: 'best',
     allLabel: 'All',
     rangeDays: (n: number) => `${n}d`,
     attributedTo: (n: string) => `Attributed: ${n}`,

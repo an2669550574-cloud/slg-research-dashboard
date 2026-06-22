@@ -168,8 +168,12 @@ export const zh = {
     appstoreSoftLaunch: (regions: string) => `软启动 ${regions}`,
     appstoreRegions: (regions: string) => `可见区 ${regions}`,
     // 新面孔检出历史（v2：落库 + 免费源富化）
-    historyHint: (d: number, n: number) => `检出历史 · 近 ${d} 天 · 沉淀口径 Top ${n} · 免费源富化（iTunes/GP）零配额`,
+    historyHint: (d: number, n: number) => `检出历史 · 近 ${d} 天 · 沉淀口径 Top ${n} · 免费源富化（iTunes/GP）零配额 · 同款跨市场合并`,
     detectedAt: (d: string) => `检出 ${d}`,
+    // 跨市场合并：同款全球游戏（同 app_id）在多市场各检出一次，收成一张卡 + 多市场徽标
+    marketsBadge: (n: number) => `${n} 个市场`,
+    drawerMarkets: '各市场检出',
+    marketBestRank: '最佳',
     allLabel: '全部',
     rangeDays: (n: number) => `${n} 天`,
     attributedTo: (n: string) => `已归属 ${n}`,
