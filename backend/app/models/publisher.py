@@ -153,6 +153,35 @@ class PublisherItunesApp(Base):
     first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 
 
+class PublisherIgnore(Base):
+    """缺口忽略名单：在 `/gaps`（未归属高收入发行商）里手动标「这不是要建档的 SLG
+    主体」的条目，从此不再出现在缺口提示里。
+
+    缺口稳态被 ~17 个已知非 SLG 巨头（Niantic / Supercell / EA / Chess.com /
+    KONAMI 等）刷屏 → banner-blind（#84 因此整块下线 UI）。忽略名单把这些一次性
+    剔掉，让缺口收敛到 2~3 个真正可操作信号，UI 才值得抬回。
+
+    两种粒度（kind）：
+    - `publisher`：忽略整个发行商。value 存 **name_match.corp_squash 归一键**
+      （去法人后缀拼接），让 "Niantic, Inc." 与 "Niantic Inc" 折叠到同一条。
+    - `app_id`：只忽略某一款 app（同发行商其它 app 仍可能是 SLG，单品剔除）。
+      value 存原始 app_id。
+
+    纯本地库、零 ST 配额；与 is_slg 判定**完全无关**（只影响缺口提示，不动榜单过滤）。
+    """
+    __tablename__ = "publisher_ignores"
+    __table_args__ = (
+        UniqueConstraint("kind", "value", name="uq_publisher_ignore"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(20))  # 'publisher' | 'app_id'
+    value: Mapped[str] = mapped_column(String(200), index=True)  # squash 键 / app_id
+    label: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)  # 展示用原始名
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
 class PublisherRelation(Base):
     """主体间股权/母子关系：parent_id（母公司/投资方）→ child_id（子公司/被投）。
 

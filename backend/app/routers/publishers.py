@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db, utcnow_naive
 from app.models.publisher import (
     PublisherEntity, PublisherAlias, PublisherAppId, PublisherSource, PublisherRelation,
-    PublisherItunesArtist, PublisherItunesApp,
+    PublisherItunesArtist, PublisherItunesApp, PublisherIgnore,
 )
 from app.models.game import GameRanking
 from app.schemas import (
@@ -28,9 +28,11 @@ from app.schemas import (
     PublisherItunesArtistOut, PublisherItunesArtistCreate,
     PublisherRelationCreate, PublisherRelationLinkOut, PublisherProductOut,
     PublisherTopProductOut, PublisherGapOut, PublisherHealthOut,
+    PublisherIgnoreOut, PublisherIgnoreCreate,
 )
 from app.services.slg_publishers import load_index_from_db
 from app.services.provenance import is_primary, provenance_tier
+from app.services.name_match import corp_squash
 
 router = APIRouter(prefix="/api/publishers", tags=["publishers"])
 
@@ -50,6 +52,19 @@ def _kw_hit(pub_tokens: list[str], kw_tokens: tuple[str, ...]) -> bool:
         if tuple(pub_tokens[i:i + n]) == kw_tokens:
             return True
     return False
+
+
+def _alias_squash_set(aliases) -> set[str]:
+    """主体马甲集合的 squash 键集（去法人后缀拼接，连写回退用）。空键剔除。"""
+    return {s for s in (corp_squash(_toks(a.keyword)) for a in aliases) if s}
+
+
+def _pub_hit(pub_tokens: list[str], alias_kw_tokens, alias_squashes: set[str]) -> bool:
+    """publisher 命中某主体：alias token 子序列命中 **或** 去后缀 squash 整段等值。
+    后者修 "Topgames.Inc" 配不上 alias "top games" 的连写错位（见 name_match）。"""
+    if any(_kw_hit(pub_tokens, kt) for kt in alias_kw_tokens):
+        return True
+    return bool(alias_squashes) and corp_squash(pub_tokens) in alias_squashes
 
 
 async def _get_entity_or_404(entity_id: int, db: AsyncSession) -> PublisherEntity:
@@ -201,7 +216,8 @@ async def _rank_by_app_cached(db: AsyncSession) -> dict[str, tuple[int, str]]:
     return rb
 
 
-def _match_for_entity(pairs, alias_kw_tokens, app_id_set, itunes_products=(), rank_by_app=None):
+def _match_for_entity(pairs, alias_kw_tokens, app_id_set, itunes_products=(), rank_by_app=None,
+                      alias_squashes=frozenset()):
     """返回 (旗下产品数, 按收入降序的 top3 PublisherTopProductOut, 最佳名次, 命中市场)。
     rank_by_app 给定时算旗下产品在各市场最新快照的最小名次（best_rank/market），否则两者为 None。
 
@@ -217,8 +233,7 @@ def _match_for_entity(pairs, alias_kw_tokens, app_id_set, itunes_products=(), ra
     （同款多平台谁名次高用谁）。"""
     matched: dict[str, tuple[float, str, str, str | None]] = {}  # app_id -> (revenue, name, icon, publisher)
     for app_id, pub, name, icon, rev in pairs:
-        hit = app_id in app_id_set or (
-            alias_kw_tokens and any(_kw_hit(_toks(pub), kt) for kt in alias_kw_tokens))
+        hit = app_id in app_id_set or _pub_hit(_toks(pub), alias_kw_tokens, alias_squashes)
         if hit:
             matched[app_id] = (rev or 0, name, icon, pub)
     seen_names = {(n or "").strip().lower() for _, n, _, _ in matched.values() if n}
@@ -349,11 +364,17 @@ def _compute_all_matches(
     """
     # 倒排：first_token → [(kw_tokens, entity_id), ...]
     alias_idx: dict[str, list[tuple[tuple[str, ...], int]]] = {}
+    # squash 倒排：alias 去后缀拼接键 → [entity_id, ...]（连写/法人后缀回退，同 _pub_hit）
+    squash_idx: dict[str, list[int]] = {}
     for eid, aliases in by_alias.items():
         for a in aliases:
-            t = tuple(_toks(a.keyword))
+            toks = _toks(a.keyword)
+            t = tuple(toks)
             if t:
                 alias_idx.setdefault(t[0], []).append((t, eid))
+            sq = corp_squash(toks)
+            if sq:
+                squash_idx.setdefault(sq, []).append(eid)
     # app_id → [entity_id, ...]（一个 app_id 理论上可挂多个主体，保险起见用 list）
     app_id_owners: dict[str, list[int]] = {}
     for eid, app_ids in by_appid.items():
@@ -382,6 +403,11 @@ def _compute_all_matches(
                 if tuple(pub_tokens[i:i + n]) == kw_tokens:
                     matched[eid][app_id] = (rev or 0, name, icon, pub)
                     hit_eids.add(eid)
+        # 连写/法人后缀回退：squash 整段等值（同 _pub_hit 第二路径）
+        for eid in squash_idx.get(corp_squash(pub_tokens), ()):
+            if eid not in hit_eids:
+                matched[eid][app_id] = (rev or 0, name, icon, pub)
+                hit_eids.add(eid)
 
     out: dict[int, tuple[int, list, int | None, str | None]] = {}
     for eid in entity_ids:
@@ -526,7 +552,7 @@ async def create_publisher(data: PublisherEntityCreate, db: AsyncSession = Depen
     kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
     count, top, best_rank, best_market = _match_for_entity(
         pairs, kw_tokens, {a.app_id for a in app_ids},
-        await _itunes_products(e.id, db), rank_by_app)
+        await _itunes_products(e.id, db), rank_by_app, _alias_squash_set(aliases))
     return _build_out(e, aliases, app_ids, sources, parents, children, count,
                       itunes_artists=await _itunes_artists(e.id, db), top_products=top,
                       best_rank=best_rank, best_market=best_market)
@@ -640,7 +666,13 @@ async def list_publisher_gaps(
     aliases = (await db.execute(select(PublisherAlias))).scalars().all()
     pinned = (await db.execute(select(PublisherAppId.app_id))).scalars().all()
     alias_kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
+    alias_squashes = _alias_squash_set(aliases)
     app_id_set = set(pinned)
+
+    # 忽略名单：人工标过「非 SLG 主体」的发行商 / app，不再进缺口（见 PublisherIgnore）。
+    ignores = (await db.execute(select(PublisherIgnore))).scalars().all()
+    ignore_app_ids = {ig.value for ig in ignores if ig.kind == "app_id"}
+    ignore_pub_keys = {ig.value for ig in ignores if ig.kind == "publisher"}
 
     end = utcnow_naive().date()
     start = end - timedelta(days=days - 1)
@@ -669,9 +701,13 @@ async def list_publisher_gaps(
             continue
         if app_id in app_id_set:
             continue  # 已被 app_id 精确钉
+        if app_id in ignore_app_ids:
+            continue  # 单品已被人工忽略
         pub_tokens = _toks(pub)
-        if alias_kw_tokens and any(_kw_hit(pub_tokens, kt) for kt in alias_kw_tokens):
-            continue  # 已被某主体的 alias 命中
+        if _pub_hit(pub_tokens, alias_kw_tokens, alias_squashes):
+            continue  # 已被某主体的 alias 命中（含连写 squash 回退）
+        if corp_squash(pub_tokens) in ignore_pub_keys:
+            continue  # 整个发行商已被人工忽略（非 SLG 巨头）
         key = " ".join(pub_tokens) if pub_tokens else (pub or "").lower()
         if not key:
             continue
@@ -693,6 +729,60 @@ async def list_publisher_gaps(
     return items[:limit]
 
 
+# ── 缺口忽略名单：把已知非 SLG 巨头从 /gaps 里剔掉，让缺口收敛到可操作信号 ──
+# 这些端点都在 publisher 前缀下、且路径段是字面量 'ignores'，必须**先于**
+# GET /{entity_id} 声明，否则会被 int 路径捕获 → 422（同 gaps）。
+
+@router.get("/ignores", response_model=list[PublisherIgnoreOut])
+async def list_publisher_ignores(db: AsyncSession = Depends(get_db)):
+    """列出全部缺口忽略条目（最新在前），供前端展示「已忽略」+ 恢复。零 ST 配额。"""
+    rows = (await db.execute(
+        select(PublisherIgnore).order_by(PublisherIgnore.created_at.desc())
+    )).scalars().all()
+    return rows
+
+
+@router.post("/ignores", response_model=PublisherIgnoreOut, status_code=201)
+async def create_publisher_ignore(data: PublisherIgnoreCreate, db: AsyncSession = Depends(get_db)):
+    """新增忽略。publisher 粒度：raw_value 归一成 corp_squash 键存储、原串落 label；
+    app_id 粒度：原样存。已存在（kind+value 唯一）→ 幂等返回旧条目，不报错。"""
+    if data.kind == "publisher":
+        value = corp_squash(_toks(data.raw_value))
+        if not value:
+            raise HTTPException(422, "publisher 名归一后为空，无法忽略")
+    else:  # app_id
+        value = data.raw_value
+    existing = (await db.execute(
+        select(PublisherIgnore).where(
+            PublisherIgnore.kind == data.kind, PublisherIgnore.value == value
+        )
+    )).scalar_one_or_none()
+    if existing:
+        return existing
+    row = PublisherIgnore(
+        kind=data.kind, value=value,
+        label=(data.label or data.raw_value).strip() or None,
+        note=data.note,
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
+@router.delete("/ignores/{ignore_id}")
+async def delete_publisher_ignore(ignore_id: int, db: AsyncSession = Depends(get_db)):
+    """恢复（取消忽略）：删除一条忽略条目，对应发行商/app 下次会重新进缺口。"""
+    row = (await db.execute(
+        select(PublisherIgnore).where(PublisherIgnore.id == ignore_id)
+    )).scalar_one_or_none()
+    if not row:
+        raise HTTPException(404, "忽略条目不存在")
+    await db.delete(row)
+    await db.commit()
+    return {"ok": True}
+
+
 @router.get("/{entity_id}", response_model=PublisherEntityOut)
 async def get_publisher(entity_id: int, db: AsyncSession = Depends(get_db)):
     e = await _get_entity_or_404(entity_id, db)
@@ -704,7 +794,7 @@ async def get_publisher(entity_id: int, db: AsyncSession = Depends(get_db)):
     kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
     count, top, best_rank, best_market = _match_for_entity(
         pairs, kw_tokens, {a.app_id for a in app_ids},
-        await _itunes_products(e.id, db), rank_by_app)
+        await _itunes_products(e.id, db), rank_by_app, _alias_squash_set(aliases))
     return _build_out(e, aliases, app_ids, sources, parents, children, count,
                       itunes_artists=await _itunes_artists(e.id, db), top_products=top,
                       best_rank=best_rank, best_market=best_market)
@@ -726,7 +816,7 @@ async def update_publisher(entity_id: int, data: PublisherEntityUpdate, db: Asyn
     kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
     count, top, best_rank, best_market = _match_for_entity(
         pairs, kw_tokens, {a.app_id for a in app_ids},
-        await _itunes_products(e.id, db), rank_by_app)
+        await _itunes_products(e.id, db), rank_by_app, _alias_squash_set(aliases))
     return _build_out(e, aliases, app_ids, sources, parents, children, count,
                       itunes_artists=await _itunes_artists(e.id, db), top_products=top,
                       best_rank=best_rank, best_market=best_market)
@@ -943,6 +1033,7 @@ async def list_publisher_products(
     await _get_entity_or_404(entity_id, db)
     aliases, app_ids = await _children(entity_id, db)
     kw_tokens = [tuple(_toks(a.keyword)) for a in aliases if _toks(a.keyword)]
+    alias_squashes = _alias_squash_set(aliases)
     app_id_set = {a.app_id for a in app_ids}
 
     end = utcnow_naive().date()
@@ -973,7 +1064,7 @@ async def list_publisher_products(
     for r in res.all():
         if r.app_id in app_id_set:
             matched_by = "app_id"
-        elif kw_tokens and _toks(r.publisher) and any(_kw_hit(_toks(r.publisher), kt) for kt in kw_tokens):
+        elif _pub_hit(_toks(r.publisher), kw_tokens, alias_squashes):
             matched_by = "alias"
         else:
             continue

@@ -29,6 +29,8 @@ kingsgroup；Century 系 = century games/diandian），不臆造新关联；
 import re
 from typing import Optional
 
+from app.services.name_match import corp_squash
+
 
 # ── 内置起步种子：主体 → 海外发行马甲(keyword,label) + 关注 app_id(app_id,note) ──
 SEED_PUBLISHERS: tuple[dict, ...] = (
@@ -149,13 +151,16 @@ def _tokens_split_camel(s: Optional[str]) -> list[str]:
 
 # ── 内存索引：运行时 is_slg 查这里。DB 为源，启动 load、CRUD 后 refresh。 ──
 _alias_tokens: list[tuple[str, ...]] = []  # 每个马甲 keyword 的连续 token 串
+_alias_squashes: set[str] = set()  # 每个 keyword 去法人后缀拼接后的 squash 键（连写回退用）
 _app_ids: set[str] = set()
 
 
 def _set_index(keywords, app_id_list) -> None:
     """用给定 keyword/app_id 集合重建内存索引（覆盖式）。"""
-    global _alias_tokens, _app_ids
-    _alias_tokens = [tuple(t) for t in (_tokens(k) for k in keywords) if t]
+    global _alias_tokens, _alias_squashes, _app_ids
+    tok_lists = [t for t in (_tokens(k) for k in keywords) if t]
+    _alias_tokens = [tuple(t) for t in tok_lists]
+    _alias_squashes = {s for s in (corp_squash(t) for t in tok_lists) if s}
     _app_ids = set(app_id_list)
 
 
@@ -213,6 +218,11 @@ def is_slg_publisher(publisher: Optional[str]) -> bool:
             for i in range(len(toks) - n + 1):
                 if tuple(toks[i:i + n]) == kw:
                     return True
+    # 连写/法人后缀回退：去后缀拼接后整段等于某 alias 的 squash 即命中。
+    # 修 "Topgames.Inc" 配不上 alias "top games"——子序列要 token 边界对齐，连写错位。
+    # 仅等值（非子串），不破坏 word-boundary：见 name_match.corp_squash docstring。
+    if corp_squash(primary) in _alias_squashes:
+        return True
     return False
 
 

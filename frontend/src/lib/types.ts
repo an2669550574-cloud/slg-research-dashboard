@@ -814,6 +814,33 @@ export interface PublisherTopProduct {
   icon_url: string | null
 }
 
+/** 调研缺口：近 N 天有收入、任何 alias/app_id 都没命中、且未被忽略的 publisher。 */
+export interface PublisherGap {
+  publisher: string
+  revenue: number
+  downloads: number
+  app_count: number
+  top_app: PublisherTopProduct
+}
+
+/** 缺口忽略名单条目：人工标过「非 SLG 主体」的发行商 / app，不再进缺口提示。 */
+export interface PublisherIgnore {
+  id: number
+  kind: 'publisher' | 'app_id'
+  value: string          // publisher: 后端 corp_squash 归一键；app_id: 原始 app_id
+  label: string | null   // 展示用原始名
+  note: string | null
+  created_at: IsoDateString
+}
+
+/** 新增忽略：raw_value 传原始串，publisher 粒度由后端归一成 squash 键。 */
+export interface PublisherIgnoreCreate {
+  kind: 'publisher' | 'app_id'
+  raw_value: string
+  label?: string | null
+  note?: string | null
+}
+
 /** 主体模块数据健康度快照——驱动顶部健康度小卡 + curl 自检脚本。 */
 export interface PublisherHealth {
   total: number

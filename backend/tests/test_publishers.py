@@ -430,6 +430,102 @@ async def test_health_endpoint_covers_audit_dimensions(client):
 
 
 @pytest.mark.asyncio
+async def test_gaps_squash_fallback_attributes_glued_publisher(client):
+    """连写发行商 "Topgames.Inc" 应被 alias "top games" 的 squash 回退归属 → 不进缺口。
+    子序列匹配（["topgames","inc"] vs ["top","games"]）配不上，靠 corp_squash 兜底。"""
+    today = _today()
+    await _seed_rankings([
+        ("glue.1", today, 1, 200, 90.0, "US", "ios", "Evony", "Topgames.Inc"),
+        # 真漏网厂（squash 也配不上任何 alias）
+        ("gap.x", today, 2, 100, 40.0, "US", "ios", "漏网", "Mystery Studio"),
+    ])
+    await client.post("/api/publishers/", json={
+        "name": "Top Games", "aliases": [{"keyword": "top games"}],
+    })
+    gaps = (await client.get("/api/publishers/gaps")).json()
+    pubs = {g["publisher"] for g in gaps}
+    assert "Topgames.Inc" not in pubs   # squash 回退归属
+    assert "Mystery Studio" in pubs
+
+
+@pytest.mark.asyncio
+async def test_ignore_publisher_excludes_from_gaps_and_restores(client):
+    """忽略名单（publisher 粒度）：忽略后该发行商不再进缺口；删除忽略后恢复。
+    publisher 串归一成 corp_squash 键存储 → "Niantic, Inc." 与 "Niantic Inc" 同条。"""
+    today = _today()
+    await _seed_rankings([
+        ("nia.1", today, 1, 500, 300.0, "US", "ios", "Pokemon GO", "Niantic, Inc."),
+        ("keep.1", today, 2, 100, 40.0, "US", "ios", "保留", "Real SLG Studio"),
+    ])
+    # 初始：两者都是缺口
+    gaps = {g["publisher"] for g in (await client.get("/api/publishers/gaps")).json()}
+    assert "Niantic, Inc." in gaps and "Real SLG Studio" in gaps
+
+    # 忽略 Niantic（传原始串，后端归一）
+    r = await client.post("/api/publishers/ignores", json={
+        "kind": "publisher", "raw_value": "Niantic, Inc.", "note": "AR 游戏，非 SLG",
+    })
+    assert r.status_code == 201
+    ig = r.json()
+    assert ig["kind"] == "publisher"
+    assert ig["value"] == "niantic"      # corp_squash 去掉 inc
+    assert ig["label"] == "Niantic, Inc."
+
+    # 缺口里 Niantic 没了，但保留厂还在
+    gaps = {g["publisher"] for g in (await client.get("/api/publishers/gaps")).json()}
+    assert "Niantic, Inc." not in gaps
+    assert "Real SLG Studio" in gaps
+
+    # 大小写/标点不同的同厂串也被同一条 squash 命中（不会重新冒出来）
+    await _seed_rankings([("nia.2", today, 5, 50, 20.0, "JP", "android", "Pikmin Bloom", "NIANTIC INC")])
+    gaps = {g["publisher"] for g in (await client.get("/api/publishers/gaps")).json()}
+    assert "NIANTIC INC" not in gaps
+
+    # 列表端点能看到这条
+    lst = (await client.get("/api/publishers/ignores")).json()
+    assert any(x["value"] == "niantic" for x in lst)
+
+    # 删除（恢复）→ Niantic 重新进缺口
+    r = await client.delete(f"/api/publishers/ignores/{ig['id']}")
+    assert r.status_code == 200
+    gaps = {g["publisher"] for g in (await client.get("/api/publishers/gaps")).json()}
+    assert "Niantic, Inc." in gaps
+
+
+@pytest.mark.asyncio
+async def test_ignore_app_id_granularity_and_idempotent(client):
+    """忽略 app_id 粒度：只剔某一款 app，同发行商其它 app 仍进缺口。重复忽略幂等。"""
+    today = _today()
+    await _seed_rankings([
+        ("big.a", today, 1, 100, 50.0, "US", "ios", "非SLG单品", "Big Multi Studio"),
+        ("big.b", today, 2, 100, 60.0, "US", "ios", "另一单品", "Big Multi Studio"),
+    ])
+    # 忽略 big.a 这一个 app
+    r = await client.post("/api/publishers/ignores", json={"kind": "app_id", "raw_value": "big.a"})
+    assert r.status_code == 201
+    first_id = r.json()["id"]
+    assert r.json()["value"] == "big.a"
+
+    # 幂等：再忽略同一个 → 返回同一条，不报错
+    r2 = await client.post("/api/publishers/ignores", json={"kind": "app_id", "raw_value": "big.a"})
+    assert r2.status_code == 201
+    assert r2.json()["id"] == first_id
+
+    # big.a 被剔，但同发行商仍因 big.b 进缺口（app_count=1，代表 app=big.b）
+    gaps = {g["publisher"]: g for g in (await client.get("/api/publishers/gaps")).json()}
+    assert "Big Multi Studio" in gaps
+    assert gaps["Big Multi Studio"]["app_count"] == 1
+    assert gaps["Big Multi Studio"]["top_app"]["app_id"] == "big.b"
+
+
+@pytest.mark.asyncio
+async def test_ignore_rejects_empty_publisher_squash(client):
+    """publisher 名归一后为空（纯法人后缀）→ 422，不让存一条会误吞所有空 squash 的脏数据。"""
+    r = await client.post("/api/publishers/ignores", json={"kind": "publisher", "raw_value": "Inc."})
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_seed_publishers_idempotent(client):
     """直接调 scheduler.seed_publishers_if_empty 两次：只灌一次，主体数 = 种子全集。"""
     import importlib

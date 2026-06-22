@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.game import GameRanking
 from app.models.publisher import PublisherAlias
+from app.services.name_match import corp_squash
 
 _NORM_RE = re.compile(r"[^a-z0-9]+")
 
@@ -66,15 +67,18 @@ async def _publisher_to_entity_map(
     if not publisher_strs:
         return {}
     res = await db.execute(select(PublisherAlias.entity_id, PublisherAlias.keyword))
-    alias_list = [(eid, tuple(_toks(kw))) for eid, kw in res.all()]
-    alias_list = [(eid, kt) for eid, kt in alias_list if kt]
+    # (entity_id, keyword token 串, keyword squash 键)——squash 用于连写/法人后缀回退。
+    alias_list = [(eid, tuple(kt), corp_squash(kt)) for eid, kt in ((e, _toks(k)) for e, k in res.all())]
+    alias_list = [(eid, kt, sq) for eid, kt, sq in alias_list if kt]
     out: dict[str, int] = {}
     for pub in publisher_strs:
         pub_toks = _toks(pub)
         if not pub_toks:
             continue
-        for eid, kt in alias_list:
-            if _kw_hit(pub_toks, kt):
+        pub_sq = corp_squash(pub_toks)
+        for eid, kt, sq in alias_list:
+            # 子序列命中 或 去后缀拼接后整段等值（修 "Topgames.Inc"↔"top games" 连写）。
+            if _kw_hit(pub_toks, kt) or (sq and pub_sq == sq):
                 out[pub] = eid
                 break
     return out
