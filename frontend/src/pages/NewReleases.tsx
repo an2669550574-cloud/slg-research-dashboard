@@ -14,7 +14,7 @@ import { PageHeader } from '../components/PageHeader'
 import { WechatAccountsPanel } from '../components/WechatAccountsPanel'
 import { useLocalStorageState } from '../lib/hooks'
 import type { NewcomerHistoryItem, PublisherNewcomersOut } from '../lib/types'
-import { groupByApp, type GroupedNewcomer } from '../lib/newcomerGrouping'
+import { groupByApp, groupPublisherByApp, type GroupedNewcomer } from '../lib/newcomerGrouping'
 
 export default function NewReleases() {
   const t = useT()
@@ -93,6 +93,11 @@ export default function NewReleases() {
   // CSV 仍导逐市场全量行（不丢粒度）；卡片按 app_id 跨市场合并展示。
   const items = data?.items ?? []
   const groups = useMemo(() => groupByApp(items), [items])
+  // 厂商新品视角的去重后计数（表格合并在子组件内，这里只为表头计数与之一致）。
+  const pubGroupCount = useMemo(
+    () => groupPublisherByApp(pubQuery.data?.items ?? []).length,
+    [pubQuery.data],
+  )
 
   return (
     <div className="px-4 sm:px-7 py-5 sm:py-7 max-w-[1500px] mx-auto space-y-5">
@@ -148,8 +153,8 @@ export default function NewReleases() {
         ) : (
           <>
             {pubQuery.data && <span>{t.newcomers.publisherWindowHint(pubQuery.data.window)}</span>}
-            {!pubQuery.isLoading && (pubQuery.data?.items.length ?? 0) > 0 && (
-              <span className="text-accent">· {t.newcomers.countSuffix(pubQuery.data!.items.length)}</span>
+            {!pubQuery.isLoading && pubGroupCount > 0 && (
+              <span className="text-accent">· {t.newcomers.countSuffix(pubGroupCount)}</span>
             )}
           </>
         )}
@@ -631,6 +636,8 @@ function PublisherNewcomersTable({ query }: { query: UseQueryResult<PublisherNew
   const navigate = useNavigate()
   const { data, isLoading, isError, refetch } = query
   const items = data?.items ?? []
+  // D2：同款多市场合并成一行 + 市场徽标（与全市场视图 D1 同轴对称）。
+  const groups = useMemo(() => groupPublisherByApp(items), [items])
 
   return (
     <div className="bg-surface border border-default rounded-xl overflow-hidden">
@@ -638,7 +645,7 @@ function PublisherNewcomersTable({ query }: { query: UseQueryResult<PublisherNew
         <QueryError onRetry={() => refetch()} />
       ) : isLoading ? (
         <div className="py-16 text-center text-muted text-sm">{t.common.loading}</div>
-      ) : items.length === 0 ? (
+      ) : groups.length === 0 ? (
         <div className="py-16 px-6 text-center text-muted text-sm">{t.newcomers.publisherEmpty}</div>
       ) : (
         <div className="overflow-x-auto">
@@ -654,11 +661,14 @@ function PublisherNewcomersTable({ query }: { query: UseQueryResult<PublisherNew
               </tr>
             </thead>
             <tbody className="divide-y divide-default">
-              {items.map(g => (
+              {groups.map(gr => {
+                const g = gr.rep
+                const multi = gr.markets.length > 1
+                return (
                 <tr
-                  key={`${g.country}/${g.platform}/${g.app_id}`}
+                  key={gr.app_id}
                   className="hover:bg-elevated/50 cursor-pointer transition-colors"
-                  onClick={() => navigate(`/game/${g.app_id}`)}
+                  onClick={() => navigate(`/game/${gr.app_id}`)}
                 >
                   <td className="px-5 py-3.5">
                     <span className="inline-flex items-center gap-1.5 text-xs text-primary">
@@ -668,7 +678,7 @@ function PublisherNewcomersTable({ query }: { query: UseQueryResult<PublisherNew
                   </td>
                   <td className="px-3 py-3.5">
                     <div className="flex items-center gap-3">
-                      <GameIcon src={g.icon_url} name={g.name ?? g.app_id} className="w-10 h-10 rounded-xl" />
+                      <GameIcon src={g.icon_url} name={g.name ?? gr.app_id} className="w-10 h-10 rounded-xl" />
                       <div className="min-w-0">
                         <div className="text-sm font-medium text-primary flex items-center gap-1.5">
                           <Sparkles size={13} className="text-accent shrink-0" />
@@ -683,18 +693,25 @@ function PublisherNewcomersTable({ query }: { query: UseQueryResult<PublisherNew
                       </div>
                     </div>
                   </td>
-                  <td className="px-3 py-3.5 text-xs text-secondary font-data">{g.country}/{g.platform}</td>
+                  <td className="px-3 py-3.5 text-xs text-secondary font-data">
+                    {multi ? (
+                      <span className="inline-flex items-center gap-1" title={gr.markets.map(m => `${m.country}/${m.platform} #${m.rank ?? '—'}`).join(' · ')}>
+                        <Globe2 size={11} className="text-accent shrink-0" />{t.newcomers.marketsBadge(gr.markets.length)}
+                      </span>
+                    ) : `${g.country}/${g.platform}`}
+                  </td>
                   <td className="px-3 py-3.5 text-right">
-                    <span className="text-sm font-bold text-primary">#{g.rank ?? '—'}</span>
+                    <span className="text-sm font-bold text-primary">#{gr.bestRank ?? '—'}</span>
                   </td>
                   <td className="px-3 py-3.5 text-right">
                     <span className="text-sm font-medium text-emerald-400">
                       {g.revenue == null ? <span className="text-muted">—</span> : formatRevenue(g.revenue)}
                     </span>
                   </td>
-                  <td className="px-3 py-3.5 text-right text-xs text-muted font-data">{g.as_of}</td>
+                  <td className="px-3 py-3.5 text-right text-xs text-muted font-data">{gr.earliestAsOf}</td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>
