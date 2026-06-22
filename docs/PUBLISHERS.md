@@ -23,7 +23,8 @@
 | `GET /api/publishers/{id}` | 单主体详情 | 是（抽屉） |
 | `GET /api/publishers/{id}/products?days=30` | 旗下产品聚合（跨平台 sibling 去重 + 雷达合并） | 是（抽屉「旗下 SLG 产品」） |
 | `GET /api/publishers/health` | 数据健康度自检（tier 分布 + 待补/命名/复核 backlog + 总量） | 是（顶部 HealthChip「一手 N%」+ tooltip） |
-| `GET /api/publishers/gaps?days=30&limit=20` | 未归属高收入 publisher（按累计收入降序） | 否（前端 UI 撤了，见下方说明） |
+| `GET /api/publishers/gaps?days=30&limit=20` | 未归属高收入 publisher（按累计收入降序，已扣除忽略名单） | 是（顶部「调研缺口」折叠卡） |
+| `GET/POST/DELETE /api/publishers/ignores` | 缺口忽略名单（kind=publisher/app_id 两粒度）；POST 对 publisher 归一成 corp_squash 键存储、幂等 | 是（缺口卡「忽略」按钮 + 「已忽略 N」恢复） |
 | `POST/PUT/DELETE …` | 主体 + 5 类子资源（aliases/app_ids/itunes-artists/sources/relations）CRUD；写后内存 is_slg 索引自动刷新 | 是（抽屉编辑） |
 
 ## 数据存哪、怎么改
@@ -43,7 +44,8 @@
 
 ## 建档 / 溯源方法论
 
-1. **数据驱动找缺口**：扫 `game_rankings` 里有收入、却没被任何 alias/app_id 归属的发行商 = 漏网厂。端点 `GET /api/publishers/gaps?days=30&limit=20`（零 ST 配额、按累计收入降序、按 publisher 名归一合并）。**前端 UI 故意没开**——稳态下 top 20 里 ~17 个是已知非 SLG 巨头（Niantic/Supercell/EA/Chess.com/NetEase 荒野/KRAFTON 等），噪声 ≫ 信号；等做完「缺口忽略名单」（按 publisher/app_id 持久化忽略）收敛到 2~3 个真信号时再考虑抬回 UI。当前用法：`curl -H "x-api-key: $K" "$HOST/api/publishers/gaps"` 或周报脚本消费。
+1. **数据驱动找缺口**：扫 `game_rankings` 里有收入、却没被任何 alias/app_id 归属的发行商 = 漏网厂。端点 `GET /api/publishers/gaps?days=30&limit=20`（零 ST 配额、按累计收入降序、按 publisher 名归一合并）。**前端 UI 已抬回**（厂商主体页顶部「调研缺口」折叠卡）——曾因稳态噪声 ≫ 信号（top 20 里 ~17 个是已知非 SLG 巨头：Niantic/Supercell/EA/Chess.com/NetEase 荒野/KRAFTON 等）在 #84 撤掉，现配套「缺口忽略名单」后重新上线：每行可「建主体」（预填 publisher 名为初始 alias）或「忽略」（确认非 SLG 则从缺口剔出）。
+   - **忽略名单**（`publisher_ignores` 表 + `/ignores` 端点）：两种粒度——`kind=publisher` 存 `name_match.corp_squash` 归一键（"Niantic, Inc." 与 "Niantic Inc" 折叠成一条）；`kind=app_id` 只剔某一款 app（同发行商其它 app 仍进缺口）。与 is_slg 判定无关，只影响缺口提示。前端「已忽略 N」可折叠恢复。
 2. **游戏名指认母体**：旗下产品名最能定公司（三国志战略版→灵犀/阿里；Wolf Game→爱奇艺；Lands of Jail→益世界）。
 3. **关系类型按证据强弱**：`wholly_owned`（收购公告/100%）> `controlling`（媒体桥 + 同开发者账号）> `affiliate`（仅聚类/弱）> `minority`（纯参股，**不并组**）。查不到股权登记就别用 wholly_owned。
 4. **溯源分级**：registry / official_filing / official_platform / official_domain = 一手；media / reference / analysis / self_report = 二手。归属断言尽量挂一手；查不到就标 unverified，别臆测。**官方主域名最稳一手**（每家公司都有官网、URL 持久、`official_domain` 类型可直升 primary tier）。
@@ -80,13 +82,14 @@
   - **厂商抽屉/列表** `_dedup_siblings`（`routers/publishers.py`）：调用方已 entity-scoped（alias/app_id 预过滤为单 entity），**不再校验 publisher 字符串等价**，仅名字 prefix 子序列匹配 ≥5 字符即合并（PR #91）。修了同公司不同法人/简写发两平台（"TOP GAMES INC."×"TG Inc."、"IGG SINGAPORE PTE. LTD."×"IGG.COM"）漏合——曾跨 26 主体漏合 46 个 product row。
   - **详情页/coverage/metrics** `find_sibling_app_ids`（`services/sibling_match.py`）：扫全表无 entity scope，用 `publisher_aliases` 把两个 publisher 字符串各自映射到 entity，**同 entity 或 normalize 等价**即视为同 publisher（PR #92）。
   - 共同规则：CJK-only 本地化名（normalize 后为空）不参与合并；名字 prefix ≥5 字符。`Valor Legends: Idle RPG` + `ベイラーレジェンド` 这类「Latin 不在头部」暂不合，已知权衡。
+  - **连写/法人后缀归一**（`services/name_match.corp_squash`）：alias↔publisher 的 token 子序列匹配在连写名上错位（`Topgames.Inc`=["topgames","inc"] 配不上 alias `top games`=["top","games"]）。补一条 **squash 等值**回退——双方去掉纯法人后缀（Inc/Ltd/PTE/LLC… 不含 games/group/studio 等描述词）后拼成无分隔串比较，is_slg / list / gaps / products / sibling 五处统一受益。**只等值不子串**：子串会让 `igg` 误命中 `Trigger Games`，破坏 word-boundary。
 - **L3 跨 entity 同款维持现状不合**：同款 iOS/Android 被建档到**两个不同 entity**（如 Puzzles & Survival：iOS=BUILDING-BLOCKS / Android=37GAMES，两者都是三七互娱全资子）——**故意不合**。业务上抽屉视角正确（点母体「三七互娱」看集团合计），技术上 relation-based transitive merge 边界难定（minority 算不算 / 多层嵌套 / 跨多集团根）。
 - **SQL `MAX(name)` 偏向 CJK**：同 iOS app_id 在多市场返回本地化名时，`MAX` 按 Unicode 排序会偏向 CJK 字符；publishers router 的 `_ranking_pairs` + `list_publisher_products` 已改为 `COALESCE(MAX(CASE WHEN country='US'),MAX)` 优先 US 名解决。
 
 ## Backlog（按价值排序）
 
-1. **缺口忽略名单**（emergent 价值最大）：top 20 里 17 个是已知非 SLG 巨头每次都出现，需要「忽略」按钮 + 后端 `publisher_ignore_list` 表存名单（按 publisher 字符串 or app_id 两种粒度），下次 `/gaps` 不再返回。做完即可考虑抬回缺口 UI。
-2. **publisher 名归一鲁棒化**（中等价值）：`Topgames.Inc` 不能匹配 alias `top games`（token 化 ["topgames","inc"] vs ["top","games"]）。可加「去 Inc/Ltd/PTE/LLC 后缀 + 再分词」额外路径，list/gaps/is_slg 三处都受益。
+1. ~~**缺口忽略名单**~~ ✅ **已做**（`publisher_ignores` 表 + `/ignores` 端点 + 前端「忽略」按钮/「已忽略 N」恢复 + 缺口 UI 抬回，alembic 0023）：top 20 里 17 个非 SLG 巨头现可一键剔出，缺口收敛到可操作信号。两种粒度（publisher squash 键 / app_id）。详见上方「数据驱动找缺口」。
+2. ~~**publisher 名归一鲁棒化**~~ ✅ **已做**（`services/name_match.corp_squash` squash 等值回退，wired 进 is_slg/list/gaps/products/sibling 五处）：`Topgames.Inc`↔`top games` 已命中，`Trigger Games` 仍不误命中。详见上方 sibling 去重条。
 3. **关系挂源 FK**（小价值）：`PublisherRelation` 加 `source_id` 可选 FK 让关系绑证据；需 alembic 迁移。
 
 ## 命名 backlog（等找到中文主体名再回填，2026-06-21 状态）
