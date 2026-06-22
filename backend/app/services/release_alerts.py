@@ -15,6 +15,7 @@
 digest 构建是纯函数，单测直接断言 markdown 文本。
 """
 import logging
+import re
 import time
 from datetime import datetime
 from typing import Optional
@@ -143,11 +144,44 @@ def _articles_suffix(app_articles: Optional[list]) -> str:
     return "\n   📰 " + " | ".join(links)
 
 
+_LATIN_NAME_RE = re.compile(r"[A-Za-z]")
+# CJK 统一表意 + 扩展A / 日文假名 / 韩文音节——用于判定「非拉丁名」走长度门槛。
+_CJK_RE = re.compile(r"[぀-ヿ㐀-䶿一-鿿가-힯]")
+
+
+def _name_matches(name: str, text: str) -> bool:
+    """新品名 nm 是否「真的」出现在文章 text 里——比裸 `nm in text` 精准。
+
+    三类裸 substring 的误挂/漏挂治理：
+    - **拉丁名**（含 ASCII 字母、无 CJK）：词边界 + 大小写无关——"Last War" 不再命中
+      "Last War**ning**"，且 "last war" 也能命中（原本大小写敏感会漏）。
+    - **非拉丁名**（CJK / 假名 / 韩文等无分词脚本）：按非空白字符数设最小长度门槛
+      （WECHAT_MATCH_MIN_NAME_LEN，默认 2），过滤"城""塔"这类单字通用名的泛滥误挂；
+      达标者仍走 substring（多字通用名如"탑 로드"裸 substring 仍可能误挂——无分词
+      解决不了，刻意不引停用词表，观察实际误挂率再定）。
+    - 其余（纯符号/数字名等）：保守走 substring。
+    """
+    nm = (name or "").strip()
+    if not nm or not text:
+        return False
+    has_latin = bool(_LATIN_NAME_RE.search(nm))
+    has_cjk = bool(_CJK_RE.search(nm))
+    if has_latin and not has_cjk:
+        return re.search(r"\b" + re.escape(nm) + r"\b", text, re.IGNORECASE) is not None
+    if has_cjk:
+        if len(nm.replace(" ", "")) < settings.WECHAT_MATCH_MIN_NAME_LEN:
+            return False
+    return nm in text
+
+
 def _match_articles_to_apps(per_combo: list[dict], article_list: list) -> dict:
     """搜到的文章 → 按「标题/摘要含新品名」聚合到 app_id：{app_id: [WechatArticle]}。
 
     用 (c.get("market") or {}) 而非 c.get("market", {})——entry 的 market/publisher
     初始为 None，后者在 key 存在时返回 None 会 AttributeError（曾导致整段静默失效）。
+
+    名 ↔ 文匹配走 _name_matches（词边界 / 最小名长），治裸 substring 的短名/通用名
+    误挂 + 拉丁名大小写漏挂。
     """
     name_to_apps: dict[str, list[str]] = {}
     for c in per_combo:
@@ -163,7 +197,7 @@ def _match_articles_to_apps(per_combo: list[dict], article_list: list) -> dict:
     for a in article_list:
         text = (a.title or "") + " " + (a.digest or "")
         for nm, app_ids in name_to_apps.items():
-            if nm in text:
+            if _name_matches(nm, text):
                 for aid in app_ids:
                     out.setdefault(aid, []).append(a)
     return out

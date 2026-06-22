@@ -140,6 +140,36 @@ def test_match_articles_no_false_attach():
     assert out == {}
 
 
+def test_match_articles_skips_single_char_cjk_name():
+    """A3：1 字 CJK 名（"城"）裸 substring 必泛滥误挂——跳过不匹配（宁漏不误）。"""
+    per_combo = [{"market": {"newcomers": [{"name": "城", "app_id": "c1"}]}, "publisher": None}]
+    out = _match_articles_to_apps(per_combo, [_art("城市更新公告与城建规划")])
+    assert out == {}
+
+
+def test_match_articles_keeps_two_char_cjk_name():
+    """A3：2 字真名（"原神"）达最小名长，仍正常命中——不被长度门槛误杀。"""
+    per_combo = [{"market": {"newcomers": [{"name": "原神", "app_id": "g1"}]}, "publisher": None}]
+    out = _match_articles_to_apps(per_combo, [_art("原神 4.0 版本攻略")])
+    assert set(out.keys()) == {"g1"}
+
+
+def test_match_articles_latin_word_boundary():
+    """A3：拉丁名走词边界——"Last War" 不再误挂 "Last Warning"，独立出现才命中。"""
+    per_combo = [{"market": {"newcomers": [{"name": "Last War", "app_id": "a1"}]}, "publisher": None}]
+    # 嵌在更长词里：不命中
+    assert _match_articles_to_apps(per_combo, [_art("Last Warning 测评")]) == {}
+    # 独立词：命中
+    assert set(_match_articles_to_apps(per_combo, [_art("Last War 海外买量")]).keys()) == {"a1"}
+
+
+def test_match_articles_latin_case_insensitive():
+    """A3：拉丁名大小写无关——原本大小写敏感 substring 会漏 "last war"。"""
+    per_combo = [{"market": {"newcomers": [{"name": "Last War", "app_id": "a1"}]}, "publisher": None}]
+    out = _match_articles_to_apps(per_combo, [_art("一篇分析", digest="深扒 last war 的留存设计")])
+    assert set(out.keys()) == {"a1"}
+
+
 def test_articles_suffix_sanitizes_title():
     """标题里的 ] | 换行会破坏钉钉 markdown 链接/分隔，必须清洗。"""
     a = _art("标题[含]特殊|字符\n换行", link="https://mp.weixin.qq.com/s/y")
