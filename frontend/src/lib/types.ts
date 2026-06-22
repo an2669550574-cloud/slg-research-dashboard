@@ -326,12 +326,17 @@ export interface NewcomerHistoryItem {
   /** 读时归属：命中已建档主体（建档后立即生效，无需等下轮检出）。 */
   entity_id: number | null
   entity_name: string | null
+  /** 检出时是否「回归」（baseline 之外曾出现）。0022 迁移前的历史行为 null —
+   *  前端按真首发处理（默认 signal=true_new 仍会显示，老卡片照旧）。 */
+  is_reentry: boolean | null
 }
 
 export interface NewcomerHistoryOut {
   today: string
   items: NewcomerHistoryItem[]
   days: number
+  /** 各 combo 最近一次已同步快照日，前端据此显示「数据截至 N 天前」陈旧提示。 */
+  as_of_by_combo: Record<string, string>
 }
 
 export interface NewcomersOut {

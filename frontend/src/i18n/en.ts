@@ -187,6 +187,16 @@ export const en: Translations = {
     triageConfirm: (name: string) => `Create a research dossier for "${name}" and pin this app_id? (it will be recognized as SLG after).`,
     triaged: (name: string) => `Dossier created: ${name} · add ownership / sources in Publishers`,
     triageBrief: (game: string, market: string) => `From New Releases · ${market} · ${game}`,
+    // First launch vs re-entry (PR #93)
+    signalTrueNew: 'True first',
+    signalReentry: 'Re-entry',
+    signalAll: 'All',
+    signalHint: 'True first = never seen in any historical snapshot; Re-entry = was on chart, briefly fell out of baseline, came back (still useful intel: signals renewed UA push)',
+    reentryBadge: 'Re-entry',
+    reentryHint: 'This app appeared in this market beyond the baseline window — fell out briefly and returned, often signaling a renewed marketing push',
+    // Data freshness (JP/KR/DE/RU weekly sync can lag a few days)
+    stalenessHeader: 'Chart sync lag:',
+    stalenessDaysAgo: (n: number) => `${n}d ago`,
   },
   wechatAccounts: {
     title: 'WeChat subscriptions',

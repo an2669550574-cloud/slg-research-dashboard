@@ -104,6 +104,94 @@ async def test_record_mock_mode_skips_enrich(client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_record_persists_is_reentry_and_history_filters_signal(client, monkeypatch):
+    """检出落库时固化 is_reentry（真首发 vs 回归），/history 用 signal 参数筛选。
+
+    场景：5 个 baseline 之外的更早快照里 `re_old` 出现过、4 个 baseline 快照里它不见。
+    今天 `re_old` 回来 + `truly_new` 真首发同时进榜——录入后 is_reentry 字段固化。
+    """
+    nl = importlib.import_module("app.services.newcomer_log")
+    database = _live("app.database")
+    GameRanking = _live("app.models.game").GameRanking
+    now = database.utcnow_naive()
+    today = now.strftime("%Y-%m-%d")
+    async with database.AsyncSessionLocal() as db:
+        # 更早快照（baseline 之外）：re_old 出现过
+        db.add(GameRanking(app_id="re_old", date="2026-04-01", rank=8,
+                           country="NL", platform="ios", name="老回归", publisher="某厂"))
+        db.add(GameRanking(app_id="anchor", date="2026-04-01", rank=1,
+                           country="NL", platform="ios", name="锚", publisher="某厂"))
+        # baseline 4 个快照：re_old 不见
+        for d in ("2026-05-01", "2026-05-08", "2026-05-15", "2026-05-22"):
+            db.add(GameRanking(app_id="anchor", date=d, rank=1,
+                               country="NL", platform="ios", name="锚", publisher="某厂"))
+        # 今天：re_old 回归 + truly_new 真首发
+        db.add(GameRanking(app_id="anchor", date=today, rank=1,
+                           country="NL", platform="ios", name="锚", publisher="某厂"))
+        db.add(GameRanking(app_id="re_old", date=today, rank=7,
+                           country="NL", platform="ios", name="老回归", publisher="某厂"))
+        db.add(GameRanking(app_id="truly_new", date=today, rank=9,
+                           country="NL", platform="ios", name="真首发", publisher="某厂"))
+        await db.commit()
+
+    monkeypatch.setattr(nl.settings, "USE_MOCK_DATA", True)  # 跳富化
+    monkeypatch.setattr(nl, "_POLITE_DELAY_S", 0)
+    r = await nl.record_market_newcomers("NL", "ios")
+    assert r["recorded"] == 2  # re_old + truly_new 都首报
+
+    # 默认 signal=all（不筛），两条都在
+    all_items = (await client.get("/api/newcomers/history?days=120&country=NL")).json()["items"]
+    by_id = {i["app_id"]: i for i in all_items}
+    assert by_id["re_old"]["is_reentry"] is True
+    assert by_id["truly_new"]["is_reentry"] is False
+
+    # signal=true_new 仅真首发
+    tn = (await client.get("/api/newcomers/history?days=120&country=NL&signal=true_new")).json()["items"]
+    assert [i["app_id"] for i in tn] == ["truly_new"]
+
+    # signal=reentry 仅回归
+    rt = (await client.get("/api/newcomers/history?days=120&country=NL&signal=reentry")).json()["items"]
+    assert [i["app_id"] for i in rt] == ["re_old"]
+
+
+@pytest.mark.asyncio
+async def test_history_signal_true_new_includes_legacy_null_rows(client):
+    """0022 迁移前的历史行 is_reentry=NULL（无法回溯当时 baseline）——signal=true_new
+    把 NULL 也算真首发（向后兼容，老卡片照旧显示）。"""
+    database = _live("app.database")
+    MarketNewcomerLog = _live("app.models.newcomer").MarketNewcomerLog
+    async with database.AsyncSessionLocal() as db:
+        # 直接灌一条 is_reentry=NULL 的「老数据」
+        db.add(MarketNewcomerLog(
+            country="PT", platform="ios", app_id="legacy_app", as_of="2026-05-01",
+            name="老数据卡片", publisher="老厂", is_slg=True, is_reentry=None,
+        ))
+        await db.commit()
+
+    tn = (await client.get("/api/newcomers/history?days=120&country=PT&signal=true_new")).json()["items"]
+    assert [i["app_id"] for i in tn] == ["legacy_app"]
+    assert tn[0]["is_reentry"] is None  # 字段透传，值是 NULL
+
+
+@pytest.mark.asyncio
+async def test_history_returns_as_of_by_combo_for_freshness(client):
+    """as_of_by_combo 字段返回各 combo 最近一次已同步快照日，让前端给陈旧 combo
+    加 stale 提示（如「JP/android 截至 14 天前」）。"""
+    database = _live("app.database")
+    GameRanking = _live("app.models.game").GameRanking
+    async with database.AsyncSessionLocal() as db:
+        db.add(GameRanking(app_id="x", date="2026-06-21", rank=1,
+                           country="ES", platform="ios", name="x", publisher="x"))
+        db.add(GameRanking(app_id="y", date="2026-06-07", rank=1,
+                           country="ES", platform="android", name="y", publisher="y"))
+        await db.commit()
+
+    body = (await client.get("/api/newcomers/history?days=30")).json()
+    assert body["as_of_by_combo"]["ES/ios"] == "2026-06-21"
+    assert body["as_of_by_combo"]["ES/android"] == "2026-06-07"
+
+
+@pytest.mark.asyncio
 async def test_history_live_attribution(client, monkeypatch):
     """建档发生在检出之后 → 历史端点读时归属：entity_name 出现、is_slg 翻真。"""
     nl = importlib.import_module("app.services.newcomer_log")

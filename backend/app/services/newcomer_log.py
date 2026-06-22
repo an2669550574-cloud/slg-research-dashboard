@@ -131,6 +131,9 @@ async def record_market_newcomers(country: str, platform: str) -> dict:
                 as_of=summary["as_of"], name=n["name"], publisher=n.get("publisher"),
                 icon_url=n.get("icon_url"), rank=n.get("rank"),
                 revenue=n.get("revenue"), is_slg=bool(n.get("is_slg")),
+                # PR #93+0022：固化检出时的真首发 vs 回归判断（None = no_baseline 路径
+                # 或 detect 缺字段；前端把缺省/None 当真首发处理）。
+                is_reentry=n.get("is_reentry"),
                 **(enriched or {}),
             )
             if enriched:

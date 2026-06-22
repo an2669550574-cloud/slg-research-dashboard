@@ -194,6 +194,16 @@ export const zh = {
     triageConfirm: (name: string) => `把「${name}」建档为待调研厂商主体？会在「厂商主体」页创建一条档案并钉住该 app_id（建档后即识别为 SLG）。`,
     triaged: (name: string) => `已建档：${name} · 去「厂商主体」补股权 / 溯源`,
     triageBrief: (game: string, market: string) => `由新品监测建档 · ${market} · ${game}`,
+    // 真首发 vs 回归（PR #93）
+    signalTrueNew: '真首发',
+    signalReentry: '回归',
+    signalAll: '全部',
+    signalHint: '真首发 = 全历史从未见过；回归 = 曾上过榜、短期跌出 baseline 又回来（情报上仍有价值：厂商在加码投放）',
+    reentryBadge: '回归',
+    reentryHint: '该产品在基线窗口之外曾上过本市场榜单——短期跌出后回归，常是厂商加码投放的信号',
+    // 数据新鲜度提示（JP/KR/DE/RU 周级同步可能有几天滞后）
+    stalenessHeader: '榜单同步滞后：',
+    stalenessDaysAgo: (n: number) => `截至 ${n} 天前`,
   },
   wechatAccounts: {
     title: '微信公众号订阅',
