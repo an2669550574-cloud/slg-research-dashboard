@@ -8,6 +8,9 @@
 - newcomers: 跨过去 W 个快照的"首次出现"，且**故意不走 is_slg 过滤**——全新产品的
   发行商往往还没进 SLG 白名单(白名单滞后维护)，过滤会把最该看的新厂商新品筛掉。
   对全策略榜开口，再给每行打 `is_slg` 标记供前端区分"已识别 SLG / 新厂商待识别"。
+  **唯一例外**：人工逐条确认的非 SLG 发行商 / 单品(`publisher_ignores`，与 /gaps
+  同一名单)会被剔除——这是"确认噪声"(误挂 strategy 标签的麻将/扑克/塔防/宝可梦对战
+  等)，与"保住未识别的真新厂"初衷不冲突：不在名单里的新厂(如新出海 SLG)仍照常浮现。
 
 锚点取**最近一次已同步的快照日**(as_of，不强求等于今天)——同步降到周级后多数天
 没有"今日"行，锚最近快照才能让页面始终有内容(与 /games/rankings 读路径一致)。
@@ -30,6 +33,7 @@ from app.config import settings
 from app.database import AsyncSessionLocal, utcnow_naive
 from app.models.game import GameRanking
 from app.services.slg_publishers import is_slg, _tokens
+from app.services.name_match import corp_squash
 
 logger = logging.getLogger(__name__)
 
@@ -145,18 +149,56 @@ def _row_dict(r, *, historical_ids: Optional[set] = None) -> dict:
     return out
 
 
+async def _load_ignore_keys() -> tuple[set[str], set[str]]:
+    """缺口忽略名单 → (publisher corp_squash 键集, app_id 集)。
+
+    与 routers.publishers /gaps **同一名单同一口径**（`publisher_ignores` 表）：
+    人工逐条确认的非 SLG 发行商 / 单品。用于把这些**确凿噪声**从全市场新品 feed +
+    digest 里剔除。
+
+    与"故意不按 is_slg 过滤"不冲突：is_slg 白名单滞后维护、会漏掉真新厂(如新出海
+    SLG)，按它过滤是误杀；忽略名单是人工确认的非 SLG，过滤安全，且**不影响未建档
+    的真 SLG**——不在名单里的新厂仍照常浮现。表量级几十行，每次现查开销可忽略。
+    """
+    from app.models.publisher import PublisherIgnore
+
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(select(PublisherIgnore))).scalars().all()
+    pub_keys = {r.value for r in rows if r.kind == "publisher"}
+    app_ids = {r.value for r in rows if r.kind == "app_id"}
+    return pub_keys, app_ids
+
+
+def _is_ignored(app_id: Optional[str], publisher: Optional[str],
+                ignore_pub_keys: set[str], ignore_app_ids: set[str]) -> bool:
+    """该行是否被缺口忽略名单覆盖（app_id 精确忽略 或 发行商 corp_squash 命中）。
+    口径与 routers.publishers /gaps 完全一致：_tokens（≡ router 的 _toks，均
+    `[^a-z0-9]+` 分词）+ corp_squash，保证两处命中同一批 key。"""
+    if app_id and app_id in ignore_app_ids:
+        return True
+    return corp_squash(_tokens(publisher)) in ignore_pub_keys
+
+
 async def detect_newcomers(
     country: str,
     platform: str,
     *,
     window: Optional[int] = None,
     topn: Optional[int] = None,
+    ignore_keys: Optional[tuple[set[str], set[str]]] = None,
 ) -> dict:
     """**纯检测**——比对 as_of 当期榜与之前 W 个快照，返回结构化"新面孔"摘要。
     无任何副作用、零 ST 配额，可被 API endpoint 任意频次调用。
+
+    `ignore_keys` 可由跨 combo 的调用方预加载一次传入（避免每 combo 重查
+    `publisher_ignores`）；不传则本函数自行加载。剔除人工确认的非 SLG 噪声，
+    未建档的真新厂不受影响（详见 `_load_ignore_keys`）。
     """
     window = window if window is not None else settings.NEWCOMER_WINDOW
     topn = topn if topn is not None else settings.NEWCOMER_TOPN
+    if ignore_keys is None:
+        ignore_keys = await _load_ignore_keys()
+    ignore_pub_keys, ignore_app_ids = ignore_keys
 
     base = await _first_appearances(country, platform, window)
     historical_ids = base.get("historical_ids")
@@ -169,6 +211,7 @@ async def detect_newcomers(
         }
         for r in base["rows"]
         if r.rank is not None and r.rank <= topn
+        and not _is_ignored(r.app_id, r.publisher, ignore_pub_keys, ignore_app_ids)
     ]
     return summary
 

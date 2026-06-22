@@ -128,6 +128,12 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 - **前端**（`NewReleases.tsx`）：信号 chip「真首发(默认)/回归/全部」，`/history?signal=` 服务端筛；回归卡片打 cyan badge。
 - **向后兼容**：0022 迁移前的历史行 `is_reentry=NULL`，`signal=true_new` 把 NULL 当真首发（老卡片照旧显示）。
 
+### 缺口忽略名单过滤（2026-06-22）
+
+全市场新品（`detect_newcomers`）+ 检出沉淀 + digest 复用 `publisher_ignores`（与 [`/gaps`](PUBLISHERS.md) **同一名单同一口径** `_tokens`+`corp_squash`），剔除**人工逐条确认的非 SLG 噪声**——误挂 App Store「strategy」标签的麻将 / 扑克 / 塔防 / 宝可梦对战等。
+
+与上面「**故意不按 is_slg 过滤**」不冲突，是**两类信号的精准切分**：is_slg 白名单滞后维护、会漏掉真新厂（如新出海 SLG），按它过滤是误杀；忽略名单是逐条人工确认的非 SLG，过滤安全，且**不影响未建档的真 SLG**——不在名单里的新厂仍照常浮现（DEQU《Order of Kings》就是这样被新品监测捞出、2026-06-22 建档的）。`detect_publisher_newcomers`（已建档主体新品）天然 entity-scoped，不受影响。
+
 ### 数据新鲜度
 
 `/history` 返回 `as_of_by_combo`（各 combo 最近快照日，来自 `game_rankings.MAX(date)`）；前端给 ≥3 天滞后的 combo 渲染 stale 提示条，≥14 天转红。让用户看清「JP weekly 数据截至 N 天前」而非误以为是今日榜。
