@@ -94,6 +94,9 @@ def test_daily_digest_human_readable_no_machine_codes():
     assert "📉 **旧王朝** 跌出 Top 榜（#5 → 榜外）" in text
     assert "💰 **寒霜启示录** 现 #3 · 收入 **+45%**" in text  # 收入异动带当前名次参照
     assert "✨ **神秘新游** 空降 **#12**" in text and "新厂商待识别" in text
+    # A4：新厂商线索（is_slg=false）文案带行动指引 + 行内商店页直达（不挤底部按钮名额）
+    assert "新厂商待识别 · 建议建档" in text
+    assert "🔗 [查看商店页](https://apps.apple.com/us/app/id999)" in text
     # 富化子行（引用块）：日收入压缩 K/M、下载量、厂商归属（未匹配主体退回发行商名）
     assert "> 日收入 $123K · 下载 5K · 厂商 Mystery Studio" in text
     assert "🏢 **江娱互动** 新品 **Top Heroes 顶级英雄** #77" in text
@@ -125,6 +128,31 @@ def test_daily_digest_filters_reentries_from_newcomer_lines():
     assert "真首发" in text and "Top Heroes 真首发" in text
     # 回归全部被砍
     assert "回归老游" not in text and "Top War 回归" not in text
+
+
+def test_newcomer_lines_lead_cta_and_store_link():
+    """A4：is_slg=false 线索行升级——文案带「建议建档」+ 行内商店页直达；
+    is_slg=true 不加 CTA；拼不出商店页（缺 country/platform）时只升级文案、不报错。"""
+    from app.services.release_alerts import build_newcomer_lines
+
+    market = {"newcomers": [
+        {"app_id": "999", "rank": 12, "name": "陌生新游", "publisher": "无名工作室", "is_slg": False},
+        {"app_id": "888", "rank": 8, "name": "已知 SLG", "publisher": "大厂", "is_slg": True},
+    ]}
+    lines = build_newcomer_lines(market, {"newcomers": []}, country="US", platform="ios")
+    text = "\n".join(lines)
+    # 线索：文案 CTA + iOS 数字 id 拼 App Store 链接
+    assert "陌生新游" in text and "新厂商待识别 · 建议建档" in text
+    assert "🔗 [查看商店页](https://apps.apple.com/us/app/id999)" in text
+    # 已识别 SLG：不打 CTA、不加链接
+    assert "已知 SLG" in text
+    known_line = next(l for l in lines if "已知 SLG" in l)
+    assert "新厂商待识别" not in known_line and "查看商店页" not in known_line
+
+    # 缺 country/platform（老调用/单测）：文案照常升级，链接优雅省略，不抛
+    lines2 = build_newcomer_lines(market, {"newcomers": []})
+    text2 = "\n".join(lines2)
+    assert "新厂商待识别 · 建议建档" in text2 and "查看商店页" not in text2
 
 
 def test_daily_digest_treats_missing_is_reentry_as_true_first():

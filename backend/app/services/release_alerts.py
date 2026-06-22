@@ -172,11 +172,15 @@ def _match_articles_to_apps(per_combo: list[dict], article_list: list) -> dict:
 def build_newcomer_lines(market: dict, publisher: dict,
                          enrich: Optional[dict] = None,
                          articles: Optional[dict] = None,
-                         entities: Optional[dict] = None) -> list[str]:
+                         entities: Optional[dict] = None,
+                         country: Optional[str] = None,
+                         platform: Optional[str] = None) -> list[str]:
     """两层新品检测 → 人读行。
     enrich: {app_id: {genre, price, release_date}}
     articles: {app_id: [WechatArticle]} 微信公众号文章
     entities: {app_id: 中文厂商主体} —— 市场新面孔补中文归属（厂商新品行自带 entity_name）
+    country/platform: 该 combo 的市场坐标，用于给「新厂商待识别」线索行内拼商店页直达
+    （缺省 None = 不拼链接，向后兼容老调用 / 单测）。
 
     **回归过滤**：`is_reentry=True` 的项不进 digest（老游戏跌出 baseline 又回来，
     标"新品"是误导）。is_reentry 字段在 no_baseline combo 里缺省，缺省 = False
@@ -189,12 +193,21 @@ def build_newcomer_lines(market: dict, publisher: dict,
     market_real = [n for n in (market.get("newcomers") or []) if not n.get("is_reentry")]
     for n in market_real[:10]:
         aid = n.get("app_id")
-        tag = "" if n.get("is_slg") else "  ⚠️ 新厂商待识别"
+        is_lead = not n.get("is_slg")
+        # #99 忽略名单过滤后，is_slg=false 多是「真新厂商线索」而非噪声——文案从单纯
+        # 提示升级成带行动指引（建议建档），并行内附商店页直达（见下）。
+        tag = "  ⚠️ 新厂商待识别 · 建议建档" if is_lead else ""
         en = enrich.get(aid) or {}
         meta = _meta_line(genre=en.get("genre"), revenue=n.get("revenue"),
                           downloads=n.get("downloads"),
                           entity=entities.get(aid) or n.get("publisher"))
         base = f"✨ **{n['name']}** 空降 **#{n['rank']}**{tag}" + meta
+        # 线索行内自带商店页链接：底部 ActionCard 按钮全局封顶 5 个、每 combo 只取 1 条，
+        # 线索未必挤得进——行内链接让每条待识别线索都有「立即去看」入口。拼不出则只留文案。
+        if is_lead and country and platform:
+            url = _store_url(aid or "", country, platform)
+            if url:
+                base += f"\n   🔗 [查看商店页]({url})"
         base += _articles_suffix(articles.get(aid))
         lines.append(base)
     publisher_real = [n for n in (publisher.get("newcomers") or []) if not n.get("is_reentry")]
@@ -228,7 +241,8 @@ def build_daily_digest(per_combo: list[dict], today: str,
         mv_all = build_movement_lines(c["movement"], entities=entities) if c.get("movement") else []
         nc_blocks = (build_newcomer_lines(c.get("market") or {}, c.get("publisher") or {},
                                           enrich=c.get("enrich"), articles=articles,
-                                          entities=entities)
+                                          entities=entities,
+                                          country=c["country"], platform=c["platform"])
                      if (c.get("market") or c.get("publisher")) else [])
         if not mv_all and not nc_blocks:
             continue
