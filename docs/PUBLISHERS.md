@@ -54,7 +54,7 @@
 7. **命名**：中国厂尽量用中文名（「中文 English」式，如「库卡游戏 Qookka」「游族 YOOZOO」）。
 8. **negative finding 戳记**：调研验证「无关系/无母体」也是结果。用 `【调研负面发现 YYYY-MM-DD】` 或 `【复查 negative YYYY-MM-DD】` 追加到 brief 锁死研究分支，下次别再回头查（抽屉里会折叠到「调研历史 N」）。
 
-## 当前资本集团速览（2026-06-21，prod=#88 e1323f4；101 实体 / 37 关系 / 20 资本方 / ~237 source；tier_primary 100%）
+## 当前资本集团速览（2026-06-22；102 实体 / 113 alias / 116 app_id / 239 source / 37 关系 / 21 资本方 / 25 忽略；tier_primary 100%）
 
 - **途游游戏 Tuyoo** → EVISTA(SLG·新加坡)/Ark Game(HK)/Tuyoo Online HK/Tuyoo Games HK
 - **灵犀互娱（阿里）** → 库卡游戏 Qookka ｜ **益世界** → Just Game ｜ **新奇互娱（爱奇艺）** → Special Gamez
@@ -69,6 +69,7 @@
   - **华纳兄弟游戏 Warner Bros. Games** → GoT Conquest / Dragonfire 4 个 app_id
   - **万代南梦宫 Bandai Namco** → キングダム 覇道（与 Koei Tecmo 联名，App Store publisher 字段是 BNE 故归 BNE）
   - **光荣特库摩 KOEI TECMO** → 信長の野望 覇道
+- **日系本土策略（is_slg=True，单主体）**：**Asobism**（東京·中野；城とドラゴン 实时对战 RTS，累计 2000万+下载，2026-06-22 缺口溯源建档，一手源 asobism.co.jp）——日系本土长青策略，非出海 4X 建国 SLG，作日系策略参考追踪
 - **独立小厂**：**Rudel** (キングダム 頂天) / LIGHTNING STUDIOS (Game of Kings) / GAMEGEARS / Immersive Games HK / 等
 - **单主体（无第二壳）**：**网易**（率土之滨用 app_id 钉，⚠️ 勿加 NetEase Games alias——荒野行動是 BR 误进策略榜，加 alias 会污染合计）；**IGG**；**莉莉丝**（+Farlight）
 
@@ -78,6 +79,7 @@
 - **股东册多在付费墙后**（ACRA BizFile；opengovsg/recordowl 只给 officer 数量）→ 海外壳归属常只能靠 media + 开发者账号佐证，标 `controlling` 不标 `wholly_owned`。
 - **安卓包名钉慎用**：若该包在 game_rankings 是未富化行（name/publisher 空），钉它会在产品抽屉顶出一条空名 $0 裸行；优先用 alias，iOS 用数字 id 钉。
 - **巨头多主体扫描结论**：策略榜未归属的高收入发行商绝大多数是**非 SLG**（Niantic/Supercell/Chess.com/EA/PUBG/NetEase 荒野/KRAFTON/KONAMI/Cygames/Wizards/Voodoo/Highbrow 等），勿误归。
+- **App Store「전략/Strategy」标签是缺口噪声主因**：2026-06-22 把最后 9 条缺口全部三角化清零——8 行经验证是误挂 strategy 标签的非 SLG（社交推理 Mafia42 标 strategy+board / 合成·roguelike RPG / 挂机 RPG / 麻将雀魂 / 回合制收集 Summoners War），全部 publisher 粒度忽略；唯一真策略是 Asobism 城とドラゴン（已建档）。**判 genre 别信 App Store 单一 strategy 标签，看 `genres` 全列 + 实际玩法**（iTunes lookup `genres` 字段 + 旗下产品名最准）。5minlab 是 Krafton 全资子（2022 收购）但旗下是合成/roguelike RPG 非 SLG，**母体大不等于产品是 SLG**。
 - **跨平台 sibling 去重**（PR #88 初版，#91/#92 修「同 publisher」判定）：iOS+Android 同款合并成一行 product。**两个去重入口口径不同**：
   - **厂商抽屉/列表** `_dedup_siblings`（`routers/publishers.py`）：调用方已 entity-scoped（alias/app_id 预过滤为单 entity），**不再校验 publisher 字符串等价**，仅名字 prefix 子序列匹配 ≥5 字符即合并（PR #91）。修了同公司不同法人/简写发两平台（"TOP GAMES INC."×"TG Inc."、"IGG SINGAPORE PTE. LTD."×"IGG.COM"）漏合——曾跨 26 主体漏合 46 个 product row。
   - **详情页/coverage/metrics** `find_sibling_app_ids`（`services/sibling_match.py`）：扫全表无 entity scope，用 `publisher_aliases` 把两个 publisher 字符串各自映射到 entity，**同 entity 或 normalize 等价**即视为同 publisher（PR #92）。
