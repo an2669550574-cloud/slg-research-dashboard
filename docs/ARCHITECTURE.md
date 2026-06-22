@@ -134,6 +134,12 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 
 与上面「**故意不按 is_slg 过滤**」不冲突，是**两类信号的精准切分**：is_slg 白名单滞后维护、会漏掉真新厂（如新出海 SLG），按它过滤是误杀；忽略名单是逐条人工确认的非 SLG，过滤安全，且**不影响未建档的真 SLG**——不在名单里的新厂仍照常浮现（DEQU《Order of Kings》就是这样被新品监测捞出、2026-06-22 建档的）。`detect_publisher_newcomers`（已建档主体新品）天然 entity-scoped，不受影响。
 
+**两处过滤口径（PR #99/#101）**：`detect_newcomers`（live `/` + 检出沉淀 sink + digest）在**检测时**过滤；`/history`（前端「全市场新面孔」视图读的就是这个）在**读时**过滤——后者让前端点「忽略」后该发行商行**立即消失**（日志行原样保留、不删表）。前端新品卡 is_slg=false 时同时给「建档」+「忽略」双动作：建档转主体、忽略写 `publisher_ignores`，与缺口卡同一闭环。
+
+### 每日 digest 群推送封顶（PR #101）
+
+`build_daily_digest` 原本无长度上限——波动大的日子（movement 完全无 cap）会刷出一张超长卡。两层封顶：单 combo movement 行封 `DIGEST_MOVEMENT_TOPN`（按 空降/窜升/暴跌/收入异动 重要性保留），全卡按 combo 粒度封 `DIGEST_MAX_ITEMS`，超额折叠成「…另有 N 项，看板查看全部」（不静默丢、标题 total 仍计全部）。商店按钮也纳入新品（市场/厂商各取头条、去重封顶 5），安卓包名拼 Google Play 链接（`_store_url`），纯新品日不再无可点项。
+
 ### 数据新鲜度
 
 `/history` 返回 `as_of_by_combo`（各 combo 最近快照日，来自 `game_rankings.MAX(date)`）；前端给 ≥3 天滞后的 combo 渲染 stale 提示条，≥14 天转红。让用户看清「JP weekly 数据截至 N 天前」而非误以为是今日榜。
