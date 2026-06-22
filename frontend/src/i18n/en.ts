@@ -187,6 +187,10 @@ export const en: Translations = {
     triageConfirm: (name: string) => `Create a research dossier for "${name}" and pin this app_id? (it will be recognized as SLG after).`,
     triaged: (name: string) => `Dossier created: ${name} · add ownership / sources in Publishers`,
     triageBrief: (game: string, market: string) => `From New Releases · ${market} · ${game}`,
+    ignore: 'Ignore',
+    ignoreConfirm: (name: string) => `Mark "${name}" as non-SLG and add to the ignore list? It will stop appearing in New Releases / research gaps (restorable on the Publishers page).`,
+    ignored: (name: string) => `Ignored: ${name} · hidden from New Releases / gaps`,
+    ignoreNote: 'Marked non-SLG from New Releases',
     // First launch vs re-entry (PR #93)
     signalTrueNew: 'True first',
     signalReentry: 'Re-entry',

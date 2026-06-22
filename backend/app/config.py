@@ -148,6 +148,14 @@ class Settings(BaseSettings):
     # 真正值得关注的中段新品仍能命中，砍掉榜尾。
     PUBLISHER_NEWCOMER_TOPN: int = 200
 
+    # ── 每日 digest 群推送封顶（避免波动大的日子刷出一张超长卡）────────────
+    # 单 combo 的 movement 显示行上限（新品两层已各自 [:10]）。movement 原本无任何
+    # 上限——波动大的市场一天能甩出几十条异动，封死单 combo 展示量。
+    DIGEST_MOVEMENT_TOPN: int = 8
+    # 全卡全局 item 上限（按 combo 粒度累加，超出的 combo 折叠成
+    # 「…另有 N 项，看板查看全部」一行，保证卡片长度可控）。
+    DIGEST_MAX_ITEMS: int = 30
+
     # ── App Store 清单雷达（免费 iTunes lookup，零 ST 配额）──────────────
     # 每轮对每个开发者账号扫这些 storefront（逗号小写）。SLG 几乎都先软启动：
     # ph/ca/au/sg 是经典测试区，us 单区扫描会在软启动期完全失明。每加一区 =
