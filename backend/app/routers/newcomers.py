@@ -21,6 +21,7 @@ from app.database import get_db, utcnow_naive
 from app.models.publisher import PublisherEntity, PublisherItunesArtist, PublisherItunesApp
 from app.services.newcomers import (
     detect_newcomers, detect_publisher_newcomers, _load_entity_matchers,
+    _load_ignore_keys,
 )
 from app.services.gp_releases import sync_gp_releases
 from app.services.itunes_releases import sync_itunes_releases
@@ -354,11 +355,13 @@ async def get_newcomers(
     else:
         combos = settings.sync_combos_list
 
+    # 忽略名单循环外预加载一次，避免每 combo 重查 publisher_ignores（跨 combo 一致）。
+    ignore_keys = await _load_ignore_keys()
     items: list[NewcomerItem] = []
     no_baseline: list[str] = []
     as_of_by_combo: dict[str, str] = {}
     for c, p in combos:
-        summary = await detect_newcomers(c, p, window=window, topn=topn)
+        summary = await detect_newcomers(c, p, window=window, topn=topn, ignore_keys=ignore_keys)
         key = f"{c}/{p}"
         if summary["as_of"]:
             as_of_by_combo[key] = summary["as_of"]

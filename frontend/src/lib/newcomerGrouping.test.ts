@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { groupByApp } from './newcomerGrouping'
-import type { NewcomerHistoryItem } from './types'
+import { groupByApp, groupPublisherByApp } from './newcomerGrouping'
+import type { NewcomerHistoryItem, PublisherNewcomerItem } from './types'
 
 /** 造一条最小检出行——只填分组逻辑关心的字段，其余给安全默认。 */
 function row(p: Partial<NewcomerHistoryItem> & { app_id: string }): NewcomerHistoryItem {
@@ -71,5 +71,40 @@ describe('groupByApp', () => {
       row({ app_id: 'Z', is_reentry: true }),
     ])[0].anyReentry).toBe(true)
     expect(groupByApp([row({ app_id: 'W', is_reentry: false })])[0].anyReentry).toBe(false)
+  })
+})
+
+function pubRow(p: Partial<PublisherNewcomerItem> & { app_id: string }): PublisherNewcomerItem {
+  return {
+    country: 'US', platform: 'ios', as_of: '2026-06-01', name: 'Game', publisher: 'Studio',
+    icon_url: null, rank: null, revenue: null, downloads: null,
+    entity_id: 1, entity_name: '某主体', matched_by: 'alias',
+    ...p,
+  }
+}
+
+describe('groupPublisherByApp', () => {
+  it('merges same app_id across markets, best rank as headline, earliest as_of', () => {
+    const groups = groupPublisherByApp([
+      pubRow({ app_id: 'p1', country: 'US', rank: 40, as_of: '2026-06-05', revenue: 100 }),
+      pubRow({ app_id: 'p1', country: 'JP', rank: 12, as_of: '2026-06-02', revenue: 999 }),
+    ])
+    expect(groups).toHaveLength(1)
+    const g = groups[0]
+    expect(g.markets).toHaveLength(2)
+    expect(g.bestRank).toBe(12)
+    expect(g.rep.country).toBe('JP')        // 代表行 = 最佳名次
+    expect(g.rep.revenue).toBe(999)          // revenue 取代表行（最佳名次市场）
+    expect(g.earliestAsOf).toBe('2026-06-02')
+    expect(g.markets.map(m => m.rank)).toEqual([12, 40])
+  })
+
+  it('keeps distinct app_ids separate and preserves entity order', () => {
+    const groups = groupPublisherByApp([
+      pubRow({ app_id: 'a', entity_name: '甲' }),
+      pubRow({ app_id: 'b', entity_name: '乙' }),
+      pubRow({ app_id: 'a', entity_name: '甲', country: 'JP' }),
+    ])
+    expect(groups.map(g => g.app_id)).toEqual(['a', 'b'])
   })
 })

@@ -321,11 +321,20 @@ async def send_daily_digest() -> bool:
     if not dingtalk.is_enabled():
         return False
     from app.services.movement import detect_movement
-    from app.services.newcomers import detect_newcomers, detect_publisher_newcomers
+    from app.services.newcomers import (
+        detect_newcomers, detect_publisher_newcomers,
+        _load_ignore_keys, _load_entity_matchers, resolve_entity,
+    )
 
     today = utcnow_naive().strftime("%Y-%m-%d")
     per_combo: list[dict] = []
     all_newcomer_names: set[str] = set()  # 收集所有新品名称，用于批量搜微信文章
+    # 跨 combo 共享的两份只读数据，循环外预加载一次：忽略名单（市场新面孔过滤用）+
+    # 主体归属匹配器（厂商新品归属 + 下方异动/市场行中文归属共用）。原本每 combo 各自
+    # 重查（10 combo × ignores 1 + matchers 3 ≈ 40 次冗余小查询，matchers 还在末尾再加载
+    # 一次），现降到各 1 次。
+    ignore_keys = await _load_ignore_keys()
+    matchers = await _load_entity_matchers()
 
     for country, platform in settings.sync_combos_list:
         entry: dict = {"country": country, "platform": platform, "movement": None,
@@ -334,8 +343,8 @@ async def send_daily_digest() -> bool:
             m = await detect_movement(country, platform, today)
             if not m.get("today_missing"):
                 entry["movement"] = m
-            market = await detect_newcomers(country, platform)
-            publisher = await detect_publisher_newcomers(country, platform)
+            market = await detect_newcomers(country, platform, ignore_keys=ignore_keys)
+            publisher = await detect_publisher_newcomers(country, platform, matchers=matchers)
             if market.get("as_of") == today:
                 entry["market"] = market
                 # 检出沉淀里的富化字段（record 已在同步路径先落库），给日报行加料
@@ -378,12 +387,10 @@ async def send_daily_digest() -> bool:
         except Exception:
             logger.warning("wechat articles search failed", exc_info=True)
 
-    # 厂商主体中文归属：一次性加载匹配器，解析市场新面孔 / 异动行涉及的 app_id。
-    # 厂商新品行自带 entity_name，这里只补另两层（纯内存匹配，零查询/零配额）。
+    # 厂商主体中文归属：复用循环外已加载的 matchers，解析市场新面孔 / 异动行涉及的
+    # app_id。厂商新品行自带 entity_name，这里只补另两层（纯内存匹配，零查询/零配额）。
     entities_by_app: dict = {}
     try:
-        from app.services.newcomers import _load_entity_matchers, resolve_entity
-        matchers = await _load_entity_matchers()
         for c in per_combo:
             mv = c.get("movement") or {}
             rows = list((c.get("market") or {}).get("newcomers") or [])
