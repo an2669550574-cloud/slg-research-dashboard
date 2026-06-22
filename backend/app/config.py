@@ -228,6 +228,10 @@ class Settings(BaseSettings):
     WECHAT_API_BASE: str = "http://127.0.0.1:5001"
     # 单轮日报最多用多少个新品名去搜（限并发与外部服务压力）。
     WECHAT_MAX_KEYWORDS: int = 20
+    # 文章 ↔ 新品名匹配的最小名长（非拉丁名按非空白字符数）。1 字通用名（"城""塔"）
+    # 裸 substring 必泛滥误挂，<此值的非拉丁名跳过匹配（宁漏不误）。拉丁名走词边界
+    # 不受此限。默认 2：保留"原神"(2字) 等真名，砍掉单字噪声。
+    WECHAT_MATCH_MIN_NAME_LEN: int = 2
     # 登录 session 剩余 ≤ 此天数 → 提前预警；已过期/未登录则直接提醒。微信 MP
     # session 本就短（~4 天），预警设 1 天（仅最后一天提醒）避免天天刷屏。
     WECHAT_EXPIRY_WARN_DAYS: int = 1
