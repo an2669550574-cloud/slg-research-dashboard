@@ -53,6 +53,8 @@ games-page.png
 materials-page.png
 quota-banner-freshness.png
 snapshot-dashboard.md
+# 本地截图工具状态文件（指向主截图页，机器相关）
+.primary_page
 
 # IDE
 .vscode/settings.json
