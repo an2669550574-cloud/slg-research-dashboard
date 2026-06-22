@@ -89,6 +89,36 @@ async def test_non_slg_newcomer_included(client):
 
 
 @pytest.mark.asyncio
+async def test_ignored_publisher_and_appid_excluded(client):
+    """缺口忽略名单(`publisher_ignores`)里人工确认的非 SLG 噪声(误挂 strategy 标签的
+    宝可梦对战/塔防等)被剔除；**不在名单**里的非 SLG 新厂(未识别的真线索)仍照常浮现。
+    口径与 /gaps 一致：publisher 走 corp_squash 归一键，app_id 精确剔。"""
+    from app.services.newcomers import detect_newcomers
+    from app.database import AsyncSessionLocal
+    from app.models.publisher import PublisherIgnore
+    from app.services.name_match import corp_squash
+    from app.services.slg_publishers import _tokens
+
+    await _seed("2026-05-08", [("a", 1, None, SLG_PUB)])
+    await _seed("2026-05-15", [
+        ("a", 1, None, SLG_PUB),
+        ("noise_pub", 4, None, "The Pokemon Company"),  # 发行商粒度忽略
+        ("noise_app", 5, None, "Random Studio Inc."),   # 单 app 粒度忽略
+        ("real_lead", 6, None, "Brand New SLG Co."),     # 不在名单 → 保留(真线索)
+    ])
+    async with AsyncSessionLocal() as db:
+        db.add(PublisherIgnore(kind="publisher",
+                               value=corp_squash(_tokens("The Pokemon Company")),
+                               label="The Pokemon Company"))
+        db.add(PublisherIgnore(kind="app_id", value="noise_app", label="noise app"))
+        await db.commit()
+
+    s = await detect_newcomers("US", "ios", window=4, topn=50)
+    names = {n["name"] for n in s["newcomers"]}
+    assert names == {"real_lead"}, "忽略名单覆盖的应剔除、未识别真新厂应保留"
+
+
+@pytest.mark.asyncio
 async def test_topn_threshold(client):
     """名次 > TopN 的新进 app 不算"新进榜"(榜尾噪声不提示)。"""
     from app.services.newcomers import detect_newcomers
