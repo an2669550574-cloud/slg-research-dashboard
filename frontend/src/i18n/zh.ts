@@ -1,3 +1,18 @@
+// 市场码本地化：后端 best_rank_market 形如 "DE/android"，译成「德国谷歌畅销榜」。
+// 未知码回退原串，保证新增市场不至于显示空白。
+const ZH_MARKET_COUNTRY: Record<string, string> = {
+  US: '美国', JP: '日本', KR: '韩国', DE: '德国', RU: '俄罗斯',
+  GB: '英国', FR: '法国', TW: '台湾', HK: '香港', CN: '中国',
+}
+const ZH_MARKET_PLATFORM: Record<string, string> = { ios: '苹果', android: '谷歌' }
+/** "DE/android" → "德国谷歌畅销榜"；无法解析的段保留原文 */
+const zhMarket = (market: string): string => {
+  const [cc = '', plat = ''] = market.split('/')
+  const country = ZH_MARKET_COUNTRY[cc.toUpperCase()] ?? cc
+  const platform = ZH_MARKET_PLATFORM[plat.toLowerCase()] ?? plat
+  return `${country}${platform}畅销榜`
+}
+
 export const zh = {
   app: {
     title: 'SLG 海外调研',
@@ -750,11 +765,11 @@ export const zh = {
     sortDefault: '默认排序',
     sortProducts: '按旗下产品数',
     sortProvenance: '按溯源完整度',
-    rankChip: (rank: number, market: string) => `畅销 ${market} #${rank}`,
+    rankChip: (rank: number, market: string) => market ? `${zhMarket(market)}第${rank}` : `畅销榜第${rank}`,
     rankNone: '未上榜',
     groupBadge: '集团',
     groupMembers: (n: number) => `${n} 家主体`,
-    groupBestRank: (rank: number, market: string) => market ? `最佳畅销 ${market} #${rank}` : `最佳畅销 #${rank}`,
+    groupBestRank: (rank: number, market: string) => market ? `最佳 ${zhMarket(market)}第${rank}` : `最佳畅销榜第${rank}`,
     groupExpandHint: '点击展开成员',
     capitalBadge: '资本方',
     capitalNoProducts: '控股母体 · 无直营产品',
