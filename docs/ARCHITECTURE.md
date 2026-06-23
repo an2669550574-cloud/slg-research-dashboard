@@ -140,6 +140,15 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 
 `build_daily_digest` 原本无长度上限——波动大的日子（movement 完全无 cap）会刷出一张超长卡。两层封顶：单 combo movement 行封 `DIGEST_MOVEMENT_TOPN`（按 空降/窜升/暴跌/收入异动 重要性保留），全卡按 combo 粒度封 `DIGEST_MAX_ITEMS`，超额折叠成「…另有 N 项，看板查看全部」（不静默丢、标题 total 仍计全部）。商店按钮也纳入新品（市场/厂商各取头条、去重封顶 5），安卓包名拼 Google Play 链接（`_store_url`），纯新品日不再无可点项。
 
+### digest 看板深链 + app_id 粒度忽略（PR #109）
+
+**看板深链**：digest 每条新品行（市场/厂商）+ overflow 折叠行附 `🎯 看板定位` 链接，点击进新品页定位高亮该 app。后端 `_dashboard_focus_url(app_id, view)` 拼 `{DASHBOARD_BASE_URL}/newcomers?focus=<app_id>&view=<market|publisher>`。
+
+- `DASHBOARD_BASE_URL`（看板对外基址，不含末尾斜杠；**敏感，见 `backend/.env` / `.env.example`，不进 git**）。**留空 = 不拼任何深链，digest 完全向后兼容**——后端无从得知自己的公网址（躲在 caddy 后），必须人工配。改该 env 后须 `compose --env-file .env up -d backend` 重读（`restart` 不生效）。
+- 前端 `NewReleases.tsx`：mount effect 从 `window.location.search` 读 `focus`/`view`，切视图 → 轮询等滚动容器 `<main>` 布局完成（首帧 `clientHeight` 可能为 0，`scrollIntoView` 此时空操作）→ instant 滚动定位 → CSS `focus-flash` 高亮淡出（含 `prefers-reduced-motion` 降级）。**深链参数只能在 mount effect 里读、不能用 `useState` 惰性初始化**——lazy 路由 + Suspense 下惰性初始化有取值竞态（实测 `focus` 取到 null）。
+
+**app_id 粒度忽略**：新品卡「忽略」按钮在有发行商名时下拉两选项——「忽略整个发行商」（`kind=publisher`，corp_squash 归一覆盖全厂）/「仅忽略此 app」（`kind=app_id`，只滤这一款）；无名退回 app_id 粒度。复用既有 `POST /publishers/ignores`，零新接口、零迁移。
+
 ### 数据新鲜度
 
 `/history` 返回 `as_of_by_combo`（各 combo 最近快照日，来自 `game_rankings.MAX(date)`）；前端给 ≥3 天滞后的 combo 渲染 stale 提示条，≥14 天转红。让用户看清「JP weekly 数据截至 N 天前」而非误以为是今日榜。
