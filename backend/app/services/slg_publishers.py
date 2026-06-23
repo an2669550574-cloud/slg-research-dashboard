@@ -172,8 +172,17 @@ def _seed_app_ids() -> list[str]:
     return [aid for p in SEED_PUBLISHERS for aid, _ in p["app_ids"]]
 
 
+def reset_index_to_seed() -> None:
+    """把内存索引重置回内置种子态（= 模块刚导入时的状态）。
+
+    供测试隔离用：is_slg 走的是模块级全局索引，任一测试调到 load_index_from_db /
+    publisher 写端点都会就地覆盖它且不还原，污染后续依赖种子态的测试。conftest
+    每个测试前调本函数，给所有用例一个确定的种子基线（详见 conftest 同名 fixture）。"""
+    _set_index(_seed_keywords(), _seed_app_ids())
+
+
 # 模块导入即用种子填充索引——作为 DB 未加载时的兜底，保证 is_slg 行为与迁移前一致。
-_set_index(_seed_keywords(), _seed_app_ids())
+reset_index_to_seed()
 
 
 async def load_index_from_db() -> int:
