@@ -19,6 +19,7 @@ import re
 import time
 from datetime import datetime
 from typing import Optional
+from urllib.parse import quote
 
 from sqlalchemy import select
 
@@ -97,6 +98,17 @@ def _store_url(app_id: str, country: str, platform: str) -> Optional[str]:
     if platform == "android" and "." in aid and " " not in aid:
         return f"https://play.google.com/store/apps/details?id={aid}"
     return None
+
+
+def _dashboard_focus_url(app_id: str, view: str) -> Optional[str]:
+    """新品行 → 看板深链（进新品页 ?focus=<app_id> 定位高亮该卡）。view 决定落地视图
+    （market=全市场新面孔 / publisher=厂商新品）。未配 DASHBOARD_BASE_URL 返回 None
+    （digest 不拼深链，向后兼容）。"""
+    base = (settings.DASHBOARD_BASE_URL or "").rstrip("/")
+    aid = str(app_id or "").strip()
+    if not base or not aid:
+        return None
+    return f"{base}/newcomers?focus={quote(aid, safe='')}&view={view}"
 
 
 # ── 每日情报汇总（竞品异动 + 两层新品，全 combo 一条） ─────────────────────
@@ -242,6 +254,10 @@ def build_newcomer_lines(market: dict, publisher: dict,
             url = _store_url(aid or "", country, platform)
             if url:
                 base += f"\n   🔗 [查看商店页]({url})"
+        # 看板定位深链：点进新品页高亮该 app（未配 DASHBOARD_BASE_URL 时省略）。
+        focus = _dashboard_focus_url(aid or "", "market")
+        if focus:
+            base += f"\n   🎯 [看板定位]({focus})"
         base += _articles_suffix(articles.get(aid))
         lines.append(base)
     publisher_real = [n for n in (publisher.get("newcomers") or []) if not n.get("is_reentry")]
@@ -250,6 +266,9 @@ def build_newcomer_lines(market: dict, publisher: dict,
         rank = f"#{n['rank']}" if n.get("rank") else "进榜"
         meta = _meta_line(revenue=n.get("revenue"), downloads=n.get("downloads"))
         base = f"🏢 **{n['entity_name']}** 新品 **{n['name']}** {rank}" + meta
+        focus = _dashboard_focus_url(aid or "", "publisher")
+        if focus:
+            base += f"\n   🎯 [看板定位]({focus})"
         base += _articles_suffix(articles.get(aid))
         lines.append(base)
     return lines
@@ -308,7 +327,10 @@ def build_daily_digest(per_combo: list[dict], today: str,
     head = f"### 📡 SLG 每日情报 · {today}（{total} 项）"
     body = [head] + sections
     if overflow:
-        body.append(f"> …另有 **{overflow}** 项未在此展示，看板查看全部")
+        # 配了看板基址就把「看板查看全部」做成深链（落到新品页），否则纯文案。
+        base = (settings.DASHBOARD_BASE_URL or "").rstrip("/")
+        tail = f"[看板查看全部]({base}/newcomers)" if base else "看板查看全部"
+        body.append(f"> …另有 **{overflow}** 项未在此展示，{tail}")
     return f"每日情报 {today}", "\n\n---\n\n".join(body), btns
 
 

@@ -179,6 +179,11 @@ class Settings(BaseSettings):
     DINGTALK_WEBHOOK_URL: str = ""
     DINGTALK_SECRET: str = ""
 
+    # 看板对外可访问基址（如 https://<域名>，**不含**末尾斜杠）。仅用于在每日 digest
+    # 里给新品行拼「看板定位」深链（?focus=<app_id> 进新品页高亮该卡）。空 = 不拼深链
+    # （digest 行为完全向后兼容）。值放 backend/.env / 运维私有渠道，不进 git。
+    DASHBOARD_BASE_URL: str = ""
+
     # 素材库上传文件落盘根目录。容器内走已挂载的 ./data:/app/data 卷，
     # 宿主机即 /opt/slg-research-dashboard/data/materials，与 DB 同一备份域。
     MEDIA_ROOT: str = "./data/materials"

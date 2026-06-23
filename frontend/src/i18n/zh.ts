@@ -200,6 +200,9 @@ export const zh = {
     triageBrief: (game: string, market: string) => `由新品监测建档 · ${market} · ${game}`,
     ignore: '忽略',
     ignoreConfirm: (name: string) => `确认「${name}」非 SLG、加入忽略名单？此后该发行商不再进新品监测 / 调研缺口提示（可在「厂商主体」页恢复）。`,
+    ignoreConfirmApp: (name: string) => `仅忽略此 app「${name}」？只把这一款标为非 SLG，同发行商其他产品仍会出现（可在「厂商主体」页恢复）。`,
+    ignoreScopePublisher: (name: string) => `忽略整个发行商「${name}」`,
+    ignoreScopeApp: '仅忽略此 app',
     ignored: (name: string) => `已忽略：${name} · 不再进新品 / 缺口提示`,
     ignoreNote: '由新品监测人工标为非 SLG',
     // 真首发 vs 回归（PR #93）

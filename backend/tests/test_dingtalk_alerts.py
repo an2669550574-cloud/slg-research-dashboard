@@ -326,3 +326,42 @@ def test_daily_digest_global_cap_overflow(monkeypatch):
     assert "游1" in text and "游2" not in text        # 第二 combo 被全局封顶
     assert "另有 **1** 项未在此展示" in text
     assert "（2 项）" in text                          # total 仍计全部
+
+
+def test_dashboard_focus_link(monkeypatch):
+    """A4：配了 DASHBOARD_BASE_URL → 新品行带「看板定位」深链（?focus=<app_id>&view=），
+    市场行 view=market、厂商行 view=publisher；overflow 行做成看板深链。"""
+    from app.services import release_alerts as ra
+    monkeypatch.setattr("app.config.settings.DASHBOARD_BASE_URL",
+                        "https://board.example.com/", raising=False)  # 末尾斜杠应被裁掉
+    market = {"newcomers": [
+        {"app_id": "123", "rank": 5, "name": "市场新游", "publisher": "P", "is_slg": True, "is_reentry": False},
+    ]}
+    publisher = {"newcomers": [
+        {"app_id": "com.x.y", "entity_name": "江娱", "name": "厂商新游", "rank": 9, "is_reentry": False},
+    ]}
+    lines = ra.build_newcomer_lines(market, publisher, country="US", platform="ios")
+    text = "\n".join(lines)
+    assert "🎯 [看板定位](https://board.example.com/newcomers?focus=123&view=market)" in text
+    assert "🎯 [看板定位](https://board.example.com/newcomers?focus=com.x.y&view=publisher)" in text
+    # overflow 折叠行做成深链
+    monkeypatch.setattr("app.config.settings.DIGEST_MAX_ITEMS", 1, raising=False)
+    per_combo = [
+        {"country": "US", "platform": "ios", "movement": None, "market": market, "publisher": None},
+        {"country": "JP", "platform": "ios", "movement": None,
+         "market": {"newcomers": [{"app_id": "999", "rank": 2, "name": "游2", "publisher": "P", "is_slg": True, "is_reentry": False}]},
+         "publisher": None},
+    ]
+    _, dtext, _ = ra.build_daily_digest(per_combo, "2026-06-14")
+    assert "[看板查看全部](https://board.example.com/newcomers)" in dtext
+
+
+def test_dashboard_focus_link_omitted_when_unset(monkeypatch):
+    """未配 DASHBOARD_BASE_URL（默认空）→ 不拼任何看板深链，digest 向后兼容。"""
+    from app.services import release_alerts as ra
+    monkeypatch.setattr("app.config.settings.DASHBOARD_BASE_URL", "", raising=False)
+    market = {"newcomers": [
+        {"app_id": "123", "rank": 5, "name": "市场新游", "publisher": "P", "is_slg": True, "is_reentry": False},
+    ]}
+    lines = ra.build_newcomer_lines(market, {"newcomers": []}, country="US", platform="ios")
+    assert "看板定位" not in "\n".join(lines)
