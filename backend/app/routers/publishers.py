@@ -182,6 +182,16 @@ async def _ranking_pairs_cached(db: AsyncSession):
     return pairs
 
 
+def _prefer_market(rank: int, market: str, cur: tuple[int, str] | None) -> bool:
+    """是否用 (rank, market) 替换 cur：名次更小者更优；名次相同则优先美国（US/... 市场），
+    其余（非美 vs 非美）保持先到先得。统一卡片/列表/详情对「同名次取哪国榜」的口径。"""
+    if cur is None:
+        return True
+    if rank != cur[0]:
+        return rank < cur[0]
+    return market.startswith("US/") and not cur[1].startswith("US/")
+
+
 async def _rank_by_app(db: AsyncSession) -> dict[str, tuple[int, str]]:
     """{app_id: (跨市场最佳名次, 命中市场如 "JP/android")}。只看各 (国家,平台) **最新一期**
     快照——反映「当前畅销」而非历史最好，供「按畅销榜名次」排序。零 ST 配额、纯本地库。"""
@@ -200,9 +210,9 @@ async def _rank_by_app(db: AsyncSession) -> dict[str, tuple[int, str]]:
     for app_id, country, platform, rank in rows:
         if rank is None:
             continue
-        cur = best.get(app_id)
-        if cur is None or rank < cur[0]:
-            best[app_id] = (rank, f"{country}/{platform}")
+        market = f"{country}/{platform}"
+        if _prefer_market(rank, market, best.get(app_id)):
+            best[app_id] = (rank, market)
     return best
 
 
@@ -254,7 +264,8 @@ def _match_for_entity(pairs, alias_kw_tokens, app_id_set, itunes_products=(), ra
         for g in groups:
             for aid in g["member_app_ids"]:
                 hit = rank_by_app.get(aid)
-                if hit and (best_rank is None or hit[0] < best_rank):
+                cur = (best_rank, best_market) if best_rank is not None else None
+                if hit and _prefer_market(hit[0], hit[1], cur):
                     best_rank, best_market = hit
     return len(groups), top, best_rank, best_market
 
@@ -430,7 +441,8 @@ def _compute_all_matches(
             for g in groups:
                 for aid in g["member_app_ids"]:
                     hit = rank_by_app.get(aid)
-                    if hit and (best_rank is None or hit[0] < best_rank):
+                    cur = (best_rank, best_market) if best_rank is not None else None
+                    if hit and _prefer_market(hit[0], hit[1], cur):
                         best_rank, best_market = hit
         out[eid] = (len(groups), top, best_rank, best_market)
     return out

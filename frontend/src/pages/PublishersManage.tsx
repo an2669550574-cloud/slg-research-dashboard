@@ -284,8 +284,14 @@ export default function PublishersManage() {
         (Number(!b.is_slg) - Number(!a.is_slg)) || (b.children.length - a.children.length) || (a.id - b.id))[0]
       const rest = sortFlat(members.filter(m => m.id !== root.id))
       // 集团最佳名次取自「best_rank 最小」的成员——连同其命中市场一并带出，卡上才知道是哪国榜。
-      const top = members.reduce<PublisherEntity | null>(
-        (b, m) => (m.best_rank != null && (b == null || m.best_rank < b.best_rank!)) ? m : b, null)
+      // 名次相同时优先美国榜（与后端 _prefer_market 口径一致）。
+      const top = members.reduce<PublisherEntity | null>((b, m) => {
+        if (m.best_rank == null) return b
+        if (b == null) return m
+        if (m.best_rank !== b.best_rank) return m.best_rank < b.best_rank! ? m : b
+        const mUS = !!m.best_rank_market?.startsWith('US/'), bUS = !!b.best_rank_market?.startsWith('US/')
+        return mUS && !bUS ? m : b
+      }, null)
       grp.push({ key: root.id, root, members: [root, ...rest],
         bestRank: top?.best_rank ?? NO_RANK, bestMarket: top?.best_rank_market ?? null })
     })
