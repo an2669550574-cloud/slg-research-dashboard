@@ -10,6 +10,22 @@ os.environ["API_KEY"] = ""
 os.environ["CORS_ORIGINS"] = "*"
 os.environ["SENSOR_TOWER_API_KEY"] = ""
 os.environ["ANTHROPIC_API_KEY"] = ""
+# 本地 backend/.env 配了真实看板址时，digest 会拼「看板定位」深链，污染不 patch
+# 该项的用例（test_newcomer_log）。统一清空给确定基线；需测深链的用例自行 monkeypatch。
+os.environ["DASHBOARD_BASE_URL"] = ""
+
+
+@pytest.fixture(autouse=True)
+def _reset_slg_index():
+    """每个测试前把 slg_publishers 内存索引重置回种子态。
+
+    is_slg 查的是模块级全局索引；publisher 写端点 / load_index_from_db 会就地
+    覆盖它且不还原，导致跨文件污染（如 test_newcomers 跑后 test_slg_publishers
+    全红，但各文件单独跑都绿）。在此统一给每个用例一个确定的种子基线。
+    import 放函数内：app fixture 会清 sys.modules 重导入模块，必须拿当前实例。"""
+    from app.services import slg_publishers
+    slg_publishers.reset_index_to_seed()
+    yield
 
 
 @pytest.fixture
