@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
@@ -6,7 +6,7 @@ import { newcomersApi, publishersApi } from '../lib/api'
 import { formatRevenue, formatNumber } from '../lib/utils'
 import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
-import { Download as DownloadIcon, Sparkles, Info, FilePlus2, Globe2, Building2, Store, RefreshCw, Star, X, ExternalLink, Repeat, Clock, Ban } from 'lucide-react'
+import { Download as DownloadIcon, Sparkles, Info, FilePlus2, Globe2, Building2, Store, RefreshCw, Star, X, ExternalLink, Repeat, Clock, Ban, ChevronDown } from 'lucide-react'
 import { COUNTRIES, PLATFORMS, platformLabel, type Country, type Platform } from '../lib/markets'
 import { GameIcon } from '../components/GameIcon'
 import { QueryError } from '../components/QueryError'
@@ -21,6 +21,9 @@ export default function NewReleases() {
   const qc = useQueryClient()
   // 全市场新面孔（检出历史，跨市场合并）/ 厂商新品（已建档主体 × 任意名次首次出现）
   const [view, setView] = useState<'market' | 'publisher'>('market')
+  // digest 深链：?focus=<app_id>&view=<market|publisher> 进页定位高亮该卡（A4）。
+  // 用 mount effect 从 URL 同步（避开 lazy 路由 + Suspense 下 useState 惰性初始化的取值竞态）。
+  const [focusId, setFocusId] = useState<string | null>(null)
   // 历史视图筛选：默认全市场全平台合并（卡片自带 combo 徽标），Top100 / 90 天。
   const [mktPlatform, setMktPlatform] = useLocalStorageState<'all' | Platform>('slg.nc.platform', 'all')
   const [mktCountry, setMktCountry] = useLocalStorageState<'all' | Country>('slg.nc.country', 'all')
@@ -73,9 +76,9 @@ export default function NewReleases() {
   // 有发行商名 → publisher 粒度（corp_squash 归一，覆盖该厂全部新品）；无名退回 app_id 粒度。
   // /history 读时按忽略名单过滤，故 invalidate 后该行立即消失。A↔B 双动作闭环。
   const ignoreMut = useMutation({
-    mutationFn: (g: NewcomerHistoryItem) => {
+    mutationFn: ({ g, scope }: { g: NewcomerHistoryItem; scope: 'publisher' | 'app_id' }) => {
       const pub = g.publisher?.trim()
-      return publishersApi.addIgnore(pub
+      return publishersApi.addIgnore(scope === 'publisher' && pub
         ? { kind: 'publisher', raw_value: pub, label: pub, note: t.newcomers.ignoreNote }
         : { kind: 'app_id', raw_value: g.app_id, label: g.name, note: t.newcomers.ignoreNote })
     },
@@ -85,9 +88,13 @@ export default function NewReleases() {
       toast.success(t.newcomers.ignored(row.label || row.value))
     },
   })
-  const handleIgnore = (g: NewcomerHistoryItem) => {
-    if (!window.confirm(t.newcomers.ignoreConfirm(g.publisher?.trim() || g.name))) return
-    ignoreMut.mutate(g)
+  const handleIgnore = (g: NewcomerHistoryItem, scope: 'publisher' | 'app_id') => {
+    const pub = g.publisher?.trim()
+    const msg = scope === 'publisher' && pub
+      ? t.newcomers.ignoreConfirm(pub)
+      : t.newcomers.ignoreConfirmApp(g.name)
+    if (!window.confirm(msg)) return
+    ignoreMut.mutate({ g, scope })
   }
 
   // CSV 仍导逐市场全量行（不丢粒度）；卡片按 app_id 跨市场合并展示。
@@ -98,6 +105,42 @@ export default function NewReleases() {
     () => groupPublisherByApp(pubQuery.data?.items ?? []).length,
     [pubQuery.data],
   )
+
+  // digest 深链：mount 时一次性从 URL 读 focus/view。focusId 不主动清除——高亮靠 CSS
+  // focus-flash 的 box-shadow 自行淡出（animation forwards），focusId 仅作滚动定位锚点。
+  // （试过用 setTimeout 清 focusId，在 StrictMode 下会过早把高亮抹掉，遂改纯 CSS 淡出。）
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search)
+    if (sp.get('view') === 'publisher') setView('publisher')
+    const f = sp.get('focus')
+    if (f) setFocusId(f)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // 深链定位：数据渲染后滚动到该卡一次（scrolledRef 防重复）。用 instant 滚动并重试——
+  // 滚动容器 <main> 首帧可能还没布局完（clientHeight=0），scrollIntoView 此时是空操作；
+  // 故轮询到容器有高度再滚，最多 ~1.5s。smooth 会被频繁重渲染打断，用 instant。
+  const scrolledRef = useRef(false)
+  useEffect(() => {
+    if (!focusId) { scrolledRef.current = false; return }
+    if (scrolledRef.current) return
+    const loading = view === 'market' ? isLoading : pubQuery.isLoading
+    if (loading) return
+    let tries = 0
+    let timer = 0
+    const attempt = () => {
+      const el = document.querySelector<HTMLElement>(`[data-app-id="${CSS.escape(focusId)}"]`)
+      const scroller = el?.closest<HTMLElement>('.overflow-y-auto')
+      if (el && scroller && scroller.clientHeight > 0) {
+        el.scrollIntoView({ block: 'center' })
+        scrolledRef.current = true
+        return
+      }
+      if (tries++ < 15) timer = window.setTimeout(attempt, 100)
+    }
+    attempt()
+    return () => window.clearTimeout(timer)
+  }, [focusId, view, isLoading, pubQuery.isLoading])
 
   return (
     <div className="px-4 sm:px-7 py-5 sm:py-7 max-w-[1500px] mx-auto space-y-5">
@@ -241,7 +284,7 @@ export default function NewReleases() {
       {view === 'publisher' ? (
         <>
           <AppstoreReleasesSection />
-          <PublisherNewcomersTable query={pubQuery} />
+          <PublisherNewcomersTable query={pubQuery} focusId={focusId} />
         </>
       ) : (
       <div>
@@ -271,8 +314,9 @@ export default function NewReleases() {
               return (
               <div
                 key={gr.app_id}
+                data-app-id={gr.app_id}
                 onClick={() => setSelected(gr)}
-                className="bg-surface border border-default hover:border-strong rounded-xl p-4 cursor-pointer transition-colors space-y-3"
+                className={`bg-surface border border-default rounded-xl p-4 cursor-pointer transition-colors space-y-3 ${focusId === gr.app_id ? 'focus-flash' : 'hover:border-strong'}`}
               >
                 <div className="flex items-start gap-3">
                   <GameIcon src={g.icon_url} name={g.name} className="w-12 h-12 rounded-xl shrink-0" />
@@ -350,14 +394,7 @@ export default function NewReleases() {
                       >
                         <FilePlus2 size={11} />{t.newcomers.triage}
                       </button>
-                      <button
-                        onClick={ev => { ev.stopPropagation(); handleIgnore(g) }}
-                        disabled={ignoreMut.isPending}
-                        title={t.newcomers.ignore}
-                        className="inline-flex items-center gap-1 text-[10px] text-muted hover:text-secondary border border-default hover:border-strong rounded px-1.5 py-0.5 transition-colors disabled:opacity-50"
-                      >
-                        <Ban size={11} />{t.newcomers.ignore}
-                      </button>
+                      <IgnoreControl g={g} disabled={ignoreMut.isPending} onIgnore={handleIgnore} />
                     </>
                   )}
                 </div>
@@ -375,6 +412,67 @@ export default function NewReleases() {
         <Info size={13} className="mt-0.5 shrink-0" />
         <span>{view === 'market' ? t.newcomers.note : t.newcomers.publisherNote}</span>
       </div>
+    </div>
+  )
+}
+
+
+/** 忽略控件：无发行商名 → 单按钮 app_id 粒度（与旧行为一致）；有名 → 下拉两选项
+ *  （忽略整个发行商 / 仅忽略此 app），让运营对「同厂只想滤掉这一款」的场景有 app 粒度。
+ *  所有 hooks 在任何 early return 之前（prop 切换不变 hook 数量，避免崩页）。 */
+function IgnoreControl({ g, disabled, onIgnore }: {
+  g: NewcomerHistoryItem
+  disabled: boolean
+  onIgnore: (g: NewcomerHistoryItem, scope: 'publisher' | 'app_id') => void
+}) {
+  const t = useT()
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [open])
+
+  const btnCls = 'inline-flex items-center gap-1 text-[10px] text-muted hover:text-secondary border border-default hover:border-strong rounded px-1.5 py-0.5 transition-colors disabled:opacity-50'
+  const pub = g.publisher?.trim()
+
+  if (!pub) {
+    return (
+      <button
+        onClick={ev => { ev.stopPropagation(); onIgnore(g, 'app_id') }}
+        disabled={disabled}
+        title={t.newcomers.ignore}
+        className={btnCls}
+      >
+        <Ban size={11} />{t.newcomers.ignore}
+      </button>
+    )
+  }
+  return (
+    <div ref={ref} className="relative" onClick={ev => ev.stopPropagation()}>
+      <button onClick={() => setOpen(o => !o)} disabled={disabled} title={t.newcomers.ignore} className={btnCls}>
+        <Ban size={11} />{t.newcomers.ignore}<ChevronDown size={10} />
+      </button>
+      {open && (
+        <div className="absolute z-20 right-0 mt-1 w-48 bg-elevated border border-default rounded-lg shadow-lg overflow-hidden">
+          <button
+            onClick={() => { setOpen(false); onIgnore(g, 'publisher') }}
+            className="w-full text-left px-3 py-2 text-[11px] text-secondary hover:bg-surface hover:text-primary transition-colors"
+          >
+            {t.newcomers.ignoreScopePublisher(pub)}
+          </button>
+          <button
+            onClick={() => { setOpen(false); onIgnore(g, 'app_id') }}
+            className="w-full text-left px-3 py-2 text-[11px] text-secondary hover:bg-surface hover:text-primary transition-colors border-t border-default"
+          >
+            {t.newcomers.ignoreScopeApp}
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -631,7 +729,7 @@ function AppstoreReleasesSection() {
   )
 }
 
-function PublisherNewcomersTable({ query }: { query: UseQueryResult<PublisherNewcomersOut> }) {
+function PublisherNewcomersTable({ query, focusId }: { query: UseQueryResult<PublisherNewcomersOut>; focusId: string | null }) {
   const t = useT()
   const navigate = useNavigate()
   const { data, isLoading, isError, refetch } = query
@@ -667,7 +765,8 @@ function PublisherNewcomersTable({ query }: { query: UseQueryResult<PublisherNew
                 return (
                 <tr
                   key={gr.app_id}
-                  className="hover:bg-elevated/50 cursor-pointer transition-colors"
+                  data-app-id={gr.app_id}
+                  className={`cursor-pointer transition-colors ${focusId === gr.app_id ? 'bg-accent/10 focus-flash' : 'hover:bg-elevated/50'}`}
                   onClick={() => navigate(`/game/${gr.app_id}`)}
                 >
                   <td className="px-5 py-3.5">

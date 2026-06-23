@@ -193,6 +193,9 @@ export const en: Translations = {
     triageBrief: (game: string, market: string) => `From New Releases · ${market} · ${game}`,
     ignore: 'Ignore',
     ignoreConfirm: (name: string) => `Mark "${name}" as non-SLG and add to the ignore list? It will stop appearing in New Releases / research gaps (restorable on the Publishers page).`,
+    ignoreConfirmApp: (name: string) => `Ignore only this app "${name}"? Marks just this title as non-SLG; other titles from the same publisher still appear (restorable on the Publishers page).`,
+    ignoreScopePublisher: (name: string) => `Ignore whole publisher "${name}"`,
+    ignoreScopeApp: 'Ignore this app only',
     ignored: (name: string) => `Ignored: ${name} · hidden from New Releases / gaps`,
     ignoreNote: 'Marked non-SLG from New Releases',
     // First launch vs re-entry (PR #93)

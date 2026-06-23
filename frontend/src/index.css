@@ -150,8 +150,17 @@
   }
   .pulse-dot { animation: pulse-dot 2.4s ease-in-out infinite; }
 
+  /* digest 深链定位高亮：进页时被 focus 的卡/行闪一下 accent 光晕后淡出（一次性，
+     onAnimationEnd 清 focusId）。box-shadow 不挤占布局，市场卡与厂商行通用。 */
+  @keyframes focus-flash {
+    0%,68% { box-shadow: 0 0 0 2px rgb(var(--accent) / 0.85), 0 0 22px 2px rgb(var(--accent) / 0.45); }
+    100%   { box-shadow: 0 0 0 0 rgb(var(--accent) / 0); }
+  }
+  .focus-flash { animation: focus-flash 3s ease-out forwards; }
+
   @media (prefers-reduced-motion: reduce) {
     .reveal, .scan-rule::after, .pulse-dot { animation: none; opacity: 1; }
     .reveal { transform: none; }
+    .focus-flash { animation: none; box-shadow: 0 0 0 2px rgb(var(--accent) / 0.85); }
   }
 }
