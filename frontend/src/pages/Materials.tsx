@@ -125,11 +125,12 @@ export default function Materials() {
     queryFn: () => materialsApi.tags(filterGame || undefined),
   })
 
-  // 分面筛选维度（P3）：跟随类型筛选取适用的一级标签；只用文字型(有二级选项)做分面。
-  // 与编辑器/表单共享 ['tagDimensions', type] 缓存。零 ST 配额。
+  // 分面筛选维度（P3 + S3）：跟随类型 + 当前游戏筛选取适用的一级标签；只用文字型(有二级选项)做分面。
+  // 选了游戏时按产品作用域收敛：只显示该游戏可见的维度/选项，与打标签编辑器口径一致。
+  // 与编辑器/表单共享 ['tagDimensions', type, appId] 缓存。零 ST 配额。
   const { data: facetDims = [] } = useQuery({
-    queryKey: ['tagDimensions', filterType || 'all'],
-    queryFn: () => tagsApi.listDimensions(filterType || undefined),
+    queryKey: ['tagDimensions', filterType || 'all', filterGame || 'any'],
+    queryFn: () => tagsApi.listDimensions(filterType || undefined, filterGame || undefined),
   })
   const facetable = facetDims.filter(d => d.value_type === 'text' && d.options.length > 0)
   const toggleFacet = (optId: number) => setFilterOptions(prev => {
@@ -715,7 +716,8 @@ export default function Materials() {
           <input placeholder={t.materials.notesPlaceholder} value={form.notes}
             onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className={inputClass} />
 
-          <StructuredTagEditor materialType={editorMaterialType} value={tagValues} onChange={setTagValues} />
+          <StructuredTagEditor materialType={editorMaterialType} appId={form.app_id || undefined}
+            value={tagValues} onChange={setTagValues} />
 
           <div className="flex justify-end gap-2 border-t border-default pt-4">
             <button type="button" onClick={closeForm}

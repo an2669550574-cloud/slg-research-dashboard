@@ -1,19 +1,23 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
-import { Plus, Trash2, Pencil, X, Calendar, Type, Asterisk } from 'lucide-react'
-import { tagsApi } from '../lib/api'
+import { Plus, Trash2, Pencil, X, Calendar, Type, Asterisk, Globe2, Package } from 'lucide-react'
+import { tagsApi, gamesApi } from '../lib/api'
 import { useT } from '../i18n'
 import { PageHeader } from '../components/PageHeader'
 import { QueryError } from '../components/QueryError'
-import type { TagDimension, TagOption, TagValueType } from '../lib/types'
+import type { TagDimension, TagOption, TagValueType, GameOut } from '../lib/types'
 
 // 计算「字符数」用 code point 长度（[...s].length），与后端 max_length=8 口径一致；
 // 直接 s.length 会把代理对算成 2、给中文/emoji 错误计数。
 const charLen = (s: string) => [...s].length
 
-type DimForm = { name: string; value_type: TagValueType; is_required: boolean; allow_multi: boolean }
-const EMPTY_DIM: DimForm = { name: '', value_type: 'text', is_required: false, allow_multi: true }
+type DimForm = {
+  name: string; value_type: TagValueType; is_required: boolean; allow_multi: boolean
+  // 产品作用域名单（S1）：空 = 通用；非空 = 仅名单内 app_id 可见。
+  app_ids: string[]
+}
+const EMPTY_DIM: DimForm = { name: '', value_type: 'text', is_required: false, allow_multi: true, app_ids: [] }
 type Mode = { kind: 'closed' } | { kind: 'create' } | { kind: 'edit'; id: number }
 
 const QK = ['tagDimensions'] as const
@@ -34,6 +38,17 @@ export default function TagsManage() {
     queryKey: QK,
     queryFn: () => tagsApi.listDimensions(),
   })
+  // 产品作用域 picker 的候选游戏：与 Materials 页同 queryKey 共享缓存
+  const { data: allGames = [] } = useQuery({
+    queryKey: ['games', 'tracked'],
+    queryFn: () => gamesApi.list({ limit: 200 }),
+  })
+  const gameMap = useMemo(
+    () => Object.fromEntries(allGames.map(g => [g.app_id, g.name])),
+    [allGames],
+  )
+  // 选项作用域编辑 modal 态：当前正在编辑作用域的二级标签 id
+  const [scopeModal, setScopeModal] = useState<{ opt: TagOption; dim: TagDimension } | null>(null)
 
   const invalidate = () => qc.invalidateQueries({ queryKey: QK })
 
@@ -67,7 +82,10 @@ export default function TagsManage() {
   function openCreate() { setMode({ kind: 'create' }); setForm(EMPTY_DIM) }
   function openEdit(d: TagDimension) {
     setMode({ kind: 'edit', id: d.id })
-    setForm({ name: d.name, value_type: d.value_type, is_required: d.is_required, allow_multi: d.allow_multi })
+    setForm({
+      name: d.name, value_type: d.value_type, is_required: d.is_required,
+      allow_multi: d.allow_multi, app_ids: [...(d.app_ids ?? [])],
+    })
   }
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -78,8 +96,10 @@ export default function TagsManage() {
     if (mode.kind === 'create') {
       createDimMut.mutate({ ...form, name })
     } else if (mode.kind === 'edit') {
-      // value_type 不可改，仅提交可变字段
-      updateDimMut.mutate({ id: mode.id, data: { name, is_required: form.is_required, allow_multi: form.allow_multi } })
+      // value_type 不可改，仅提交可变字段；app_ids 走 replace-all（[] 即改回通用）
+      updateDimMut.mutate({ id: mode.id, data: {
+        name, is_required: form.is_required, allow_multi: form.allow_multi, app_ids: form.app_ids,
+      } })
     }
   }
 
@@ -174,6 +194,13 @@ export default function TagsManage() {
               {tt.multiLabel}
             </label>
           </div>
+          <ProductScopePicker
+            value={form.app_ids}
+            onChange={ids => setForm(f => ({ ...f, app_ids: ids }))}
+            games={allGames}
+            gameMap={gameMap}
+            inputClass={inputClass}
+          />
           <div className="flex justify-end gap-2">
             <button type="button" onClick={closeForm}
               className="px-3 py-1.5 text-sm text-secondary hover:text-primary">{t.common.cancel}</button>
@@ -210,6 +237,21 @@ export default function TagsManage() {
                   <span className="text-[10px] text-muted border border-default rounded px-1.5 py-0.5 shrink-0">
                     {d.allow_multi ? tt.badgeMulti : tt.badgeSingle}
                   </span>
+                  {/* 产品作用域徽标（S1）：通用 / 仅 N 个产品；hover 提示具体产品名 */}
+                  {(() => {
+                    const ids = d.app_ids ?? []
+                    return ids.length === 0 ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] text-muted border border-default rounded px-1.5 py-0.5 shrink-0"
+                        title={tt.scopeUniversal}>
+                        <Globe2 size={10} /> {tt.scopeUniversal}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-[10px] text-accent border border-accent/40 bg-accent/10 rounded px-1.5 py-0.5 shrink-0"
+                        title={ids.map(a => gameMap[a] || a).join(' · ')}>
+                        <Package size={10} /> {tt.scopeNGames(ids.length)}
+                      </span>
+                    )
+                  })()}
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <button onClick={() => openEdit(d)} title={t.common.edit}
@@ -225,15 +267,28 @@ export default function TagsManage() {
                 <div className="border-t border-default pt-3 space-y-2">
                   <div className="text-[11px] text-secondary">{tt.optionsLabel}（{d.options.length}）</div>
                   <div className="flex flex-wrap items-center gap-2">
-                    {d.options.map(o => (
-                      <span key={o.id}
-                        className="group inline-flex items-center gap-1.5 text-xs text-primary bg-elevated border border-default rounded-lg pl-2.5 pr-1.5 py-1">
-                        <button onClick={() => handleRenameOpt(o)} title={t.common.edit}
-                          className="hover:text-brand-400 transition-colors">{o.value}</button>
-                        <button onClick={() => handleDeleteOpt(o)} title={t.common.delete}
-                          className="text-muted hover:text-red-400 transition-colors"><X size={12} /></button>
-                      </span>
-                    ))}
+                    {d.options.map(o => {
+                      const optIds = o.app_ids ?? []
+                      return (
+                        <span key={o.id}
+                          className="group inline-flex items-center gap-1.5 text-xs text-primary bg-elevated border border-default rounded-lg pl-2.5 pr-1.5 py-1">
+                          <button onClick={() => handleRenameOpt(o)} title={t.common.edit}
+                            className="hover:text-brand-400 transition-colors">{o.value}</button>
+                          {/* 选项作用域（S2）：通用→只 hover 显淡色 / 限定→显徽标 */}
+                          <button type="button" onClick={() => setScopeModal({ opt: o, dim: d })}
+                            title={optIds.length === 0 ? tt.scopeUniversal : tt.scopeNGames(optIds.length) + '：' + optIds.map(a => gameMap[a] || a).join(' · ')}
+                            className={`inline-flex items-center gap-0.5 transition-colors ${optIds.length === 0
+                              ? 'opacity-0 group-hover:opacity-100 text-muted hover:text-brand-400'
+                              : 'text-accent hover:brightness-110'}`}>
+                            {optIds.length === 0 ? <Globe2 size={10} /> : (<>
+                              <Package size={10} /><span className="text-[10px]">{optIds.length}</span>
+                            </>)}
+                          </button>
+                          <button onClick={() => handleDeleteOpt(o)} title={t.common.delete}
+                            className="text-muted hover:text-red-400 transition-colors"><X size={12} /></button>
+                        </span>
+                      )
+                    })}
                     <span className="inline-flex items-center gap-1">
                       <input
                         value={newOpt[d.id] || ''}
@@ -254,6 +309,133 @@ export default function TagsManage() {
           ))}
         </div>
       )}
+
+      {scopeModal && (
+        <OptionScopeModal
+          opt={scopeModal.opt}
+          dim={scopeModal.dim}
+          games={allGames}
+          gameMap={gameMap}
+          inputClass={inputClass}
+          onClose={() => setScopeModal(null)}
+          onSaved={() => { invalidate(); setScopeModal(null) }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── 复用：产品作用域多选 picker（chip + 搜索 + 滚动候选区）─────────────────
+type PickerProps = {
+  value: string[]
+  onChange: (next: string[]) => void
+  games: GameOut[]
+  gameMap: Record<string, string>
+  inputClass: string
+}
+function ProductScopePicker({ value, onChange, games, gameMap, inputClass }: PickerProps) {
+  const t = useT()
+  const tt = t.tagsManage
+  const [q, setQ] = useState('')
+  const filtered = useMemo(() => {
+    const k = q.trim().toLowerCase()
+    if (!k) return games
+    return games.filter(g => g.name.toLowerCase().includes(k) || g.app_id.toLowerCase().includes(k))
+  }, [games, q])
+  const toggle = (aid: string) => onChange(
+    value.includes(aid) ? value.filter(x => x !== aid) : [...value, aid]
+  )
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <label className="text-xs text-secondary">{tt.scopeLabel}</label>
+        <span className="text-[10px] text-muted">{tt.scopeHint}</span>
+      </div>
+      {value.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {value.map(aid => (
+            <span key={aid}
+              className="inline-flex items-center gap-1 text-[11px] text-accent bg-accent/10 border border-accent/40 rounded pl-2 pr-1 py-0.5">
+              {gameMap[aid] || aid}
+              <button type="button" onClick={() => toggle(aid)}
+                className="text-muted hover:text-red-400"><X size={10} /></button>
+            </span>
+          ))}
+          <button type="button" onClick={() => onChange([])}
+            className="text-[11px] text-muted hover:text-red-400 px-1">{tt.scopeClearAll}</button>
+        </div>
+      )}
+      <input value={q} onChange={e => setQ(e.target.value)}
+        placeholder={tt.scopeSearchPlaceholder} className={`w-full ${inputClass}`} />
+      <div className="max-h-40 overflow-y-auto border border-default rounded-lg bg-elevated">
+        {filtered.length === 0 ? (
+          <p className="text-[11px] text-muted px-3 py-2">{t.common.noData}</p>
+        ) : (
+          <div className="divide-y divide-default">
+            {filtered.map(g => {
+              const checked = value.includes(g.app_id)
+              return (
+                <label key={g.app_id}
+                  className="flex items-center gap-2 px-3 py-1.5 text-xs text-secondary hover:bg-surface cursor-pointer">
+                  <input type="checkbox" checked={checked} onChange={() => toggle(g.app_id)}
+                    className="accent-brand-500" />
+                  <span className="text-primary truncate">{g.name}</span>
+                  <span className="text-[10px] text-muted ml-auto">{g.app_id}</span>
+                </label>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── 二级标签作用域编辑 modal（S2）──────────────────────────────────────────
+type OptionScopeModalProps = {
+  opt: TagOption
+  dim: TagDimension
+  games: GameOut[]
+  gameMap: Record<string, string>
+  inputClass: string
+  onClose: () => void
+  onSaved: () => void
+}
+function OptionScopeModal({ opt, dim, games, gameMap, inputClass, onClose, onSaved }: OptionScopeModalProps) {
+  const t = useT()
+  const tt = t.tagsManage
+  const [ids, setIds] = useState<string[]>(opt.app_ids ?? [])
+  // opt 切换时同步初值（不同选项点开同一个 modal）
+  useEffect(() => { setIds(opt.app_ids ?? []) }, [opt.id, opt.app_ids])
+  const mut = useMutation({
+    mutationFn: () => tagsApi.updateOption(opt.id, { app_ids: ids }),
+    onSuccess: () => { toast.success(tt.optScopeSaved); onSaved() },
+  })
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      onClick={onClose}>
+      <div className="bg-surface border border-default rounded-xl p-5 max-w-lg w-full space-y-4"
+        onClick={e => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-semibold text-primary">{tt.optScopeTitle}</h3>
+            <p className="text-[11px] text-muted mt-0.5">
+              {dim.name} · <span className="text-secondary">{opt.value}</span>
+            </p>
+          </div>
+          <button onClick={onClose} className="text-muted hover:text-red-400"><X size={14} /></button>
+        </div>
+        <ProductScopePicker value={ids} onChange={setIds}
+          games={games} gameMap={gameMap} inputClass={inputClass} />
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose}
+            className="px-3 py-1.5 text-sm text-secondary hover:text-primary">{t.common.cancel}</button>
+          <button type="button" disabled={mut.isPending} onClick={() => mut.mutate()}
+            className="px-4 py-1.5 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 rounded-lg text-sm text-white transition-colors">
+            {mut.isPending ? t.common.saving : t.common.save}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

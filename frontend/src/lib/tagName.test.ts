@@ -5,10 +5,10 @@ import type { TagValueState } from '../components/StructuredTagEditor'
 
 // 中文标签库夹具：路型(单/多选 text) / 桶子(text) / 投放时间(date)。
 const opt = (id: number, value: string, dimension_id: number): TagDimension['options'][number] =>
-  ({ id, dimension_id, value, sort_order: 0, created_at: '2026-06-02T00:00:00' })
+  ({ id, dimension_id, value, sort_order: 0, created_at: '2026-06-02T00:00:00', app_ids: [] })
 
 const dim = (id: number, name: string, value_type: 'text' | 'date', options: TagDimension['options']): TagDimension =>
-  ({ id, name, value_type, material_type: null, is_required: false, allow_multi: true, sort_order: id, created_at: '2026-06-02T00:00:00', options })
+  ({ id, name, value_type, material_type: null, is_required: false, allow_multi: true, sort_order: id, created_at: '2026-06-02T00:00:00', options, app_ids: [] })
 
 const road = dim(2, '路型', 'text', [opt(11, '1路', 2), opt(12, '2路', 2), opt(13, '3路', 2)])
 const bucket = dim(3, '桶子', 'text', [opt(21, '红桶', 3), opt(22, '蓝桶', 3)])

@@ -544,9 +544,12 @@ export interface TagOption {
   value: string
   sort_order: number
   created_at: IsoDateString
+  /** 选项级产品作用域名单（S2）；空 = 通用。打标签态下后端按 app_id 收敛后空表示「该产品可见的通用选项」。 */
+  app_ids: string[]
 }
 
-/** 一级标签（维度 / 框架）。value_type=date 时 options 恒空。 */
+/** 一级标签（维度 / 框架）。value_type=date 时 options 恒空。
+ * app_ids 为产品作用域名单（S1）：空 = 通用（所有产品可见）；非空 = 仅名单内 app_id 可见。 */
 export interface TagDimension {
   id: number
   name: string
@@ -557,6 +560,7 @@ export interface TagDimension {
   sort_order: number
   created_at: IsoDateString
   options: TagOption[]
+  app_ids: string[]
 }
 
 export interface TagDimensionCreate {
@@ -566,6 +570,8 @@ export interface TagDimensionCreate {
   is_required?: boolean
   allow_multi?: boolean
   sort_order?: number
+  /** 产品作用域名单；省略/空 = 通用。 */
+  app_ids?: string[]
 }
 
 // value_type 不可改（后端刻意省略）：text↔date 切换会让既有数据语义错乱。
@@ -574,6 +580,8 @@ export type TagDimensionUpdate = Partial<Omit<TagDimensionCreate, 'value_type'>>
 export interface TagOptionCreate {
   value: string
   sort_order?: number
+  /** 选项级产品作用域名单（S2）；省略/空 = 通用。 */
+  app_ids?: string[]
 }
 
 export type TagOptionUpdate = Partial<TagOptionCreate>
