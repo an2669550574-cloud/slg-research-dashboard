@@ -13,11 +13,15 @@ ValueType = Literal["text", "date"]
 class TagOptionCreate(BaseModel):
     value: str = Field(..., min_length=1, max_length=NAME_MAX)
     sort_order: int = 0
+    # 选项级作用域（S2）；空 = 通用。
+    app_ids: list[str] = []
 
 
 class TagOptionUpdate(BaseModel):
     value: Optional[str] = Field(None, min_length=1, max_length=NAME_MAX)
     sort_order: Optional[int] = None
+    # None = 不动；[] = 改回通用；非空 = replace-all。
+    app_ids: Optional[list[str]] = None
 
 
 class TagOptionOut(BaseModel):
@@ -28,6 +32,8 @@ class TagOptionOut(BaseModel):
     value: str
     sort_order: int
     created_at: datetime
+    # 选项级作用域名单（S2）；空 = 通用。
+    app_ids: list[str] = []
 
 
 # ── 一级标签（dimension）──────────────────────────────────────────────────
@@ -39,6 +45,8 @@ class TagDimensionCreate(BaseModel):
     is_required: bool = False
     allow_multi: bool = True
     sort_order: int = 0
+    # 适用产品 app_id 名单（S1）；空 = 通用（所有产品可见）。
+    app_ids: list[str] = []
 
 
 class TagDimensionUpdate(BaseModel):
@@ -48,6 +56,8 @@ class TagDimensionUpdate(BaseModel):
     allow_multi: Optional[bool] = None
     sort_order: Optional[int] = None
     # value_type 刻意不可改：text↔date 切换会让既有二级值 / 已打标记语义错乱，要换重建。
+    # None = 不改；[] = 改为通用；非空 = replace-all 重设作用域名单。
+    app_ids: Optional[list[str]] = None
 
 
 class TagDimensionOut(BaseModel):
@@ -62,6 +72,8 @@ class TagDimensionOut(BaseModel):
     sort_order: int
     created_at: datetime
     options: list[TagOptionOut] = []
+    # 适用产品名单（S1）；空 = 通用。前端管理页据此渲染「通用 / N 个产品」徽标。
+    app_ids: list[str] = []
 
 
 # ── 素材打标签（material_tag_values，P2）──────────────────────────────────

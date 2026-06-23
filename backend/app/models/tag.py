@@ -40,6 +40,40 @@ class TagOption(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 
 
+class TagOptionProduct(Base):
+    """二级标签 ↔ 产品(app_id) 作用域（migration 0025，S2）。
+
+    空名单 = 通用选项；非空 = 仅名单内产品可见（典型：「角色」维度共享、各游戏角色值不混）。
+    打标签时与维度作用域并列生效：先按维度名单收敛 dim 列表，再按选项名单收敛 dim.options。
+    删二级标签时由 FK ondelete=CASCADE 自动清理。
+    """
+    __tablename__ = "tag_option_products"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    option_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("tag_options.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    app_id: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class TagDimensionProduct(Base):
+    """一级标签 ↔ 产品(app_id) 作用域（migration 0024，S1）。
+
+    空名单 = 通用维度（所有产品可见，= 现有 7 个种子维度的现状）；非空 = 只对名单内产品可见。
+    打标签 / 维度列表过滤时按 `无名单 OR 名单含目标 app_id` 取并集。
+    删一级标签时由 FK ondelete=CASCADE 自动清理本表。
+    """
+    __tablename__ = "tag_dimension_products"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    dimension_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("tag_dimensions.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    app_id: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
 class MaterialTagValue(Base):
     """素材 ↔ 标签值的关联（junction，migration 0011）。结构化打标签用，与扁平
     materials.tags / analysis_tags 并存不冲突。

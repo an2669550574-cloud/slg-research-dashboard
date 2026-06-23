@@ -296,8 +296,13 @@ function adminHeader(password?: string | null) {
 }
 
 export const tagsApi = {
-  listDimensions: (materialType?: string): Promise<TagDimension[]> =>
-    api.get('/tags/dimensions', { params: materialType ? { material_type: materialType } : {} }).then(r => r.data),
+  listDimensions: (materialType?: string, appId?: string): Promise<TagDimension[]> => {
+    // 打标签/浏览态传 appId → 按产品作用域过滤；不传 = 管理态返回全部
+    const params: Record<string, string> = {}
+    if (materialType) params.material_type = materialType
+    if (appId) params.app_id = appId
+    return api.get('/tags/dimensions', { params }).then(r => r.data)
+  },
   createDimension: (data: TagDimensionCreate): Promise<TagDimension> =>
     api.post('/tags/dimensions', data).then(r => r.data),
   updateDimension: (id: number, data: TagDimensionUpdate): Promise<TagDimension> =>

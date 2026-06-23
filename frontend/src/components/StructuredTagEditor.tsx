@@ -46,18 +46,20 @@ export function missingRequiredNames(dims: TagDimension[], state: TagValueState)
 
 interface Props {
   materialType: string
+  /** 当前素材所属产品（app_id）；传入后只展示作用域包含该产品的维度（S1）。 */
+  appId?: string
   value: TagValueState
   onChange: (next: TagValueState) => void
 }
 
-/** 结构化打标签编辑器：按素材类型列出适用的一级标签，text 维度点选二级标签
- *  (单/多选)，date 维度选日期。零 ST 配额（纯读本地标签库）。 */
-export function StructuredTagEditor({ materialType, value, onChange }: Props) {
+/** 结构化打标签编辑器：按素材类型 + 产品作用域列出适用的一级标签。
+ *  text 维度点选二级标签 (单/多选)，date 维度选日期。零 ST 配额（纯读本地标签库）。 */
+export function StructuredTagEditor({ materialType, appId, value, onChange }: Props) {
   const t = useT()
   const tm = t.materials
   const { data: dims = [], isLoading } = useQuery({
-    queryKey: ['tagDimensions', materialType || 'all'],
-    queryFn: () => tagsApi.listDimensions(materialType || undefined),
+    queryKey: ['tagDimensions', materialType || 'all', appId || 'any'],
+    queryFn: () => tagsApi.listDimensions(materialType || undefined, appId || undefined),
   })
 
   if (isLoading || dims.length === 0) return null
