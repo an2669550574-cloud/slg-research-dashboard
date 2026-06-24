@@ -19,6 +19,7 @@ from app.models.tag import (
 from app.schemas import (
     TagDimensionCreate, TagDimensionUpdate, TagDimensionOut,
     TagOptionCreate, TagOptionUpdate, TagOptionOut,
+    TagScopeBatchInput, TagScopeBatchOut,
     TagAggregateOut, TagAggregateBucket, TagAggregateSubBucket,
 )
 from app.security import require_admin_password
@@ -320,6 +321,43 @@ async def delete_dimension(dim_id: int, db: AsyncSession = Depends(get_db)):
     await db.delete(d)
     await db.commit()
     return {"message": "已删除", "id": dim_id, "removed_options": opt_n, "removed_material_tags": used}
+
+
+# ── 产品视角批量改作用域（S4）─────────────────────────────────────────────
+
+@router.put("/scope/batch", response_model=TagScopeBatchOut)
+async def update_scope_batch(data: TagScopeBatchInput, db: AsyncSession = Depends(get_db)):
+    """「产品视角」一次性提交多条作用域改动（维度 + 选项），原子事务。
+
+    每条对某维度/选项的 app_ids 做 replace-all，与单条 PUT 同语义；前端只发改动行。
+    任一 id 不存在 → 404 整体回滚（不静默跳过，避免前端脏状态被掩盖）。
+    """
+    if data.dimensions:
+        dim_ids = [it.id for it in data.dimensions]
+        found = set((await db.execute(
+            select(TagDimension.id).where(TagDimension.id.in_(dim_ids))
+        )).scalars().all())
+        missing = [i for i in dim_ids if i not in found]
+        if missing:
+            raise HTTPException(status_code=404, detail=f"一级标签不存在：{missing}")
+    if data.options:
+        opt_ids = [it.id for it in data.options]
+        found_o = set((await db.execute(
+            select(TagOption.id).where(TagOption.id.in_(opt_ids))
+        )).scalars().all())
+        missing_o = [i for i in opt_ids if i not in found_o]
+        if missing_o:
+            raise HTTPException(status_code=404, detail=f"二级标签不存在：{missing_o}")
+
+    for it in data.dimensions:
+        await _set_dim_app_ids(it.id, it.app_ids, db)
+    for it in data.options:
+        await _set_opt_app_ids(it.id, it.app_ids, db)
+    await db.commit()
+    return TagScopeBatchOut(
+        updated_dimensions=len(data.dimensions),
+        updated_options=len(data.options),
+    )
 
 
 # ── 二级标签 ───────────────────────────────────────────────────────────────

@@ -586,6 +586,20 @@ export interface TagOptionCreate {
 
 export type TagOptionUpdate = Partial<TagOptionCreate>
 
+/** 产品视角批量改作用域（S4）：一次提交多条维度/选项的 replace-all。 */
+export interface TagScopeItem {
+  id: number
+  app_ids: string[]
+}
+export interface TagScopeBatchInput {
+  dimensions?: TagScopeItem[]
+  options?: TagScopeItem[]
+}
+export interface TagScopeBatchOut {
+  updated_dimensions: number
+  updated_options: number
+}
+
 // ─── 结构化打标签（P2）──────────────────────────────────────────────────
 
 /** 素材上一条已打标记（含维度元信息，免前端再 join）。 */

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
-import { Plus, Trash2, Pencil, X, Calendar, Type, Asterisk, Globe2, Package } from 'lucide-react'
+import { Plus, Trash2, Pencil, X, Calendar, Type, Asterisk, Globe2, Package, Lock, Save } from 'lucide-react'
 import { tagsApi, gamesApi } from '../lib/api'
 import { useT } from '../i18n'
 import { PageHeader } from '../components/PageHeader'
@@ -26,6 +26,7 @@ export default function TagsManage() {
   const t = useT()
   const tt = t.tagsManage
   const qc = useQueryClient()
+  const [viewMode, setViewMode] = useState<'tag' | 'product'>('tag')
   const [mode, setMode] = useState<Mode>({ kind: 'closed' })
   const [form, setForm] = useState<DimForm>(EMPTY_DIM)
   // 每个一级标签卡片下「新增二级标签」输入框各自独立
@@ -140,16 +141,36 @@ export default function TagsManage() {
   return (
     <div className="px-4 sm:px-7 py-5 sm:py-7 max-w-[1500px] mx-auto space-y-5">
       <PageHeader eyebrow="Tags" title={tt.title} subtitle={tt.subtitle}>
-        <button
-          onClick={() => isOpen ? closeForm() : openCreate()}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold text-white bg-accent hover:brightness-110 glow-accent transition-all"
-        >
-          <Plus size={14} />
-          {tt.add}
-        </button>
+        {viewMode === 'tag' && (
+          <button
+            onClick={() => isOpen ? closeForm() : openCreate()}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold text-white bg-accent hover:brightness-110 glow-accent transition-all"
+          >
+            <Plus size={14} />
+            {tt.add}
+          </button>
+        )}
       </PageHeader>
 
-      {isOpen && (
+      {/* 视图切换：标签视角（逐标签配产品）/ 产品视角（选产品批量收窄专属标签）*/}
+      <div className="inline-flex rounded-lg border border-default bg-surface p-0.5 text-sm">
+        {(['tag', 'product'] as const).map(m => (
+          <button key={m} onClick={() => { setViewMode(m); closeForm() }}
+            className={`px-3 py-1.5 rounded-md transition-colors ${viewMode === m
+              ? 'bg-elevated text-primary font-semibold' : 'text-secondary hover:text-primary'}`}>
+            {m === 'tag' ? tt.viewByTag : tt.viewByProduct}
+          </button>
+        ))}
+      </div>
+
+      {viewMode === 'product' && (
+        <ProductScopeView
+          dims={dims} games={allGames} gameMap={gameMap}
+          inputClass={inputClass} onSaved={invalidate}
+        />
+      )}
+
+      {viewMode === 'tag' && isOpen && (
         <form onSubmit={handleSubmit} className="bg-surface border border-default rounded-xl p-5 space-y-4">
           <h3 className="text-sm font-semibold text-primary">
             {isEditing ? tt.editDimTitle : tt.addDimTitle}
@@ -212,7 +233,7 @@ export default function TagsManage() {
         </form>
       )}
 
-      {isError ? (
+      {viewMode === 'tag' && (isError ? (
         <QueryError compact onRetry={() => refetch()} />
       ) : isLoading ? (
         <div className="text-center text-muted text-sm py-12">{t.common.loading}</div>
@@ -308,7 +329,7 @@ export default function TagsManage() {
             </div>
           ))}
         </div>
-      )}
+      ))}
 
       {scopeModal && (
         <OptionScopeModal
@@ -436,6 +457,171 @@ function OptionScopeModal({ opt, dim, games, gameMap, inputClass, onClose, onSav
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+// ── 产品视角（S4）：选一个产品 → 一屏批量把「通用」标签收窄成「该产品专属」──────
+// 语义只做干净的「通用 ⇄ 仅该产品」翻转；多产品 / 属他产品的复杂作用域只读展示，
+// 不让一键勾选误覆盖（白名单是加法语义，clobber 会抹掉别人的名单）。
+type ProductScopeViewProps = {
+  dims: TagDimension[]
+  games: GameOut[]
+  gameMap: Record<string, string>
+  inputClass: string
+  onSaved: () => void
+}
+function ProductScopeView({ dims, games, gameMap, inputClass, onSaved }: ProductScopeViewProps) {
+  const t = useT()
+  const tt = t.tagsManage
+  const [pid, setPid] = useState('')
+  // 仅存「与原值不同」的改动行：维度/选项各一份 map（key=id，value=新 app_ids）
+  const [dimDraft, setDimDraft] = useState<Record<number, string[]>>({})
+  const [optDraft, setOptDraft] = useState<Record<number, string[]>>({})
+
+  const pending = Object.keys(dimDraft).length + Object.keys(optDraft).length
+
+  // 切换产品前若有未保存改动，确认丢弃（避免静默丢工作）
+  function switchProduct(next: string) {
+    if (pending > 0 && !window.confirm(t.common.discardChanges)) return
+    setPid(next); setDimDraft({}); setOptDraft({})
+  }
+
+  const mut = useMutation({
+    mutationFn: () => tagsApi.scopeBatch({
+      dimensions: Object.entries(dimDraft).map(([id, app_ids]) => ({ id: Number(id), app_ids })),
+      options: Object.entries(optDraft).map(([id, app_ids]) => ({ id: Number(id), app_ids })),
+    }),
+    onSuccess: (res) => {
+      toast.success(tt.scopeBatchSaved(res.updated_dimensions, res.updated_options))
+      setDimDraft({}); setOptDraft({}); onSaved()
+    },
+  })
+
+  // 行状态：universal（通用，可勾）/ exclusive（仅本产品，可取消）/ complex（只读）
+  type RowKind = 'universal' | 'exclusive' | 'complex'
+  const classify = (orig: string[]): RowKind => {
+    if (orig.length === 0) return 'universal'
+    if (orig.length === 1 && orig[0] === pid) return 'exclusive'
+    return 'complex'
+  }
+  // 当前生效勾选态（draft 覆盖原值）
+  const isChecked = (id: number, orig: string[], draft: Record<number, string[]>) => {
+    const cur = draft[id] ?? orig
+    return cur.length === 1 && cur[0] === pid
+  }
+  const toggle = (
+    id: number, orig: string[],
+    draft: Record<number, string[]>, setDraft: React.Dispatch<React.SetStateAction<Record<number, string[]>>>,
+  ) => {
+    const next = isChecked(id, orig, draft) ? [] : [pid]
+    setDraft(prev => {
+      const n = { ...prev }
+      // next 与原值相同 → 抵消，移出 draft
+      if (next.length === orig.length && next.every((x, i) => x === orig[i])) delete n[id]
+      else n[id] = next
+      return n
+    })
+  }
+
+  // 复杂作用域行的只读说明：列出名单里的产品名
+  const otherNames = (ids: string[]) => ids.map(a => gameMap[a] || a).join(' · ')
+
+  // 单行复选（维度 / 选项共用）
+  function ScopeRow({ kind, orig, draft, setDraft, id, label, badges }: {
+    kind: RowKind; orig: string[]
+    draft: Record<number, string[]>
+    setDraft: React.Dispatch<React.SetStateAction<Record<number, string[]>>>
+    id: number; label: React.ReactNode; badges?: React.ReactNode
+  }) {
+    if (kind === 'complex') {
+      return (
+        <div className="flex items-center gap-2 text-xs" title={tt.scopeOtherProductsHint}>
+          <Lock size={12} className="text-muted shrink-0" />
+          <span className="text-secondary truncate">{label}</span>
+          {badges}
+          <span className="text-[10px] text-muted truncate ml-auto">{tt.scopeOtherProducts(otherNames(orig))}</span>
+        </div>
+      )
+    }
+    const checked = isChecked(id, orig, draft)
+    const dirty = draft[id] !== undefined
+    return (
+      <label className={`flex items-center gap-2 text-xs cursor-pointer select-none ${dirty ? 'text-accent' : 'text-secondary'}`}>
+        <input type="checkbox" checked={checked} onChange={() => toggle(id, orig, draft, setDraft)}
+          className="accent-brand-500" />
+        <span className="text-primary truncate">{label}</span>
+        {badges}
+        {checked && <span className="text-[10px] text-accent border border-accent/40 bg-accent/10 rounded px-1.5 py-0.5 shrink-0">{tt.restrictToProduct}</span>}
+      </label>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-surface border border-default rounded-xl p-4 space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="text-xs text-secondary">{tt.productPickLabel}</label>
+          <select value={pid} onChange={e => switchProduct(e.target.value)}
+            className={inputClass}>
+            <option value="">{tt.productPickPlaceholder}</option>
+            {games.length === 0
+              ? <option disabled>{tt.noProducts}</option>
+              : games.map(g => <option key={g.app_id} value={g.app_id}>{g.name}（{g.app_id}）</option>)}
+          </select>
+          {pending > 0 && (
+            <span className="text-[11px] text-accent ml-auto">{tt.pendingChanges(pending)}</span>
+          )}
+          <button type="button" disabled={pending === 0 || mut.isPending}
+            onClick={() => mut.mutate()}
+            className="flex items-center gap-1.5 px-4 py-1.5 bg-brand-600 hover:bg-brand-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-sm text-white transition-colors">
+            <Save size={13} />
+            {mut.isPending ? t.common.saving : t.common.save}
+          </button>
+        </div>
+        {pid && <p className="text-[11px] text-muted">{tt.productViewHint}</p>}
+      </div>
+
+      {!pid ? (
+        <div className="text-center text-muted text-sm py-12 bg-surface border border-default rounded-xl">{tt.productViewEmpty}</div>
+      ) : (
+        <div className="space-y-3">
+          {dims.map(d => {
+            const dOrig = d.app_ids ?? []
+            const dKind = classify(dOrig)
+            return (
+              <div key={d.id} className="bg-surface border border-default rounded-xl p-4 space-y-3">
+                <div className="border-b border-default pb-3">
+                  <ScopeRow kind={dKind} orig={dOrig} draft={dimDraft} setDraft={setDimDraft}
+                    id={d.id}
+                    label={<span className="font-display font-bold">{d.name}</span>}
+                    badges={d.is_required ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] text-accent border border-accent/40 bg-accent/10 rounded px-1.5 py-0.5 shrink-0">
+                        <Asterisk size={10} /> {tt.badgeRequired}
+                      </span>
+                    ) : undefined}
+                  />
+                </div>
+                {d.value_type === 'date' ? (
+                  <p className="text-[11px] text-muted">{tt.dateNoOptions}</p>
+                ) : d.options.length === 0 ? (
+                  <p className="text-[11px] text-muted">{tt.optionsLabel}（0）</p>
+                ) : (
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {d.options.map(o => {
+                      const oOrig = o.app_ids ?? []
+                      return (
+                        <ScopeRow key={o.id} kind={classify(oOrig)} orig={oOrig}
+                          draft={optDraft} setDraft={setOptDraft} id={o.id} label={o.value} />
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }

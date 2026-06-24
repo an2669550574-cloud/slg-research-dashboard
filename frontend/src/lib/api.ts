@@ -43,6 +43,8 @@ import type {
   TagOption,
   TagOptionCreate,
   TagOptionUpdate,
+  TagScopeBatchInput,
+  TagScopeBatchOut,
   TagDeleteResponse,
   TagAggregateOut,
   TagAggregateParams,
@@ -317,6 +319,9 @@ export const tagsApi = {
     api.delete(`/tags/options/${optId}`, adminHeader(password)).then(r => r.data),
   aggregate: (params: TagAggregateParams): Promise<TagAggregateOut> =>
     api.get('/tags/aggregate', { params }).then(r => r.data),
+  // 产品视角批量改作用域（S4）：一次原子提交多条维度/选项的 replace-all
+  scopeBatch: (data: TagScopeBatchInput): Promise<TagScopeBatchOut> =>
+    api.put('/tags/scope/batch', data).then(r => r.data),
 }
 
 // AI 标签分析 Agent（P6）：跑报告 / 追问、会话回查、导出 md·csv。走公司网关，零 ST 配额。

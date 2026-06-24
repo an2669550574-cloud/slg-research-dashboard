@@ -8,6 +8,7 @@ from app.schemas.product import (
 from app.schemas.tag import (
     TagDimensionCreate, TagDimensionUpdate, TagDimensionOut,
     TagOptionCreate, TagOptionUpdate, TagOptionOut,
+    TagScopeItem, TagScopeBatchInput, TagScopeBatchOut,
     MaterialTagValueItem, MaterialTagValueInput, MaterialTagValuesPut,
     TagAggregateSubBucket, TagAggregateBucket, TagAggregateOut,
 )
@@ -34,6 +35,9 @@ __all__ = [
     "TagOptionCreate",
     "TagOptionUpdate",
     "TagOptionOut",
+    "TagScopeItem",
+    "TagScopeBatchInput",
+    "TagScopeBatchOut",
     "MaterialTagValueItem",
     "MaterialTagValueInput",
     "MaterialTagValuesPut",
