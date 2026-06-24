@@ -209,6 +209,7 @@ export const en: Translations = {
     // Data freshness (JP/KR/DE/RU weekly sync can lag a few days)
     stalenessHeader: 'Chart sync lag:',
     stalenessDaysAgo: (n: number) => `${n}d ago`,
+    stalenessNote: 'Secondary markets (JP/KR/DE/RU) sync weekly to save quota — a few days of lag is expected',
   },
   wechatAccounts: {
     title: 'WeChat subscriptions',

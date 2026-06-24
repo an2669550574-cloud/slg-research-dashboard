@@ -231,6 +231,8 @@ export const zh = {
     // 数据新鲜度提示（JP/KR/DE/RU 周级同步可能有几天滞后）
     stalenessHeader: '榜单同步滞后：',
     stalenessDaysAgo: (n: number) => `截至 ${n} 天前`,
+    // 安抚说明：次级市场为刻意的周级同步（省 ST 配额），几天滞后是设计内的，非故障
+    stalenessNote: '次级市场（JP/KR/DE/RU）为周级同步以省配额，几天内滞后属正常',
   },
   wechatAccounts: {
     title: '微信公众号订阅',

@@ -499,6 +499,7 @@ function StaleCombosWarning({ asOfByCombo, today }: { asOfByCombo: Record<string
             {s.combo} · {t.newcomers.stalenessDaysAgo(s.days)}
           </span>
         ))}
+        <span className="basis-full text-muted">{t.newcomers.stalenessNote}</span>
       </div>
     </div>
   )
