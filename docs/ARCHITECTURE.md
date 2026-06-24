@@ -159,6 +159,68 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 
 ---
 
+## 标签库 + 产品作用域（PR #113，alembic 0024+0025）
+
+素材标签库是「一级维度（dimension） → 二级选项（option）」两层结构。一级维度可以是
+text 型（下挂枚举值，如「路型」「角色」）或 date 型（打标签时选日期，如「投放时间」）。
+
+### 产品作用域（per-product scope）
+
+每个**维度和选项各自**可挂一份产品作用域名单（junction 表 `tag_dimension_products` /
+`tag_option_products`，FK→ `tag_dimensions.id` / `tag_options.id`，ondelete=CASCADE）。
+**空名单 = 通用**（对所有产品可见，= 现有种子 7 维度 48 选项的默认状态）；非空 = 仅
+名单内 `app_id` 可见。门禁白名单语义：填了名单就只放名单内。
+
+打标签时维度+选项两层叠加过滤（`GET /api/tags/dimensions?app_id=<X>`）：
+
+1. 维度层：`无 dim 名单 OR dim 名单含 X` → 收敛 dimensions
+2. 选项层：在显示出的维度内，`无 opt 名单 OR opt 名单含 X` → 收敛 options
+
+典型场景：「角色」维度通用，但「爱丽丝」只属于 A 游戏、「鲍勃」只属于 B 游戏；
+看 A 的素材打标签时角色维度只列爱丽丝，看 B 时只列鲍勃，互不混淆。
+
+### API 接口语义
+
+`POST /api/tags/dimensions` / `PUT /api/tags/dimensions/{id}`（option 端点同套）
+入参 `app_ids: list[str]` 三态：
+- **不传字段（None）= 不动**：partial update，保留现有作用域名单
+- **空数组 `[]` = 改回通用**：清空名单
+- **非空数组 = replace-all**：去重 + 保序覆盖
+
+`GET /api/tags/dimensions` 接 `?app_id=<X>`：
+- 给 `app_id`（打标签 / 浏览态）→ 按作用域过滤
+- 不给（管理态）→ 返回全部，响应里每条带 `app_ids: list[str]`，前端据此渲染
+  「通用 / 仅 N 个产品」徽标
+
+`GET /api/tags/aggregate?dimension_id=<D>&app_id=<X>` 的桶集合同样按选项作用域收敛
+——口径与 Materials 分面栏、打标签编辑器一致，避免「分面里看不见的标签在聚合里出现」。
+
+`PUT /api/tags/scope/batch`（S4，产品视角批量改作用域）：入参
+`{ dimensions: [{id, app_ids}], options: [{id, app_ids}] }`，一次原子事务里对每条做
+replace-all（与单条 PUT 同语义），前端只发改动行。任一 id 不存在 → 404 整体回滚（不
+静默跳过，避免前端脏状态被掩盖）。解决「标签多、逐个改单产品作用域麻烦」的批量诉求。
+
+### 现役 UI 入口
+
+- **标签库管理页**（`TagsManage.tsx`）：维度编辑面板「适用产品」picker（搜索 + chip
+  + 滚动候选）；二级标签 chip 内嵌「⚙ N / Globe」入口点开 modal 编辑选项作用域。
+- **标签库管理页·产品视角**（S4，同页「标签视角 / 产品视角」切换）：选一个产品 →
+  一屏列出所有维度+选项，每行勾选框做 **通用 ⇄ 该产品专属** 的翻转，底部一次保存
+  （走上面的 batch 端点）。语义刻意只覆盖这一种干净翻转：**多产品 / 属于别的产品的
+  复杂作用域只读展示（🔒 + 产品名），不让一键勾选误覆盖**——白名单是加法语义，
+  一键 clobber 会抹掉别人名单，故这类仍回「标签视角」精细改。
+- **素材库** / **AI 解析** 编辑面板：`StructuredTagEditor` 接 `appId` prop，
+  当前素材所属游戏自动收敛维度+选项。
+- **素材库分面栏**：`facetable` `useQuery` key 含 `filterGame`，选游戏时按作用域收敛。
+
+### 级联清理（应用层显式）
+
+SQLite 默认不强制 FK 级联，删一级维度时显式连带：`material_tag_values` → 该维度下
+所有选项的 `tag_option_products` → `tag_options` → `tag_dimension_products` → 维度本体。
+删二级选项时显式删 `tag_option_products`。详见 `backend/app/routers/tags.py` 删除端点。
+
+---
+
 ## 相关文档
 
 - [`PUBLISHERS.md`](PUBLISHERS.md) — 厂商主体方法论 + 资本系速览（业务知识）

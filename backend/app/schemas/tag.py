@@ -76,6 +76,25 @@ class TagDimensionOut(BaseModel):
     app_ids: list[str] = []
 
 
+# ── 产品视角批量改作用域（S4）─────────────────────────────────────────────
+# 「产品视角」一屏勾选「限定某产品专属」后，一次原子提交所有改动。
+# 每条 = 对某维度/选项的 app_ids 做 replace-all（与单条 PUT 同语义），前端只发改动行。
+
+class TagScopeItem(BaseModel):
+    id: int
+    app_ids: list[str] = []  # replace-all：[] = 改回通用；非空 = 仅名单内产品
+
+
+class TagScopeBatchInput(BaseModel):
+    dimensions: list[TagScopeItem] = []
+    options: list[TagScopeItem] = []
+
+
+class TagScopeBatchOut(BaseModel):
+    updated_dimensions: int
+    updated_options: int
+
+
 # ── 素材打标签（material_tag_values，P2）──────────────────────────────────
 # 打标签 = 给素材在各一级标签维度下选定值：text 维度选 option(可多)，date 维度选日期。
 

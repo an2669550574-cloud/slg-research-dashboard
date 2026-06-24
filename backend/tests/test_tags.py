@@ -266,6 +266,49 @@ async def test_aggregate_buckets_respect_option_scope(client):
 
 
 @pytest.mark.asyncio
+async def test_scope_batch_updates_dimensions_and_options(client):
+    """S4：产品视角批量改作用域——一次提交多条维度+选项的 replace-all。"""
+    role = (await client.post("/api/tags/dimensions", json={"name": "角色"})).json()
+    bucket = (await client.post("/api/tags/dimensions", json={"name": "桶子"})).json()
+    o1 = (await client.post(f"/api/tags/dimensions/{role['id']}/options",
+                            json={"value": "爱丽丝"})).json()
+    o2 = (await client.post(f"/api/tags/dimensions/{bucket['id']}/options",
+                            json={"value": "红桶", "app_ids": ["X", "Y"]})).json()
+
+    # 一次提交：维度「角色」限定 X 专属；选项「红桶」改回通用
+    res = await client.put("/api/tags/scope/batch", json={
+        "dimensions": [{"id": role["id"], "app_ids": ["X"]}],
+        "options": [{"id": o2["id"], "app_ids": []}],
+    })
+    assert res.status_code == 200, res.text
+    assert res.json() == {"updated_dimensions": 1, "updated_options": 1}
+
+    lst = (await client.get("/api/tags/dimensions")).json()
+    role_after = next(d for d in lst if d["id"] == role["id"])
+    assert role_after["app_ids"] == ["X"]
+    bucket_after = next(d for d in lst if d["id"] == bucket["id"])
+    red = next(o for o in bucket_after["options"] if o["id"] == o2["id"])
+    assert red["app_ids"] == []  # 已改回通用
+    # o1 未在提交里 → 不动
+    alice = next(o for o in role_after["options"] if o["id"] == o1["id"])
+    assert alice["app_ids"] == []
+
+
+@pytest.mark.asyncio
+async def test_scope_batch_404_rolls_back(client):
+    """任一 id 不存在 → 404 整体回滚，已提交的改动不落库。"""
+    role = (await client.post("/api/tags/dimensions", json={"name": "角色"})).json()
+    res = await client.put("/api/tags/scope/batch", json={
+        "dimensions": [{"id": role["id"], "app_ids": ["X"]}, {"id": 999999, "app_ids": ["Z"]}],
+    })
+    assert res.status_code == 404
+    # 回滚：role 仍是通用
+    lst = (await client.get("/api/tags/dimensions")).json()
+    role_after = next(d for d in lst if d["id"] == role["id"])
+    assert role_after["app_ids"] == []
+
+
+@pytest.mark.asyncio
 async def test_admin_password_gates_delete(client, monkeypatch):
     monkeypatch.setattr("app.config.settings.ADMIN_DELETE_PASSWORD", "s3cret")
     dim = (await client.post("/api/tags/dimensions", json={"name": "路型"})).json()
