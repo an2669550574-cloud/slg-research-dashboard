@@ -26,6 +26,7 @@ from sqlalchemy import select
 from app.config import settings
 from app.database import AsyncSessionLocal, utcnow_naive
 from app.models.publisher import PublisherEntity, PublisherItunesApp, PublisherItunesArtist
+from app.models.game import CHART_FREE
 from app.services import dingtalk
 
 logger = logging.getLogger(__name__)
@@ -274,6 +275,43 @@ def build_newcomer_lines(market: dict, publisher: dict,
     return lines
 
 
+def build_free_newcomer_lines(market: dict, publisher: dict,
+                              articles: Optional[dict] = None,
+                              entities: Optional[dict] = None) -> list[str]:
+    """下载榜新品 → 人读行（ADR 0001 切片 2）。
+
+    **钉钉只推 is_slg=True**（下载榜噪声大：休闲/工具类装机榜混入多）——非 SLG 的
+    下载榜新品仍照常入库 + 看板可见，只是不进钉钉卡片（口径差异是刻意的，见 ADR）。
+    回归同样过滤。⬇️ 前缀与收入榜区分。市场+主体两路按 app_id 去重。
+    """
+    from app.services.slg_publishers import is_slg
+    articles = articles or {}
+    entities = entities or {}
+    merged: dict[str, dict] = {}
+    for n in (market.get("newcomers") or []):
+        if n.get("is_slg") and not n.get("is_reentry"):
+            merged[n["app_id"]] = n
+    for n in (publisher.get("newcomers") or []):
+        aid = n.get("app_id")
+        if n.get("is_reentry") or aid in merged:
+            continue
+        if is_slg(aid, n.get("publisher")):  # 主体行也按 is_slg 门控（必须 SLG 才推）
+            merged[aid] = n
+    lines = []
+    for n in list(merged.values())[:10]:
+        aid = n.get("app_id")
+        rank = f"#{n['rank']}" if n.get("rank") else "上榜"
+        meta = _meta_line(downloads=n.get("downloads"),
+                          entity=n.get("entity_name") or entities.get(aid) or n.get("publisher"))
+        base = f"⬇️ **{n['name']}** 下载榜 **{rank}**" + meta
+        focus = _dashboard_focus_url(aid or "", "market")
+        if focus:
+            base += f"\n   🎯 [看板定位]({focus})"
+        base += _articles_suffix(articles.get(aid))
+        lines.append(base)
+    return lines
+
+
 def build_daily_digest(per_combo: list[dict], today: str,
                        articles: Optional[dict] = None,
                        entities: Optional[dict] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
@@ -297,21 +335,28 @@ def build_daily_digest(per_combo: list[dict], today: str,
                                           entities=entities,
                                           country=c["country"], platform=c["platform"])
                      if (c.get("market") or c.get("publisher")) else [])
-        if not mv_all and not nc_blocks:
+        # 下载榜新品（ADR 0001 切片 2）：只推 is_slg=True，⬇️ 段单列。
+        free_blocks = (build_free_newcomer_lines(c.get("free_market") or {},
+                                                 c.get("free_publisher") or {},
+                                                 articles=articles, entities=entities)
+                       if (c.get("free_market") or c.get("free_publisher")) else [])
+        if not mv_all and not nc_blocks and not free_blocks:
             continue
-        total += len(mv_all) + len(nc_blocks)
+        total += len(mv_all) + len(nc_blocks) + len(free_blocks)
         if shown >= cap:
-            overflow += len(mv_all) + len(nc_blocks)  # 整 combo 因全局封顶未展示
+            overflow += len(mv_all) + len(nc_blocks) + len(free_blocks)  # 整 combo 封顶未展示
             continue
         mv_blocks = mv_all[:mv_cap]
         overflow += len(mv_all) - len(mv_blocks)       # movement 尾部超额（按重要性砍）
-        shown += len(mv_blocks) + len(nc_blocks)
-        # 分组小标题（异动 / 新品）让领导一眼分清「榜在动」vs「有新东西」。
+        shown += len(mv_blocks) + len(nc_blocks) + len(free_blocks)
+        # 分组小标题（异动 / 收入榜新品 / 下载榜新品）让领导一眼分清。
         parts = [f"**{_combo_label(c['country'], c['platform'])}**"]
         if mv_blocks:
             parts.append("【榜单异动】\n\n" + "\n\n".join(mv_blocks))
         if nc_blocks:
             parts.append("【新品上架】\n\n" + "\n\n".join(nc_blocks))
+        if free_blocks:
+            parts.append("【下载榜新品 · SLG】\n\n" + "\n\n".join(free_blocks))
         sections.append("\n\n".join(parts))
         # 按钮：异动(空降/窜升) + 新品(市场/厂商) 各取头条直达商店页；全局最多 5、去重。
         # 新品也产出按钮——纯新品日不再无可点项；安卓包名拼 GP 链接（_store_url）。
@@ -360,7 +405,8 @@ async def send_daily_digest() -> bool:
 
     for country, platform in settings.sync_combos_list:
         entry: dict = {"country": country, "platform": platform, "movement": None,
-                       "market": None, "publisher": None, "enrich": None}
+                       "market": None, "publisher": None, "enrich": None,
+                       "free_market": None, "free_publisher": None}
         try:
             m = await detect_movement(country, platform, today)
             if not m.get("today_missing"):
@@ -394,6 +440,25 @@ async def send_daily_digest() -> bool:
                 for n in (publisher.get("newcomers") or []):
                     if n.get("name"):
                         all_newcomer_names.add(n["name"])
+            # 下载榜（ADR 0001 切片 2）：仅开了该 combo 的额外检测一轮 free 榜；只在
+            # 当期榜 as_of==today 时纳入（与收入榜同闸门）。build_free_newcomer_lines
+            # 再按 is_slg 门控钉钉推送。
+            if (country, platform) in settings.free_chart_combos_set:
+                f_market = await detect_newcomers(country, platform, ignore_keys=ignore_keys,
+                                                  chart_type=CHART_FREE)
+                f_publisher = await detect_publisher_newcomers(country, platform,
+                                                               matchers=matchers,
+                                                               chart_type=CHART_FREE)
+                if f_market.get("as_of") == today:
+                    entry["free_market"] = f_market
+                    for n in (f_market.get("newcomers") or []):
+                        if n.get("name"):
+                            all_newcomer_names.add(n["name"])
+                if f_publisher.get("as_of") == today:
+                    entry["free_publisher"] = f_publisher
+                    for n in (f_publisher.get("newcomers") or []):
+                        if n.get("name"):
+                            all_newcomer_names.add(n["name"])
         except Exception:
             logger.exception("daily digest detection failed for %s/%s", country, platform)
         per_combo.append(entry)

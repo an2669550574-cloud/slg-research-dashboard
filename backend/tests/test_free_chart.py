@@ -5,9 +5,15 @@
 - chart_type='free' 同步走 board='free' 拉榜、落 chart_type='free' 行。
 - **零回归**：所有现有读路径（今日榜 / 新品检测）只看 grossing，free 行不可见。
 """
+import importlib
 import pytest
 from datetime import timedelta
 from unittest.mock import patch, AsyncMock
+
+
+def _live(mod):
+    """conftest 每 test 清 sys.modules——用 importlib 取绑到临时 DB 的活模块。"""
+    return importlib.import_module(mod)
 
 
 async def _count(chart_type, country="US", platform="ios"):
@@ -139,3 +145,78 @@ async def test_scheduled_sync_triggers_free_only_for_configured_combos(client, m
     assert ("US", "android", "free") not in calls, "未配置 combo 不采免费榜"
     # 两个 combo 的收入榜都照常采
     assert ("US", "ios", "grossing") in calls and ("US", "android", "grossing") in calls
+
+
+# ── 切片 2：免费榜进检测/日志/digest ──────────────────────────────
+
+@pytest.mark.asyncio
+async def test_record_logs_free_chart_separately(client, monkeypatch):
+    """开了下载榜的 combo：record_market_newcomers 两榜各检出各落库（chart_type 区分）。
+    非 SLG 的下载榜新品也入库（看板可见）——is_slg 门控只作用于钉钉推送，不拦落库。"""
+    nl = importlib.import_module("app.services.newcomer_log")
+    database = _live("app.database")
+    GameRanking = _live("app.models.game").GameRanking
+    CHART_GROSSING = _live("app.models.game").CHART_GROSSING
+    CHART_FREE = _live("app.models.game").CHART_FREE
+    now = database.utcnow_naive()
+    today = now.strftime("%Y-%m-%d")
+    prev = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+    async with database.AsyncSessionLocal() as db:
+        for ct in (CHART_GROSSING, CHART_FREE):  # 两榜各自的 baseline 锚点
+            for d in (prev, today):
+                db.add(GameRanking(app_id=f"anc_{ct}", date=d, rank=1, country="SG",
+                                   platform="ios", name="锚", publisher="厂", chart_type=ct))
+        # 收入榜首发 + 下载榜首发（不同 app）
+        db.add(GameRanking(app_id="g_new", date=today, rank=3, country="SG",
+                           platform="ios", name="收入榜新品", publisher="厂", chart_type=CHART_GROSSING))
+        db.add(GameRanking(app_id="f_new", date=today, rank=2, country="SG",
+                           platform="ios", name="下载榜新品", publisher="厂", chart_type=CHART_FREE))
+        await db.commit()
+
+    monkeypatch.setattr(nl.settings, "USE_MOCK_DATA", True)  # 跳富化
+    monkeypatch.setattr(nl, "_POLITE_DELAY_S", 0)
+    # free_chart_combos_set 与 sync_combos_list 取交集，故两者都要含 SG:ios
+    monkeypatch.setattr(nl.settings, "SYNC_RANKING_COMBOS", "SG:ios")
+    monkeypatch.setattr(nl.settings, "FREE_CHART_COMBOS", "SG:ios")
+    await nl.record_market_newcomers("SG", "ios")
+
+    # 默认 /history 只看收入榜
+    g = (await client.get("/api/newcomers/history?days=7&country=SG")).json()["items"]
+    assert {i["app_id"] for i in g} == {"g_new"}
+    assert all(i["chart_type"] == "grossing" for i in g)
+    # chart=free 看下载榜
+    f = (await client.get("/api/newcomers/history?days=7&country=SG&chart=free")).json()["items"]
+    assert {i["app_id"] for i in f} == {"f_new"}
+    assert f[0]["chart_type"] == "free"
+    # chart=all 两榜都返回
+    allrows = (await client.get("/api/newcomers/history?days=7&country=SG&chart=all")).json()["items"]
+    assert {i["app_id"] for i in allrows} == {"g_new", "f_new"}
+
+
+def test_build_free_newcomer_lines_slg_gate():
+    """下载榜 digest 行只渲染 is_slg=True；非 SLG 被挡（不进钉钉）。"""
+    from app.services.release_alerts import build_free_newcomer_lines
+    market = {"newcomers": [
+        {"app_id": "s1", "rank": 4, "name": "SLG下载新品", "publisher": "厂", "is_slg": True},
+        {"app_id": "n1", "rank": 5, "name": "休闲噪声", "publisher": "厂", "is_slg": False},
+    ]}
+    lines = build_free_newcomer_lines(market, {})
+    joined = "\n".join(lines)
+    assert "SLG下载新品" in joined and "⬇️" in joined
+    assert "休闲噪声" not in joined, "非 SLG 下载榜新品不进钉钉"
+
+
+def test_daily_digest_renders_free_section():
+    """digest 卡片含【下载榜新品 · SLG】段。"""
+    from app.services.release_alerts import build_daily_digest
+    per_combo = [{
+        "country": "US", "platform": "ios", "movement": None, "market": None,
+        "publisher": None, "enrich": None,
+        "free_market": {"newcomers": [
+            {"app_id": "s1", "rank": 2, "name": "下载榜SLG", "publisher": "厂", "is_slg": True}]},
+        "free_publisher": None,
+    }]
+    out = build_daily_digest(per_combo, "2026-06-25")
+    assert out is not None
+    _, text, _ = out
+    assert "【下载榜新品 · SLG】" in text and "下载榜SLG" in text

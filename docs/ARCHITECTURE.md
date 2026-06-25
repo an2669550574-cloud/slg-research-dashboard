@@ -163,7 +163,11 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 
 ### 榜类型 chart_type（ADR 0001，alembic 0026）
 
-`game_rankings` 有 `chart_type` 维度（`'grossing'` 收入榜 / `'free'` 下载榜），唯一约束含 chart_type（五元组）。**改任何读 `game_rankings` 的查询必看**：所有现有读路径（今日榜 / 详情趋势 / movement / 新品检测 / 厂商聚合 / sibling）都**显式过滤 `chart_type='grossing'`**（用 `app.models.game.CHART_GROSSING` 常量），两榜不得混入同一趋势/检测。下载榜采集由 `FREE_CHART_COMBOS`（空=全关，默认关）门控、`with_sales=False`、`board='free'`，与收入榜同 cadence。**切片 1 只采集入库;** 下载榜进检测/digest/前端是切片 2/3，详见 [ADR 0001](adr/0001-rankings-chart-type-free-chart.md)。
+`game_rankings` 有 `chart_type` 维度（`'grossing'` 收入榜 / `'free'` 下载榜），唯一约束含 chart_type（五元组）。**改任何读 `game_rankings` 的查询必看**：所有「收入榜口径」读路径（今日榜 / 详情趋势 / movement / 厂商聚合 / sibling）都**显式过滤 `chart_type='grossing'`**（用 `app.models.game.CHART_GROSSING` 常量），两榜不得混入同一趋势/聚合。下载榜采集由 `FREE_CHART_COMBOS`（空=全关，默认关）门控、`with_sales=False`、`board='free'`，与收入榜同 cadence。
+
+**新品检测按 chart_type 各自 baseline（切片 2）**：`_first_appearances`/`detect_newcomers`/`detect_publisher_newcomers` 接 `chart_type` 参数（默认 grossing）。`record_market_newcomers` 对开了下载榜的 combo 两榜各检出各落库（`market_newcomer_log.chart_type`，alembic 0027，四元组唯一）。`/newcomers/history?chart=grossing|free|all`（默认 grossing，前端零回归）。
+
+**digest 下载榜段只推 is_slg=True**：`build_free_newcomer_lines`（⬇️【下载榜新品 · SLG】段）按 is_slg 门控钉钉推送——下载榜噪声大，非 SLG 仍入库 + 看板可见但不进卡片（口径差异刻意，与「收入榜故意不按 is_slg 过滤」相对）。详见 [ADR 0001](adr/0001-rankings-chart-type-free-chart.md)。前端榜类型筛选/标识是切片 3。
 
 ---
 

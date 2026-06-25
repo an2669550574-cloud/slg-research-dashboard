@@ -218,6 +218,7 @@ class NewcomerHistoryItem(BaseModel):
     country: str
     platform: str
     app_id: str
+    chart_type: str = "grossing"  # grossing 收入榜 / free 下载榜（ADR 0001）
     as_of: str
     name: str
     publisher: Optional[str] = None
@@ -267,6 +268,10 @@ async def get_newcomer_history(
             "`all` 全部不筛"
         ),
     ),
+    chart: str = Query(
+        "grossing", pattern="^(grossing|free|all)$",
+        description="榜类型：`grossing`(默认，收入榜)/`free`(下载榜)/`all`(两榜都返回)",
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """已沉淀的全市场新面孔检出历史（检出即落库 + 免费源富化，零 ST 配额）。
@@ -279,6 +284,8 @@ async def get_newcomer_history(
     from app.models.game import GameRanking, CHART_GROSSING
     since = utcnow_naive() - timedelta(days=days)
     q = select(MarketNewcomerLog).where(MarketNewcomerLog.first_detected_at >= since)
+    if chart != "all":
+        q = q.where(MarketNewcomerLog.chart_type == chart)
     if country:
         q = q.where(MarketNewcomerLog.country == country.upper())
     if platform:
@@ -314,8 +321,8 @@ async def get_newcomer_history(
         items=[
             NewcomerHistoryItem(
                 **{k: getattr(r, k) for k in (
-                    "id", "country", "platform", "app_id", "as_of", "name", "publisher",
-                    "icon_url", "rank", "revenue", "first_detected_at",
+                    "id", "country", "platform", "app_id", "chart_type", "as_of", "name",
+                    "publisher", "icon_url", "rank", "revenue", "first_detected_at",
                     "store_url", "release_date", "genre", "rating", "rating_count",
                     "price", "description", "enrich_source", "is_reentry")},
                 # 落库后建档的主体读时也算 SLG——is_slg 活算（存档值只作冗余）

@@ -195,10 +195,12 @@ async def detect_newcomers(
     window: Optional[int] = None,
     topn: Optional[int] = None,
     ignore_keys: Optional[tuple[set[str], set[str]]] = None,
+    chart_type: str = CHART_GROSSING,
 ) -> dict:
     """**纯检测**——比对 as_of 当期榜与之前 W 个快照，返回结构化"新面孔"摘要。
     无任何副作用、零 ST 配额，可被 API endpoint 任意频次调用。
 
+    `chart_type` 默认 grossing；传 free 在下载榜上独立检测（ADR 0001 切片 2）。
     `ignore_keys` 可由跨 combo 的调用方预加载一次传入（避免每 combo 重查
     `publisher_ignores`）；不传则本函数自行加载。剔除人工确认的非 SLG 噪声，
     未建档的真新厂不受影响（详见 `_load_ignore_keys`）。
@@ -209,7 +211,7 @@ async def detect_newcomers(
         ignore_keys = await _load_ignore_keys()
     ignore_pub_keys, ignore_app_ids = ignore_keys
 
-    base = await _first_appearances(country, platform, window)
+    base = await _first_appearances(country, platform, window, chart_type)
     historical_ids = base.get("historical_ids")
     summary = {k: v for k, v in base.items() if k not in ("rows", "historical_ids")}
     summary["newcomers"] = [
@@ -291,9 +293,11 @@ async def detect_publisher_newcomers(
     window: Optional[int] = None,
     matchers: Optional[list[dict]] = None,
     topn: Optional[int] = None,
+    chart_type: str = CHART_GROSSING,
 ) -> dict:
     """已建档厂商主体的新品：首次出现 + 发行商马甲/钉选 app_id 归属到某主体。
 
+    `chart_type` 默认 grossing；传 free 在下载榜上独立检测（ADR 0001 切片 2）。
     与 detect_newcomers 的差异：默认 TopN 阈值更宽松（PUBLISHER_NEWCOMER_TOPN=200
     vs NEWCOMER_TOPN=50）——主体可信，名次较深也值得关注（解决"慢慢爬榜被基线
     见过、永不触发"的漏报，如 Top Heroes），但不再"完全不限名次"（曾让 JP/android
@@ -305,7 +309,7 @@ async def detect_publisher_newcomers(
     if matchers is None:
         matchers = await _load_entity_matchers()
 
-    base = await _first_appearances(country, platform, window)
+    base = await _first_appearances(country, platform, window, chart_type)
     historical_ids = base.get("historical_ids")
     summary = {k: v for k, v in base.items() if k not in ("rows", "historical_ids")}
     summary["newcomers"] = []
