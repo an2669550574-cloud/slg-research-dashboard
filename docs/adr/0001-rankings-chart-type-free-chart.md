@@ -49,7 +49,8 @@
 1. ✅ 地基(alembic 0026):迁移 + 采集入库 + 读路径钉死 grossing(零回归)。
 2. ✅ 检测(alembic 0027):免费榜按 chart_type 各自 baseline 进检测/日志/digest;
    `build_free_newcomer_lines` 按 is_slg 门控钉钉;`/history?chart=` 筛榜类型(默认 grossing)。
-3. 前端:新品页/详情页加「收入榜 / 下载榜」筛选与标识(待做)。
+3. ✅ 前端:新品页加「收入榜 / 下载榜 / 两榜」筛选 chip（`/history?chart=`，默认收入榜）+
+   下载榜检出卡片打 ⬇️「下载榜」徽标（`GroupedNewcomer.anyFree`）。
 
 ## 后果
 

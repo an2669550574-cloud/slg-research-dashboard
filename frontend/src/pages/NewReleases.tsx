@@ -32,16 +32,19 @@ export default function NewReleases() {
   // 信号筛选：真首发(默认) / 回归 / 全部。PR #93 把回归识别出来后默认隐藏，
   // 回归独立 tab 给运营回看「老游戏卷土重来」的情报信号。
   const [signal, setSignal] = useLocalStorageState<'true_new' | 'reentry' | 'all'>('slg.nc.signal', 'true_new')
+  // 榜类型筛选：收入榜(默认) / 下载榜 / 全部（ADR 0001）。下载榜按装机速度抓更早期新品。
+  const [chart, setChart] = useLocalStorageState<'grossing' | 'free' | 'all'>('slg.nc.chart', 'grossing')
   const [selected, setSelected] = useState<GroupedNewcomer | null>(null)
 
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['newcomerHistory', mktCountry, mktPlatform, topn, days, signal],
+    queryKey: ['newcomerHistory', mktCountry, mktPlatform, topn, days, signal, chart],
     queryFn: () => newcomersApi.history({
       days,
       topn: topn === 100 ? undefined : topn,
       country: mktCountry === 'all' ? undefined : mktCountry,
       platform: mktPlatform === 'all' ? undefined : mktPlatform,
       signal,
+      chart,
     }),
     enabled: view === 'market',
   })
@@ -275,6 +278,18 @@ export default function NewReleases() {
                 </button>
               ))}
             </div>
+            <div className="flex gap-1 bg-elevated rounded-lg p-1" title={t.newcomers.chartHint}>
+              {(['grossing', 'free', 'all'] as const).map(ch => (
+                <button
+                  key={ch}
+                  onClick={() => setChart(ch)}
+                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${chart === ch ? 'bg-brand-600 text-white' : 'text-secondary hover:text-primary'}`}
+                >
+                  {ch === 'free' && <DownloadIcon size={11} />}
+                  {ch === 'grossing' ? t.newcomers.chartGrossing : ch === 'free' ? t.newcomers.chartFree : t.newcomers.chartAll}
+                </button>
+              ))}
+            </div>
           </>
         )}
       </div>
@@ -365,6 +380,14 @@ export default function NewReleases() {
                   <span className="ml-auto">{t.newcomers.detectedAt(gr.earliestAsOf)}</span>
                 </div>
                 <div className="flex items-center gap-1.5">
+                  {gr.anyFree && (
+                    <span
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-violet-500/15 text-violet-400 border border-violet-500/30"
+                      title={t.newcomers.chartHint}
+                    >
+                      <DownloadIcon size={10} />{t.newcomers.chartFreeBadge}
+                    </span>
+                  )}
                   {gr.anyReentry && (
                     <span
                       className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-cyan-500/15 text-cyan-400 border border-cyan-500/30"

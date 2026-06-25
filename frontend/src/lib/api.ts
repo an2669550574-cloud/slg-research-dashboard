@@ -186,8 +186,9 @@ export const newcomersApi = {
   publishers: (): Promise<PublisherNewcomersOut> =>
     api.get('/newcomers/publishers').then(r => r.data),
   /** 新面孔检出历史：检出即落库 + 免费源富化（iTunes/GP），可按市场/平台/名次/信号类型筛。
-   *  signal='true_new'(默认) 仅真首发；'reentry' 仅回归；'all' 全部不筛。 */
-  history: (opts: { days?: number; country?: string; platform?: string; topn?: number; signal?: 'true_new' | 'reentry' | 'all' } = {}): Promise<NewcomerHistoryOut> =>
+   *  signal='true_new'(默认) 仅真首发；'reentry' 仅回归；'all' 全部不筛。
+   *  chart='grossing'(默认) 收入榜；'free' 下载榜；'all' 两榜都返回（ADR 0001）。 */
+  history: (opts: { days?: number; country?: string; platform?: string; topn?: number; signal?: 'true_new' | 'reentry' | 'all'; chart?: 'grossing' | 'free' | 'all' } = {}): Promise<NewcomerHistoryOut> =>
     api.get('/newcomers/history', { params: opts }).then(r => r.data),
   /** 手动触发全 combo 检出落库（首次回填用）。 */
   historySync: (): Promise<{ message: string; detected: number; recorded: number; enriched: number }> =>

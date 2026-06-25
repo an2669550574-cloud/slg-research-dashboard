@@ -167,7 +167,9 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 
 **新品检测按 chart_type 各自 baseline（切片 2）**：`_first_appearances`/`detect_newcomers`/`detect_publisher_newcomers` 接 `chart_type` 参数（默认 grossing）。`record_market_newcomers` 对开了下载榜的 combo 两榜各检出各落库（`market_newcomer_log.chart_type`，alembic 0027，四元组唯一）。`/newcomers/history?chart=grossing|free|all`（默认 grossing，前端零回归）。
 
-**digest 下载榜段只推 is_slg=True**：`build_free_newcomer_lines`（⬇️【下载榜新品 · SLG】段）按 is_slg 门控钉钉推送——下载榜噪声大，非 SLG 仍入库 + 看板可见但不进卡片（口径差异刻意，与「收入榜故意不按 is_slg 过滤」相对）。详见 [ADR 0001](adr/0001-rankings-chart-type-free-chart.md)。前端榜类型筛选/标识是切片 3。
+**digest 下载榜段只推 is_slg=True**：`build_free_newcomer_lines`（⬇️【下载榜新品 · SLG】段）按 is_slg 门控钉钉推送——下载榜噪声大，非 SLG 仍入库 + 看板可见但不进卡片（口径差异刻意，与「收入榜故意不按 is_slg 过滤」相对）。详见 [ADR 0001](adr/0001-rankings-chart-type-free-chart.md)。
+
+**前端（切片 3）**：新品页加「收入榜 / 下载榜 / 两榜」筛选 chip（默认收入榜，对应 `/history?chart=`），下载榜检出卡片打 ⬇️「下载榜」徽标（`GroupedNewcomer.anyFree`）。
 
 ---
 

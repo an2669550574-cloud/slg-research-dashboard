@@ -306,6 +306,8 @@ export interface NewcomerHistoryItem {
   country: string
   platform: string
   app_id: string
+  /** 检出来自哪个榜：grossing 收入榜 / free 下载榜（ADR 0001）。 */
+  chart_type: 'grossing' | 'free'
   as_of: string
   name: string
   publisher: string | null
