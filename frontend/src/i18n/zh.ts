@@ -226,6 +226,11 @@ export const zh = {
     signalReentry: '回归',
     signalAll: '全部',
     signalHint: '真首发 = 全历史从未见过；回归 = 曾上过榜、短期跌出 baseline 又回来（情报上仍有价值：厂商在加码投放）',
+    chartGrossing: '收入榜',
+    chartFree: '下载榜',
+    chartAll: '两榜',
+    chartHint: '收入榜 = 按收入排（成熟产品）；下载榜 = 按装机速度排，能更早抓到软启动新品（仅 US/JP/KR 采集）',
+    chartFreeBadge: '下载榜',
     reentryBadge: '回归',
     reentryHint: '该产品在基线窗口之外曾上过本市场榜单——短期跌出后回归，常是厂商加码投放的信号',
     // 数据新鲜度提示（JP/KR/DE/RU 周级同步可能有几天滞后）

@@ -383,26 +383,32 @@ class SensorTowerService:
             return {}
         return _parse_sales_series(data, platform)
 
-    def _today_key(self, country: str, platform: str) -> tuple[str, str, str]:
+    def _today_key(self, country: str, platform: str,
+                   board: str = "grossing") -> tuple[str, str, str]:
         """今日榜的 (cache_key, chart_type, category)。key 必须含 chart_type+
         category：否则切免费/畅销榜或换类目后旧快照会被继续返回（最长 24h）。
+        board='grossing'（默认，收入榜）/'free'（下载榜，ADR 0001）选 chart_type。
         get_all_rankings_today 与 force_refresh 共用，保证失效命中同一 key。"""
         if platform == "android":
             category = settings.SENSOR_TOWER_RANKING_CATEGORY_ANDROID
-            chart_type = settings.SENSOR_TOWER_RANKING_CHART_TYPE_ANDROID
+            chart_type = (settings.SENSOR_TOWER_RANKING_CHART_TYPE_ANDROID_FREE if board == "free"
+                          else settings.SENSOR_TOWER_RANKING_CHART_TYPE_ANDROID)
         else:
             category = settings.SENSOR_TOWER_RANKING_CATEGORY_IOS
-            chart_type = settings.SENSOR_TOWER_RANKING_CHART_TYPE_IOS
+            chart_type = (settings.SENSOR_TOWER_RANKING_CHART_TYPE_IOS_FREE if board == "free"
+                          else settings.SENSOR_TOWER_RANKING_CHART_TYPE_IOS)
         return f"today:{platform}:{country}:{chart_type}:{category}", chart_type, category
 
-    async def get_all_rankings_today(self, country: str = "US", platform: str = "ios", with_sales: bool = True) -> list[dict]:
+    async def get_all_rankings_today(self, country: str = "US", platform: str = "ios",
+                                     with_sales: bool = True, board: str = "grossing") -> list[dict]:
         """今日榜单。with_sales=False 时跳过 top-N 批量销量调用（省 1 次配额/市场），
         榜行 dl/rev 留 None——用于销量周级解耦的非抓取日。rank/名字/图标照常补全。
+        board='free' 拉下载/免费榜（ADR 0001），缓存 key 含 chart_type 故与收入榜隔离。
         手动刷新、详情页兜底等路径默认 with_sales=True，行为不变。"""
         if self.use_mock:
             return _mock_today_rankings()
         today = datetime.utcnow().strftime("%Y-%m-%d")
-        key, chart_type, category = self._today_key(country, platform)
+        key, chart_type, category = self._today_key(country, platform, board)
         data = await self._cached_get(
             key,
             f"/v1/{platform}/ranking",

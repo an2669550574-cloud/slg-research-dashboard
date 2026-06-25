@@ -20,6 +20,7 @@ from sqlalchemy import delete, select
 from app.config import settings
 from app.database import AsyncSessionLocal, utcnow_naive
 from app.models.newcomer import MarketNewcomerLog
+from app.models.game import CHART_GROSSING, CHART_FREE
 
 logger = logging.getLogger(__name__)
 
@@ -97,17 +98,30 @@ async def enrich_fields(app_id: str, country: str, platform: str) -> Optional[di
         return None
 
 
-async def record_market_newcomers(country: str, platform: str) -> dict:
-    """检出 → 落库 → 富化一个 combo。返回 {detected, recorded, enriched}。
+async def _record_one_chart(country: str, platform: str, chart_type: str) -> dict:
+    """单个榜（chart_type）的检出 → 落库 → 富化。返回 {detected, recorded, enriched}。
 
-    detect 用 NEWCOMER_HISTORY_TOPN（默认 100，比日报的 Top50 宽）——历史沉淀
-    宁可多收，页面有 Top50/Top100 筛选；日报口径不受影响。
+    两路口径**取并集**落库（按 app_id 去重）：
+    - 市场宽口径 detect_newcomers（NEWCOMER_HISTORY_TOPN，默认 100）——全市场新面孔。
+    - 已建档主体 detect_publisher_newcomers（PUBLISHER_NEWCOMER_TOPN，默认 200）——
+      主体可信、名次更深也留底，专门接住「冷启动名次深于 100、慢爬进榜时已被基线
+      吞掉」的漏报（如 Century Games《Top General》首见 rank 144 > 100 永不入库）。
+    dedup / 落库均按 chart_type 隔离，收入榜与下载榜各自留一条。
     """
     out = {"detected": 0, "recorded": 0, "enriched": 0}
-    from app.services.newcomers import detect_newcomers
-    summary = await detect_newcomers(country, platform,
-                                     topn=settings.NEWCOMER_HISTORY_TOPN)
-    newcomers = summary.get("newcomers") or []
+    from app.services.newcomers import detect_newcomers, detect_publisher_newcomers
+    from app.services.slg_publishers import is_slg
+    market = await detect_newcomers(country, platform,
+                                    topn=settings.NEWCOMER_HISTORY_TOPN,
+                                    chart_type=chart_type)
+    publisher = await detect_publisher_newcomers(country, platform, chart_type=chart_type)
+    # 市场行已带 is_slg；合并时市场优先，主体独有行补算 is_slg 后并入。
+    merged: dict[str, dict] = {n["app_id"]: n for n in (market.get("newcomers") or [])}
+    for n in (publisher.get("newcomers") or []):
+        if n["app_id"] not in merged:
+            merged[n["app_id"]] = {**n, "is_slg": is_slg(n["app_id"], n.get("publisher"))}
+    newcomers = list(merged.values())
+    as_of = market.get("as_of") or publisher.get("as_of")
     out["detected"] = len(newcomers)
     if not newcomers:
         return out
@@ -117,6 +131,7 @@ async def record_market_newcomers(country: str, platform: str) -> dict:
             select(MarketNewcomerLog.app_id).where(
                 MarketNewcomerLog.country == country,
                 MarketNewcomerLog.platform == platform,
+                MarketNewcomerLog.chart_type == chart_type,
                 MarketNewcomerLog.app_id.in_([n["app_id"] for n in newcomers]),
             )
         )).scalars().all())
@@ -129,7 +144,8 @@ async def record_market_newcomers(country: str, platform: str) -> dict:
                 enriched = await enrich_fields(n["app_id"], country, platform)
             row = MarketNewcomerLog(
                 country=country, platform=platform, app_id=n["app_id"],
-                as_of=summary["as_of"], name=n["name"], publisher=n.get("publisher"),
+                chart_type=chart_type,
+                as_of=as_of, name=n["name"], publisher=n.get("publisher"),
                 icon_url=n.get("icon_url"), rank=n.get("rank"),
                 revenue=n.get("revenue"), is_slg=bool(n.get("is_slg")),
                 # PR #93+0022：固化检出时的真首发 vs 回归判断（None = no_baseline 路径
@@ -144,7 +160,18 @@ async def record_market_newcomers(country: str, platform: str) -> dict:
             out["recorded"] += 1
         await db.commit()
     if out["recorded"]:
-        logger.info("newcomer log %s/%s: %s", country, platform, out)
+        logger.info("newcomer log %s/%s/%s: %s", country, platform, chart_type, out)
+    return out
+
+
+async def record_market_newcomers(country: str, platform: str) -> dict:
+    """一个 combo 的检出沉淀：收入榜恒跑；开了下载榜的 combo（FREE_CHART_COMBOS）
+    额外跑一遍下载榜（ADR 0001 切片 2）。两榜各自检测/落库，合计返回。"""
+    out = await _record_one_chart(country, platform, CHART_GROSSING)
+    if (country, platform) in settings.free_chart_combos_set:
+        free = await _record_one_chart(country, platform, CHART_FREE)
+        for k in out:
+            out[k] += free[k]
     return out
 
 

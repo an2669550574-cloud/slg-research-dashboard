@@ -204,6 +204,11 @@ export const en: Translations = {
     signalReentry: 'Re-entry',
     signalAll: 'All',
     signalHint: 'True first = never seen in any historical snapshot; Re-entry = was on chart, briefly fell out of baseline, came back (still useful intel: signals renewed UA push)',
+    chartGrossing: 'Grossing',
+    chartFree: 'Free/DL',
+    chartAll: 'Both',
+    chartHint: 'Grossing = ranked by revenue (mature titles); Free = ranked by install velocity, catches soft-launch newcomers earlier (US/JP/KR only)',
+    chartFreeBadge: 'Free chart',
     reentryBadge: 'Re-entry',
     reentryHint: 'This app appeared in this market beyond the baseline window — fell out briefly and returned, often signaling a renewed marketing push',
     // Data freshness (JP/KR/DE/RU weekly sync can lag a few days)

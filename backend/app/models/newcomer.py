@@ -16,13 +16,18 @@ from app.database import Base, utcnow_naive
 class MarketNewcomerLog(Base):
     __tablename__ = "market_newcomer_log"
     __table_args__ = (
-        UniqueConstraint("country", "platform", "app_id", name="uq_newcomer_per_combo"),
+        # chart_type 进唯一约束：同一 app 在收入榜/下载榜各留一条检出（ADR 0001）。
+        UniqueConstraint("country", "platform", "app_id", "chart_type",
+                         name="uq_newcomer_per_combo"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     country: Mapped[str] = mapped_column(String(10))
     platform: Mapped[str] = mapped_column(String(10))
     app_id: Mapped[str] = mapped_column(String(200))
+    # 检出来自哪个榜：grossing（收入榜，默认/存量）/ free（下载榜，切片 2 起）。
+    chart_type: Mapped[str] = mapped_column(String(20), default="grossing",
+                                            server_default="grossing")
     as_of: Mapped[str] = mapped_column(String(20))  # 检出锚定的快照日
     name: Mapped[str] = mapped_column(String(300))
     publisher: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)

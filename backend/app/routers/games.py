@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from typing import Optional, Literal
 from app.database import get_db, utcnow_naive
-from app.models.game import Game, GameRanking
+from app.models.game import Game, GameRanking, CHART_GROSSING
 from app.rate_limit import refresh_cooldown
 from app.services.sensor_tower import sensor_tower_service, MOCK_SLG_GAMES, _resolve_window
 from app.services.appstore import fetch_app_info
@@ -77,6 +77,7 @@ async def get_rankings(
         select(func.max(GameRanking.date)).where(
             GameRanking.country == country,
             GameRanking.platform == platform,
+            GameRanking.chart_type == CHART_GROSSING,
             GameRanking.date <= today,
         )
     )).scalar()
@@ -86,6 +87,7 @@ async def get_rankings(
             GameRanking.date == latest_date,
             GameRanking.country == country,
             GameRanking.platform == platform,
+            GameRanking.chart_type == CHART_GROSSING,
         )
         .order_by(GameRanking.rank.asc().nulls_last())
     ) if latest_date else None
@@ -133,6 +135,7 @@ async def _last_known_sales(
             GameRanking.app_id.in_(app_ids),
             GameRanking.country == country,
             GameRanking.platform == platform,
+            GameRanking.chart_type == CHART_GROSSING,
             GameRanking.date < before,
             GameRanking.downloads.isnot(None),
         )
@@ -143,7 +146,8 @@ async def _last_known_sales(
         select(GameRanking.app_id, GameRanking.downloads, GameRanking.revenue).join(
             latest,
             and_(GameRanking.app_id == latest.c.aid, GameRanking.date == latest.c.d),
-        ).where(GameRanking.country == country, GameRanking.platform == platform)
+        ).where(GameRanking.country == country, GameRanking.platform == platform,
+                GameRanking.chart_type == CHART_GROSSING)
     )
     return {aid: (dl, rv) for aid, dl, rv in res.all()}
 
@@ -210,6 +214,7 @@ async def get_aggregate_leaderboard(
             func.sum(GameRanking.downloads).label("downloads"),
             func.sum(GameRanking.revenue).label("revenue"),
         ).where(
+            GameRanking.chart_type == CHART_GROSSING,
             GameRanking.date >= win[0],
             GameRanking.date <= win[-1],
         ).group_by(GameRanking.app_id)
@@ -241,7 +246,8 @@ async def get_game(app_id: str, db: AsyncSession = Depends(get_db)):
     # 头部/图表可用——而不是 404 弹窗、头部空白。刻意不写回 games 表：否则
     # 600+ 榜单条目会污染「游戏管理」的人工维护列表。
     r = (await db.execute(
-        select(GameRanking).where(GameRanking.app_id == app_id)
+        select(GameRanking).where(GameRanking.app_id == app_id,
+                                  GameRanking.chart_type == CHART_GROSSING)
         .order_by(GameRanking.date.desc()).limit(1)
     )).scalar_one_or_none()
     if r:
@@ -350,7 +356,8 @@ async def get_game_metrics_coverage(
             func.count(GameRanking.revenue).label("sales_days"),
             func.count(GameRanking.rank).label("rank_days"),
         )
-        .where(GameRanking.app_id.in_(app_ids))
+        .where(GameRanking.app_id.in_(app_ids),
+               GameRanking.chart_type == CHART_GROSSING)
         .group_by(GameRanking.country, GameRanking.platform)
     )
     pref = {cp: i for i, cp in enumerate(settings.sync_combos_list)}
@@ -392,6 +399,7 @@ async def get_game_metrics(
                 func.sum(GameRanking.revenue),
             ).where(
                 GameRanking.app_id.in_(app_ids),
+                GameRanking.chart_type == CHART_GROSSING,
                 GameRanking.date >= win[0],
                 GameRanking.date <= win[-1],
             ).group_by(GameRanking.date).order_by(GameRanking.date)
@@ -417,6 +425,7 @@ async def get_game_metrics(
             GameRanking.app_id.in_(app_ids),
             GameRanking.country == country,
             GameRanking.platform == platform,
+            GameRanking.chart_type == CHART_GROSSING,
             GameRanking.date >= win[0],
             GameRanking.date <= win[-1],
         ).order_by(GameRanking.date)

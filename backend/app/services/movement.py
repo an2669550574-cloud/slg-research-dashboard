@@ -16,7 +16,7 @@ import logging
 from sqlalchemy import select
 from app.config import settings
 from app.database import AsyncSessionLocal
-from app.models.game import GameRanking
+from app.models.game import GameRanking, CHART_GROSSING
 from app.services.slg_publishers import is_slg
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,7 @@ async def detect_movement(country: str, platform: str, today: str) -> dict:
             select(GameRanking.date).where(
                 GameRanking.country == country,
                 GameRanking.platform == platform,
+                GameRanking.chart_type == CHART_GROSSING,
                 GameRanking.date < today,
             ).order_by(GameRanking.date.desc()).limit(1)
         )).scalar_one_or_none()
@@ -61,6 +62,7 @@ async def detect_movement(country: str, platform: str, today: str) -> dict:
             res = await db.execute(select(GameRanking).where(
                 GameRanking.country == country,
                 GameRanking.platform == platform,
+                GameRanking.chart_type == CHART_GROSSING,
                 GameRanking.date == date,
             ))
             return res.scalars().all()

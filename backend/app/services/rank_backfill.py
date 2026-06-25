@@ -20,7 +20,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.config import settings
 from app.database import AsyncSessionLocal, utcnow_naive
-from app.models.game import GameRanking
+from app.models.game import GameRanking, CHART_GROSSING
 from app.services import quota
 from app.services.sensor_tower import sensor_tower_service
 
@@ -33,7 +33,7 @@ async def _week_done(db, country: str, platform: str, date: str) -> bool:
     r = await db.execute(
         text(
             "SELECT 1 FROM game_rankings WHERE country=:c AND platform=:p "
-            "AND date=:d AND rank IS NOT NULL LIMIT 1"
+            "AND date=:d AND chart_type='grossing' AND rank IS NOT NULL LIMIT 1"
         ).bindparams(c=country, p=platform, d=date)
     )
     return r.first() is not None
@@ -48,9 +48,10 @@ async def _merge_rank_rows(db, country: str, platform: str, date: str, rows: lis
             continue
         await db.execute(
             sqlite_insert(GameRanking)
-            .values(app_id=aid, date=date, rank=rk, country=country, platform=platform)
+            .values(app_id=aid, date=date, rank=rk, country=country, platform=platform,
+                    chart_type=CHART_GROSSING)
             .on_conflict_do_update(
-                index_elements=["app_id", "date", "country", "platform"],
+                index_elements=["app_id", "date", "country", "platform", "chart_type"],
                 set_={"rank": rk},
             )
         )

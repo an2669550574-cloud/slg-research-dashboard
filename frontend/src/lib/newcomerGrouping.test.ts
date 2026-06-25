@@ -6,7 +6,7 @@ import type { NewcomerHistoryItem, PublisherNewcomerItem } from './types'
 function row(p: Partial<NewcomerHistoryItem> & { app_id: string }): NewcomerHistoryItem {
   return {
     id: Math.floor(Math.random() * 1e9),
-    country: 'US', platform: 'ios', as_of: '2026-06-01',
+    country: 'US', platform: 'ios', chart_type: 'grossing', as_of: '2026-06-01',
     name: 'Game', publisher: 'Studio', icon_url: null,
     rank: null, revenue: null, is_slg: false,
     first_detected_at: '2026-06-01T00:00:00Z',

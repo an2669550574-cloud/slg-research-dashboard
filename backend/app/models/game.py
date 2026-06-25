@@ -3,6 +3,11 @@ from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime
 from app.database import Base, utcnow_naive
 
+# 榜类型：收入榜（grossing，历史唯一榜，存量行默认）与下载/免费榜（free，ADR 0001
+# 起并行采集）。所有现有读路径默认只看 grossing；free 仅新品检测专用读。
+CHART_GROSSING = "grossing"
+CHART_FREE = "free"
+
 class Game(Base):
     __tablename__ = "games"
 
@@ -23,13 +28,18 @@ class Game(Base):
 class GameRanking(Base):
     __tablename__ = "game_rankings"
     __table_args__ = (
-        # 同 (app_id, date, country, platform) 一条记录，防止 scheduler 并发触发写重复
-        UniqueConstraint("app_id", "date", "country", "platform", name="uq_game_rankings_day_market"),
+        # 同 (app_id, date, country, platform, chart_type) 一条记录，防止 scheduler
+        # 并发触发写重复；chart_type 进约束让收入榜/下载榜同 (市场,日) 并存不撞。
+        UniqueConstraint("app_id", "date", "country", "platform", "chart_type",
+                         name="uq_game_rankings_day_market"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     app_id: Mapped[str] = mapped_column(String(100), index=True)
     date: Mapped[str] = mapped_column(String(20), index=True)
+    # 榜类型，默认 grossing（存量行 + 现有读路径口径）；free = 下载/免费榜（ADR 0001）。
+    chart_type: Mapped[str] = mapped_column(String(20), default=CHART_GROSSING,
+                                            server_default=CHART_GROSSING, index=True)
     rank: Mapped[int] = mapped_column(Integer, nullable=True)
     downloads: Mapped[float] = mapped_column(Float, nullable=True)
     revenue: Mapped[float] = mapped_column(Float, nullable=True)

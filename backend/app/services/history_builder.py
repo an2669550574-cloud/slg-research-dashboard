@@ -17,7 +17,7 @@ from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.game import GameRanking
+from app.models.game import GameRanking, CHART_GROSSING
 from app.services.appstore import fetch_app_info
 from app.services.sibling_match import find_sibling_app_ids
 from app.services.sensor_tower import sensor_tower_service
@@ -86,7 +86,10 @@ async def build_history(app_id: str, db: AsyncSession) -> list[dict]:
             })
 
     all_rows = (await db.execute(
-        select(GameRanking).where(GameRanking.app_id == app_id).order_by(GameRanking.date)
+        select(GameRanking).where(
+            GameRanking.app_id == app_id,
+            GameRanking.chart_type == CHART_GROSSING,
+        ).order_by(GameRanking.date)
     )).scalars().all()
     # 排名类里程碑只看有 rank 的行（scheduler 前向采集）；收入/下载峰值看全部
     # 行——含历史回填的 rank=NULL 行，让一年纵深也能进时间线。

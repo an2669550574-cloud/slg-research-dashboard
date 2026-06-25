@@ -86,6 +86,47 @@ async def test_record_and_history_endpoint(client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_record_includes_tracked_publisher_deep_climber(client, monkeypatch):
+    """已建档主体的深位新品（100<rank<=200）：市场口径(Top100)漏，主体口径(Top200)
+    接住并入库——专门补「冷启动名次深于 100、慢爬进榜时已被基线吞掉」的漏报。
+    未建档的同名次深位仍被漏（市场口径之外不收），两路口径对称。"""
+    nl = importlib.import_module("app.services.newcomer_log")
+    database = _live("app.database")
+    GameRanking = _live("app.models.game").GameRanking
+    now = database.utcnow_naive()
+    today = now.strftime("%Y-%m-%d")
+    prev = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+    async with database.AsyncSessionLocal() as db:
+        # baseline 锚点（昨日+今日都在 = 老面孔，不算新）
+        for d in (prev, today):
+            db.add(GameRanking(app_id="d_anchor", date=d, rank=1, country="AT",
+                               platform="ios", name="锚", publisher="某厂"))
+        # 已建档主体的深位首发（rank 144 > 100、<= 200）
+        db.add(GameRanking(app_id="d_tracked", date=today, rank=144, country="AT",
+                           platform="ios", name="深位慢爬新品", publisher="Tracked Studio"))
+        # 未建档的深位首发（同名次档）——应继续被漏
+        db.add(GameRanking(app_id="d_untracked", date=today, rank=150, country="AT",
+                           platform="ios", name="未建档深位", publisher="Random Studio"))
+        await db.commit()
+
+    # 建档：钉住 d_tracked 的 app_id（detect_publisher_newcomers 走 app_id 归属）
+    r = await client.post("/api/publishers/", json={
+        "name": "深位测试主体", "app_ids": [{"app_id": "d_tracked"}]})
+    assert r.status_code == 201
+
+    monkeypatch.setattr(nl.settings, "USE_MOCK_DATA", True)  # 跳富化
+    monkeypatch.setattr(nl, "_POLITE_DELAY_S", 0)
+    out = await nl.record_market_newcomers("AT", "ios")
+    assert out["recorded"] == 1  # 仅 d_tracked
+
+    by_id = {i["app_id"]: i for i in
+             (await client.get("/api/newcomers/history?days=7&country=AT")).json()["items"]}
+    assert "d_tracked" in by_id, "已建档主体深位新品应入库"
+    assert by_id["d_tracked"]["rank"] == 144
+    assert "d_untracked" not in by_id, "未建档深位新品仍被漏（口径未变）"
+
+
+@pytest.mark.asyncio
 async def test_record_mock_mode_skips_enrich(client, monkeypatch):
     nl = importlib.import_module("app.services.newcomer_log")
     now = _live("app.database").utcnow_naive()

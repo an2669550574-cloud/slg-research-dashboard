@@ -19,7 +19,7 @@ from app.models.publisher import (
     PublisherEntity, PublisherAlias, PublisherAppId, PublisherSource, PublisherRelation,
     PublisherItunesArtist, PublisherItunesApp, PublisherIgnore,
 )
-from app.models.game import GameRanking
+from app.models.game import GameRanking, CHART_GROSSING
 from app.schemas import (
     PublisherEntityOut, PublisherEntityCreate, PublisherEntityUpdate,
     PublisherAliasOut, PublisherAliasCreate,
@@ -159,7 +159,7 @@ async def _ranking_pairs(db: AsyncSession):
             func.coalesce(func.max(us_name), func.max(GameRanking.name)),
             func.coalesce(func.max(us_icon), func.max(GameRanking.icon_url)),
             func.max(GameRanking.revenue),
-        ).group_by(GameRanking.app_id)
+        ).where(GameRanking.chart_type == CHART_GROSSING).group_by(GameRanking.app_id)
     )
     return [(app_id, pub, name, icon, rev) for app_id, pub, name, icon, rev in res.all()]
 
@@ -198,6 +198,7 @@ async def _rank_by_app(db: AsyncSession) -> dict[str, tuple[int, str]]:
     latest = (
         select(GameRanking.country, GameRanking.platform,
                func.max(GameRanking.date).label("md"))
+        .where(GameRanking.chart_type == CHART_GROSSING)
         .group_by(GameRanking.country, GameRanking.platform)
     ).subquery()
     rows = (await db.execute(
@@ -205,6 +206,7 @@ async def _rank_by_app(db: AsyncSession) -> dict[str, tuple[int, str]]:
         .join(latest, and_(GameRanking.country == latest.c.country,
                            GameRanking.platform == latest.c.platform,
                            GameRanking.date == latest.c.md))
+        .where(GameRanking.chart_type == CHART_GROSSING)
     )).all()
     best: dict[str, tuple[int, str]] = {}
     for app_id, country, platform, rank in rows:
@@ -697,6 +699,7 @@ async def list_publisher_gaps(
             func.sum(GameRanking.revenue).label("rev"),
             func.sum(GameRanking.downloads).label("dl"),
         ).where(
+            GameRanking.chart_type == CHART_GROSSING,
             GameRanking.date >= start.isoformat(),
             GameRanking.date <= end.isoformat(),
             GameRanking.publisher.is_not(None),
@@ -1064,6 +1067,7 @@ async def list_publisher_products(
             func.sum(GameRanking.downloads).label("downloads"),
             func.sum(GameRanking.revenue).label("revenue"),
         ).where(
+            GameRanking.chart_type == CHART_GROSSING,
             GameRanking.date >= start.isoformat(),
             GameRanking.date <= end.isoformat(),
         ).group_by(GameRanking.app_id)

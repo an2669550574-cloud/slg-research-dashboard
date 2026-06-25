@@ -44,6 +44,13 @@ class Settings(BaseSettings):
     # iOS 7017 = App Store 游戏/策略子类；chart_type 畅销榜。Android 类目串。
     SENSOR_TOWER_RANKING_CHART_TYPE_IOS: str = "topgrossingapplications"
     SENSOR_TOWER_RANKING_CHART_TYPE_ANDROID: str = "topgrossing"
+    # 下载/免费榜 chart_type（ADR 0001）：两端都用「总免费榜」，新品由自家
+    # first-appearance 逻辑筛，不依赖平台的「新品榜」定义，保持两端口径一致。
+    SENSOR_TOWER_RANKING_CHART_TYPE_IOS_FREE: str = "topfreeapplications"
+    SENSOR_TOWER_RANKING_CHART_TYPE_ANDROID_FREE: str = "topselling_free"
+    # 哪些 combo 额外采下载榜（逗号分隔 "country:platform"）。空 = 全关（一键回退）。
+    # prod 经 .env 设 US/JP/KR × 双端；US 日级、JP/KR 周级沿用现有 cadence 门控。
+    FREE_CHART_COMBOS: str = ""
     SENSOR_TOWER_RANKING_CATEGORY_IOS: str = "7017"
     SENSOR_TOWER_RANKING_CATEGORY_ANDROID: str = "game_strategy"
     SENSOR_TOWER_RANKING_LIMIT: int = 100
@@ -289,6 +296,12 @@ class Settings(BaseSettings):
         只取与 SYNC_RANKING_COMBOS 的交集——主市场配错也不会凭空多同步一个 combo。"""
         primary = set(self._parse_combos(self.SYNC_RANKING_COMBOS_PRIMARY))
         return primary & set(self.sync_combos_list)
+
+    @property
+    def free_chart_combos_set(self) -> set[tuple[str, str]]:
+        """额外采下载榜的 combo 集合（ADR 0001）。FREE_CHART_COMBOS 解析而来，
+        只取与 SYNC_RANKING_COMBOS 的交集——不在主同步集里的不会凭空多采。"""
+        return set(self._parse_combos(self.FREE_CHART_COMBOS)) & set(self.sync_combos_list)
 
     class Config:
         env_file = ".env"
