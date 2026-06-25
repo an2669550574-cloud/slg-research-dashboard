@@ -6,7 +6,7 @@ from sqlalchemy import select, delete
 from sqlalchemy.exc import IntegrityError
 from app.config import settings
 from app.database import AsyncSessionLocal, utcnow_naive
-from app.models.game import Game, GameRanking
+from app.models.game import Game, GameRanking, CHART_GROSSING, CHART_FREE
 from app.services.sensor_tower import sensor_tower_service
 
 logger = logging.getLogger(__name__)
@@ -43,34 +43,39 @@ def _sales_due_today(today: date) -> bool:
     return _due_by_interval(today, settings.SALES_FETCH_INTERVAL_DAYS)
 
 
-async def sync_daily_rankings(country: str = "US", platform: str = "ios", with_sales: bool = True) -> int:
+async def sync_daily_rankings(country: str = "US", platform: str = "ios",
+                              with_sales: bool = True, chart_type: str = CHART_GROSSING) -> int:
     """每日抓取榜单数据并入库 game_rankings。返回写入条数。
 
-    幂等：先 DELETE 同 (date, country, platform) 的行，再 INSERT。
-    联合 unique (app_id, date, country, platform) 兜底：两个 scheduler 并发跑时
-    后到的会 IntegrityError，回滚后日志告警——好过偷偷写重复。
+    chart_type='grossing'（默认，收入榜）/'free'（下载榜，ADR 0001）——两榜各自独立
+    一行，DELETE/INSERT 均按 chart_type 隔离，互不覆盖。
+
+    幂等：先 DELETE 同 (date, country, platform, chart_type) 的行，再 INSERT。
+    联合 unique 五元组兜底：两个 scheduler 并发跑时后到的会 IntegrityError，回滚后
+    日志告警——好过偷偷写重复。
 
     关键防线：抓取异常或返回空时，**绝不执行 DELETE**。否则一次 Sensor Tower
     抖动 / 配额耗尽 / 网络故障就会把当天数据删掉又写 0 行——图表静默断档且
     无人知晓。这两种情况都打 logger.error（经 LoggingIntegration 自动进
     Sentry 告警），并保留已有数据原样不动。
     """
+    board = "free" if chart_type == CHART_FREE else "grossing"
     today = utcnow_naive().strftime("%Y-%m-%d")
     try:
         rankings = await sensor_tower_service.get_all_rankings_today(
-            country=country, platform=platform, with_sales=with_sales)
+            country=country, platform=platform, with_sales=with_sales, board=board)
     except Exception as e:
         logger.error(
-            "Daily rankings sync FAILED to fetch %s/%s on %s — existing rows kept untouched: %s",
-            country, platform, today, e, exc_info=True,
+            "Daily rankings sync FAILED to fetch %s/%s/%s on %s — existing rows kept untouched: %s",
+            country, platform, chart_type, today, e, exc_info=True,
         )
         return 0
 
     if not rankings:
         logger.error(
-            "Daily rankings sync got EMPTY result for %s/%s on %s — skipping destructive "
+            "Daily rankings sync got EMPTY result for %s/%s/%s on %s — skipping destructive "
             "rewrite, existing rows kept. Check Sensor Tower availability / quota.",
-            country, platform, today,
+            country, platform, chart_type, today,
         )
         return 0
 
@@ -81,6 +86,7 @@ async def sync_daily_rankings(country: str = "US", platform: str = "ios", with_s
                 GameRanking.date == today,
                 GameRanking.country == country,
                 GameRanking.platform == platform,
+                GameRanking.chart_type == chart_type,
             )
         )
 
@@ -91,6 +97,7 @@ async def sync_daily_rankings(country: str = "US", platform: str = "ios", with_s
             db.add(GameRanking(
                 app_id=app_id,
                 date=today,
+                chart_type=chart_type,
                 rank=item.get("rank"),
                 downloads=item.get("downloads"),
                 revenue=item.get("revenue"),
@@ -106,9 +113,9 @@ async def sync_daily_rankings(country: str = "US", platform: str = "ios", with_s
             # 回滚即可让当天旧行毫发无损，不留"删了又没写"的空窗。
             await db.rollback()
             logger.error(
-                "Daily rankings sync for %s/%s on %s: %d items but none usable "
+                "Daily rankings sync for %s/%s/%s on %s: %d items but none usable "
                 "(missing app_id) — rolled back, existing rows kept.",
-                country, platform, today, len(rankings),
+                country, platform, chart_type, today, len(rankings),
             )
             return 0
         try:
@@ -116,11 +123,12 @@ async def sync_daily_rankings(country: str = "US", platform: str = "ios", with_s
         except IntegrityError as e:
             await db.rollback()
             logger.warning(
-                "Daily rankings sync conflict for %s/%s on %s (concurrent run?): %s",
-                country, platform, today, e,
+                "Daily rankings sync conflict for %s/%s/%s on %s (concurrent run?): %s",
+                country, platform, chart_type, today, e,
             )
             return 0
-    logger.info("Daily rankings sync: wrote %d rows for %s/%s on %s", written, country, platform, today)
+    logger.info("Daily rankings sync: wrote %d rows for %s/%s/%s on %s",
+                written, country, platform, chart_type, today)
     return written
 
 
@@ -145,6 +153,18 @@ async def _scheduled_sync(country: str = "US", platform: str = "ios") -> None:
     is_primary = (country, platform) in settings.sync_primary_combos_set
     with_sales = is_primary and _sales_due_today(today)
     written = await sync_daily_rankings(country=country, platform=platform, with_sales=with_sales)
+    # 下载/免费榜（ADR 0001）：开了该 combo 就额外采一份 chart_type='free'（不取销量，
+    # +1 配额）。切片 1 只入库——检测/digest/前端属切片 2/3，此处不触发任何检测。
+    # 与收入榜同 cadence（本函数已被 _combo_due_today 门控），失败不拖垮主榜。
+    if (country, platform) in settings.free_chart_combos_set:
+        try:
+            await sync_daily_rankings(country=country, platform=platform,
+                                      with_sales=False, chart_type=CHART_FREE)
+        except Exception:
+            logger.exception(
+                "Free-chart sync failed for %s/%s (grossing sync unaffected)",
+                country, platform,
+            )
     if not written or settings.USE_MOCK_DATA:
         return
     from app.services.movement import detect_and_alert_movement

@@ -161,6 +161,10 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 
 **两侧「国家」口径不对称（钉钉卡片文案别误读）**：iOS 走 `itunes lookup?country=<sf>`，`country` 是硬过滤——只返回该 storefront **真能搜到/下到**的 app，逐区轮询，`storefronts` 列即真实可见区（卡片显示「可见区 US」「⚠️ 仅 JP 可见」可信）。GP 走开发者主页 `/store/apps/dev?id=...&gl=us`，这页本质是**该开发者全量目录**，`gl=us` 只影响语言/货币、对逐国过滤很弱，`storefronts` 列恒为 `gp`。故 GP **无可靠逐国信号**，卡片只标「🤖 Google Play · 美区视角」（= 我们从美区查到的口径），**不等于美区在架**——别把它当真实上架国去「修」成具体国家。
 
+### 榜类型 chart_type（ADR 0001，alembic 0026）
+
+`game_rankings` 有 `chart_type` 维度（`'grossing'` 收入榜 / `'free'` 下载榜），唯一约束含 chart_type（五元组）。**改任何读 `game_rankings` 的查询必看**：所有现有读路径（今日榜 / 详情趋势 / movement / 新品检测 / 厂商聚合 / sibling）都**显式过滤 `chart_type='grossing'`**（用 `app.models.game.CHART_GROSSING` 常量），两榜不得混入同一趋势/检测。下载榜采集由 `FREE_CHART_COMBOS`（空=全关，默认关）门控、`with_sales=False`、`board='free'`，与收入榜同 cadence。**切片 1 只采集入库;** 下载榜进检测/digest/前端是切片 2/3，详见 [ADR 0001](adr/0001-rankings-chart-type-free-chart.md)。
+
 ---
 
 ## 标签库 + 产品作用域（PR #113，alembic 0024+0025）

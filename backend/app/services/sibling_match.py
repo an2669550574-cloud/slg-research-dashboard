@@ -28,7 +28,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.game import GameRanking
+from app.models.game import GameRanking, CHART_GROSSING
 from app.models.publisher import PublisherAlias
 from app.services.name_match import corp_squash
 
@@ -114,7 +114,8 @@ async def find_sibling_app_ids(db: AsyncSession, target_app_id: str) -> list[str
             GameRanking.country,
             GameRanking.name,
             GameRanking.publisher,
-        ).where(GameRanking.name.is_not(None))
+        ).where(GameRanking.name.is_not(None),
+                GameRanking.chart_type == CHART_GROSSING)
     )
     canonical: dict[str, tuple[str, str]] = {}  # app_id -> (name, publisher)
     for app_id, country, name, publisher in res.all():

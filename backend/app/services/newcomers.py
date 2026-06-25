@@ -31,7 +31,7 @@ from sqlalchemy import select, func, distinct
 
 from app.config import settings
 from app.database import AsyncSessionLocal, utcnow_naive
-from app.models.game import GameRanking
+from app.models.game import GameRanking, CHART_GROSSING
 from app.services.slg_publishers import is_slg, _tokens
 from app.services.name_match import corp_squash
 
@@ -42,8 +42,12 @@ async def _first_appearances(
     country: str,
     platform: str,
     window: int,
+    chart_type: str = CHART_GROSSING,
 ) -> dict:
     """as_of 当期相对过去 window 个快照的「首次出现」行（**不限名次**）。
+
+    chart_type 默认 grossing（收入榜，现有口径）；切片 2 起可传 free 在下载榜上
+    独立比对——baseline 也按同一 chart_type 取，两榜互不串。
 
     detect_newcomers（全市场新面孔，Top N 门槛）与 detect_publisher_newcomers
     （已建档厂商新品，任意名次）共享这套基线比对核心。
@@ -77,6 +81,7 @@ async def _first_appearances(
             select(func.max(GameRanking.date)).where(
                 GameRanking.country == country,
                 GameRanking.platform == platform,
+                GameRanking.chart_type == chart_type,
                 GameRanking.date <= today,
             )
         )).scalar()
@@ -89,6 +94,7 @@ async def _first_appearances(
             select(distinct(GameRanking.date)).where(
                 GameRanking.country == country,
                 GameRanking.platform == platform,
+                GameRanking.chart_type == chart_type,
                 GameRanking.date < as_of,
             ).order_by(GameRanking.date.desc()).limit(window)
         )).scalars().all()
@@ -102,6 +108,7 @@ async def _first_appearances(
             select(distinct(GameRanking.app_id)).where(
                 GameRanking.country == country,
                 GameRanking.platform == platform,
+                GameRanking.chart_type == chart_type,
                 GameRanking.date.in_(prior_dates),
             )
         )).scalars().all())
@@ -112,6 +119,7 @@ async def _first_appearances(
             select(distinct(GameRanking.app_id)).where(
                 GameRanking.country == country,
                 GameRanking.platform == platform,
+                GameRanking.chart_type == chart_type,
                 GameRanking.date < oldest_baseline,
             )
         )).scalars().all())
@@ -121,6 +129,7 @@ async def _first_appearances(
             select(GameRanking).where(
                 GameRanking.country == country,
                 GameRanking.platform == platform,
+                GameRanking.chart_type == chart_type,
                 GameRanking.date == as_of,
             ).order_by(GameRanking.rank.asc().nulls_last())
         )).scalars().all()

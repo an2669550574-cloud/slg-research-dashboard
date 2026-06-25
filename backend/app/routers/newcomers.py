@@ -276,7 +276,7 @@ async def get_newcomer_history(
     """
     from app.models.newcomer import MarketNewcomerLog
     from sqlalchemy import or_, func as sa_func
-    from app.models.game import GameRanking
+    from app.models.game import GameRanking, CHART_GROSSING
     since = utcnow_naive() - timedelta(days=days)
     q = select(MarketNewcomerLog).where(MarketNewcomerLog.first_detected_at >= since)
     if country:
@@ -305,6 +305,7 @@ async def get_newcomer_history(
     # 数据新鲜度：每 combo 最近一次已同步快照日，让前端给陈旧 combo 加 stale 提示。
     freshness_rows = (await db.execute(
         select(GameRanking.country, GameRanking.platform, sa_func.max(GameRanking.date))
+        .where(GameRanking.chart_type == CHART_GROSSING)
         .group_by(GameRanking.country, GameRanking.platform)
     )).all()
     as_of_by_combo = {f"{c}/{p}": d for c, p, d in freshness_rows if d}
