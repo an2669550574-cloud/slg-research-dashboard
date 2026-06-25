@@ -157,6 +157,8 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 
 `/newcomers/appstore`（`itunes_releases.py` + `gp_releases.py`）：扫已建档主体的开发者账号清单 diff，捞**未上榜的软启动新品**——榜单检测永远看不到的早期信号。免费 iTunes lookup / GP 页 JSON-LD，零 ST 配额。详见 [`PUBLISHERS.md`](PUBLISHERS.md) 辅助端点表。
 
+**两侧「国家」口径不对称（钉钉卡片文案别误读）**：iOS 走 `itunes lookup?country=<sf>`，`country` 是硬过滤——只返回该 storefront **真能搜到/下到**的 app，逐区轮询，`storefronts` 列即真实可见区（卡片显示「可见区 US」「⚠️ 仅 JP 可见」可信）。GP 走开发者主页 `/store/apps/dev?id=...&gl=us`，这页本质是**该开发者全量目录**，`gl=us` 只影响语言/货币、对逐国过滤很弱，`storefronts` 列恒为 `gp`。故 GP **无可靠逐国信号**，卡片只标「🤖 Google Play · 美区视角」（= 我们从美区查到的口径），**不等于美区在架**——别把它当真实上架国去「修」成具体国家。
+
 ---
 
 ## 标签库 + 产品作用域（PR #113，alembic 0024+0025）

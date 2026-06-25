@@ -179,7 +179,7 @@ def test_appstore_digest():
         genre = "Strategy"
         storefronts = "ph,ca"  # 无 us → 软启动措辞
     title, text, btns = build_appstore_digest([(App(), "壳木游戏 Camel Games", "Camel HK")])
-    assert "🆕 **测试新游：远古纪元** — 壳木游戏 Camel Games（App Store）" in text
+    assert "🆕 **测试新游：远古纪元** — 壳木游戏 Camel Games（🍎 App Store）" in text
     assert "Strategy" in text and "上架 2026-06-12" in text
     assert "仅 PH/CA 可见（疑似软启动）" in text
     assert ("测试新游：远古纪元 →", "https://apps.apple.com/us/app/id123") in btns
@@ -194,7 +194,7 @@ def test_appstore_digest():
         storefronts = "gp"
         track_view_url = "https://play.google.com/store/apps/details?id=com.test.x"
     _, text3, _ = build_appstore_digest([(GpApp(), "GAME SPARK", None)])
-    assert "（Google Play）" in text3 and "可见区" not in text3 and "软启动" not in text3
+    assert "（🤖 Google Play · 美区视角）" in text3 and "软启动" not in text3
 
 
 def test_appstore_digest_expanded_section():

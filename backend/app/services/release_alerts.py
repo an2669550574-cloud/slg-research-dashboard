@@ -487,7 +487,11 @@ def _sf_text(app) -> str:
 
 
 def _platform_tag(app) -> str:
-    return "Google Play" if (app.storefronts or "") == "gp" else "App Store"
+    # 平台用图标区分（🤖 安卓 / 🍎 iOS）。GP 开发者页是「开发者全量目录」，gl=us 只
+    # 影响语言/货币、对逐国过滤很弱，故只能标「美区视角」（我们从美区查到的口径），
+    # 不等于美区在架；iOS 侧由 itunes country 参数硬过滤，真实可见区由 _sf_text 输出
+    # （可见区 US / ⚠️ 仅 JP 可见），此处不重复。
+    return "🤖 Google Play · 美区视角" if (app.storefronts or "") == "gp" else "🍎 App Store"
 
 
 def build_appstore_digest(
