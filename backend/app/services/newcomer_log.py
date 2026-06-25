@@ -50,6 +50,7 @@ async def _enrich_ios(app_id: str, country: str) -> Optional[dict]:
     genres = r.get("genres") or []
     genre = next((g for g in genres if g and g != "Games"), None) or r.get("primaryGenreName")
     shots = [u for u in (r.get("screenshotUrls") or []) if isinstance(u, str)][:5]
+    langs = [c for c in (r.get("languageCodesISO2A") or []) if isinstance(c, str)][:30]
     return {
         "store_url": r.get("trackViewUrl"),
         "release_date": (r.get("releaseDate") or "")[:10] or None,
@@ -59,6 +60,9 @@ async def _enrich_ios(app_id: str, country: str) -> Optional[dict]:
         "price": r.get("formattedPrice"),
         "description": ((r.get("description") or "").strip()[:1500]) or None,
         "screenshot_urls": json.dumps(shots) if shots else None,
+        "version": r.get("version"),
+        "current_version_date": (r.get("currentVersionReleaseDate") or "")[:10] or None,
+        "languages": ",".join(langs) or None,
         "enrich_source": "itunes",
     }
 

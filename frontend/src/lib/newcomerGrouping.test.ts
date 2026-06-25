@@ -12,6 +12,7 @@ function row(p: Partial<NewcomerHistoryItem> & { app_id: string }): NewcomerHist
     first_detected_at: '2026-06-01T00:00:00Z',
     store_url: null, release_date: null, genre: null, rating: null,
     rating_count: null, price: null, description: null, screenshots: [],
+    version: null, current_version_date: null, languages: null,
     enrich_source: null, entity_id: null, entity_name: null, is_reentry: false,
     ...p,
   }

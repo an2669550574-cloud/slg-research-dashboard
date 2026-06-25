@@ -324,6 +324,10 @@ export interface NewcomerHistoryItem {
   price: string | null
   description: string | null
   screenshots: string[]
+  /** 当前版本号 / 版本更新日 / 支持语言（ISO2A 逗号拼）。iTunes 富化有，GP 留 null。 */
+  version: string | null
+  current_version_date: string | null
+  languages: string | null
   enrich_source: 'itunes' | 'gp' | null
   /** 读时归属：命中已建档主体（建档后立即生效，无需等下轮检出）。 */
   entity_id: number | null

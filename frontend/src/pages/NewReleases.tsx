@@ -537,6 +537,10 @@ function NewcomerDrawer({ group, onClose }: { group: GroupedNewcomer; onClose: (
   const navigate = useNavigate()
   const item = group.rep
   const multi = group.markets.length > 1
+  // 支持语言：ISO2A 逗号拼，前 14 个展示为码徽标，余下折叠成「等 N 种」。
+  const langCodes = item.languages ? item.languages.split(',').filter(Boolean) : []
+  const langShown = langCodes.slice(0, 14)
+  const langMore = langCodes.length - langShown.length
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => { if (ev.key === 'Escape') onClose() }
     window.addEventListener('keydown', onKey)
@@ -594,6 +598,30 @@ function NewcomerDrawer({ group, onClose }: { group: GroupedNewcomer; onClose: (
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+          {(item.version || langCodes.length > 0) && (
+            <div className="space-y-2 text-[11px] font-data">
+              {item.version && (
+                <div className="flex items-center gap-2">
+                  <span className="text-muted uppercase tracking-wider w-16 shrink-0">{t.newcomers.drawerVersion}</span>
+                  <span className="text-secondary">v{item.version}</span>
+                  {item.current_version_date && (
+                    <span className="text-muted">{t.newcomers.drawerVersionUpdated(item.current_version_date)}</span>
+                  )}
+                </div>
+              )}
+              {langCodes.length > 0 && (
+                <div className="flex items-start gap-2">
+                  <span className="text-muted uppercase tracking-wider w-16 shrink-0 mt-0.5">{t.newcomers.drawerLanguages}</span>
+                  <span className="flex flex-wrap items-center gap-1">
+                    {langShown.map(l => (
+                      <span key={l} className="px-1.5 py-0.5 bg-elevated rounded text-secondary">{l.toUpperCase()}</span>
+                    ))}
+                    {langMore > 0 && <span className="text-muted">{t.newcomers.drawerLangMore(langMore)}</span>}
+                  </span>
+                </div>
+              )}
             </div>
           )}
           <div className="flex items-center gap-2">

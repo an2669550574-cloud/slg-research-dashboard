@@ -235,6 +235,10 @@ class NewcomerHistoryItem(BaseModel):
     price: Optional[str] = None
     description: Optional[str] = None
     screenshots: list[str] = []
+    # 版本号 / 版本更新日 / 支持语言（iTunes 富化有，GP 留 NULL）。切片 3.1。
+    version: Optional[str] = None
+    current_version_date: Optional[str] = None
+    languages: Optional[str] = None
     enrich_source: Optional[str] = None
     # 读时归属：命中已建档主体（建档后无需回写，历史卡片立刻显示已归属）
     entity_id: Optional[int] = None
@@ -324,7 +328,8 @@ async def get_newcomer_history(
                     "id", "country", "platform", "app_id", "chart_type", "as_of", "name",
                     "publisher", "icon_url", "rank", "revenue", "first_detected_at",
                     "store_url", "release_date", "genre", "rating", "rating_count",
-                    "price", "description", "enrich_source", "is_reentry")},
+                    "price", "description", "version", "current_version_date",
+                    "languages", "enrich_source", "is_reentry")},
                 # 落库后建档的主体读时也算 SLG——is_slg 活算（存档值只作冗余）
                 is_slg=r.is_slg or r.id in attributed,
                 entity_id=attributed.get(r.id, (None, None))[0],
