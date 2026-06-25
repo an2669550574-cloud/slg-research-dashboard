@@ -113,7 +113,9 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 | `NEWCOMER_WINDOW` | 4 | 回看几个快照作 baseline。US daily ≈ 4 天，JP/KR/DE/RU weekly ≈ 4 周 |
 | `NEWCOMER_TOPN` | 50 | 全市场新面孔：名次 ≤ 此值才算「新进榜」 |
 | `PUBLISHER_NEWCOMER_TOPN` | 200 | 厂商主体新品：名次 ≤ 此值（比 50 宽——主体可信，名次较深也值得看，但砍 #201+ 长尾） |
-| `NEWCOMER_HISTORY_TOPN` | 100 | 检出沉淀口径（`market_newcomer_log`），比日报宽，页面可筛 Top50/100 |
+| `NEWCOMER_HISTORY_TOPN` | 100 | 检出沉淀的**市场口径**（`market_newcomer_log`），比日报宽，页面可筛 Top50/100 |
+
+> **检出沉淀取两路并集**（`record_market_newcomers`，按 app_id 去重）：市场口径 `detect_newcomers`（Top100）+ 已建档主体 `detect_publisher_newcomers`（Top200）。后者专门接住「冷启动名次深于 100、慢爬进榜时已被基线吞掉」的漏报（如 Century Games《Top General》首见 rank 144 > 100，旧逻辑永不入库）。日报推送口径（Top50）不受影响。
 
 `no_baseline`（冷库/首次同步、无历史快照）一律返回空——绝不把首图全员当新品。
 
