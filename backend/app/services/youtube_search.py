@@ -105,7 +105,13 @@ async def search_gameplay_videos(name: str,
         return []
     n = max_results or settings.YOUTUBE_SEARCH_MAX_RESULTS
     suffix = (settings.YOUTUBE_SEARCH_QUERY_SUFFIX or "").strip()
-    q = f"{name} {suffix}".strip()
+    # 游戏名加引号精确匹配：防 YT 对通用/短名拆词召回他游噪声。prod 实测：
+    # '탑 로드'（Top Lords）裸搜全是 Million Lords/Bannerlord/赛马娘等拆词噪声，
+    # 加引号后大半命中真实机；对独特名（Infinity Kingdom）无害。name 内的引号
+    # 先换成空格，避免破坏 q 语法。不加 videoDuration 过滤——实测 medium 会把
+    # 实机（常是 short 片段 / long 完整实况）滤掉，只留中等时长的解说/tips。
+    safe = name.replace('"', " ").strip()
+    q = f'"{safe}" {suffix}'.strip()
     try:
         data = await _yt_search_raw(q, n)
     except Exception:
