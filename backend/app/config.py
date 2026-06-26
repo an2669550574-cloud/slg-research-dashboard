@@ -263,6 +263,9 @@ class Settings(BaseSettings):
     # 搜索词后缀：拼成 "<游戏名> <后缀>"。默认 gameplay 召回实机；可调优（试
     # "gameplay walkthrough" 提纯，或后续加排除词压直播/解说噪声，见 ADR 0002 观察）。
     YOUTUBE_SEARCH_QUERY_SUFFIX: str = "gameplay"
+    # 只给「近 N 天检出」的新品搜视频：聚焦新品语义、防首次上线把 365 天历史检出
+    # 全量搜爆配额。0 = 不限（给所有未搜过的检出补搜）。台账去重保证每 app 只搜一次。
+    YOUTUBE_SEARCH_LOOKBACK_DAYS: int = 30
 
     @property
     def cors_origin_list(self) -> list[str]:
