@@ -48,7 +48,7 @@ detect 新品(已有，零 ST)
 
 1. ✅ **YouTube Data API v3 key**（2026-06-26 已就位、本地验证可用）:变量名定为 **`YOUTUBE_API_KEY`**，放 `backend/.env`。免费配额 **1 万 units/天**，`search.list` = **100 units/次** → **约 100 次搜索/天**。本地实调中文 query 返回 HTTP 200、CJK 正常。
 2. ⬜ `.env.example` 加 `YOUTUBE_API_KEY=` 占位（开发切片 1a 时一并做，未做）。
-3. ⬜ **服务器出站确认**:HK prod 能否访问 `googleapis.com`（**本地通 ≠ HK 通**，部署前须在 HK 实测一次）。
+3. ✅ **服务器出站确认**（2026-06-26 部署后实测）:HK backend 容器访问 `googleapis.com` 可达（HTTP 400 = Google 应答，无效 key 被拒属预期）。
 
 ## 后果
 
@@ -91,5 +91,7 @@ detect 新品(已有，零 ST)
 - 2026-06-26:PR #117 已合入 main（51fbedb）；从 main 新开分支 `feat/newcomer-gameplay-video`，已落 ADR docs commit（1fa7d9c）+ **切片 1a 完成并推送**（68291ff，pytest 4 passed）。配置含 `YOUTUBE_SEARCH_DAILY_CAP=80` / `MAX_RESULTS=5` / `QUERY_SUFFIX=gameplay`。
 - 2026-06-26:**切片 1b 完成**——两表（`newcomer_video` + `newcomer_video_search`）+ 迁移 0029（可逆）+ `sync_newcomer_videos` drain + 独立 daily job（03:50 UTC）+ 5 测试；全量回归 468 passed。实现微调:触发改**独立 daily job**（非 record 内联，解耦防拖垮同步）；新增 `YOUTUBE_SEARCH_LOOKBACK_DAYS=30`（只搜近 30 天检出，防首搜把 365 天历史全量搜爆配额）。
 - 2026-06-26:**切片 1c 完成**——读/删端点 + `NewcomerVideoSection`（两抽屉共用）+ i18n；preview 实测渲染/删交互/无 console error，前端 build + 后端 6 测试过。至此 **1a/1b/1c 三切片全完成**，方案 B 端到端打通（检出 → 定时搜 → 落库 → 抽屉展示 → 人工删噪）。
-- **下一步** = 开 PR 合入 main；**部署前必做**:① HK 出站 `googleapis.com` 实测 ② prod `.env` 填 `YOUTUBE_API_KEY` ③ 带迁移 0029，部署前打 `rollback-` tag（见 `docs/ROLLBACK.md`）。「置顶」去噪 + query 调优（压解说噪声）留作后续增强。
+- 2026-06-26:**PR #118 已合 + 部署到 HK**（main 3ede7e4；打了 rollback-20260626-1441 锚点；迁移 0028+0029 自动跑通、两表已建；backend healthy；HK 出站 googleapis.com 实测可达）。
+- **唯一剩余 = HK `backend/.env` 填 `YOUTUBE_API_KEY` 后 `docker compose ... up -d backend` 重启**（用户选「先部署 key 后补」）。key 未填时整体 no-op（安全），填后定时 job（03:50 UTC）即开始搜集。
+- 后续增强（非阻塞）：「置顶」去噪 + query 调优（压解说/直播噪声，见上「观察」）。
 - 同期 PR #117（切片 3.1+3.2，需求 ③）已推送待合，与本 ADR 无依赖。
