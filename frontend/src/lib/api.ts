@@ -27,6 +27,7 @@ import type {
   NewcomersOut,
   NewcomerHistoryOut,
   PublisherNewcomersOut,
+  StoreDetail,
   AppstoreReleasesOut,
   PublisherItunesArtist,
   PublisherItunesArtistCreate,
@@ -199,6 +200,9 @@ export const newcomersApi = {
   /** 手动触发一轮清单同步（首次挂账号建基线用；平时靠周级调度）。 */
   appstoreSync: (): Promise<{ message: string; synced: number; failed: number; baselined: number; new_apps: number }> =>
     api.post('/newcomers/appstore/sync').then(r => r.data),
+  /** 按需取单个 app 的商店详情（免费源实时富化，零落库零 ST）。厂商新品抽屉用。 */
+  enrich: (app_id: string, platform: string, country = 'us'): Promise<StoreDetail> =>
+    api.get('/newcomers/enrich', { params: { app_id, platform, country } }).then(r => r.data),
 }
 
 export interface MaterialListParams {

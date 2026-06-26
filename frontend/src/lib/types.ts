@@ -324,6 +324,10 @@ export interface NewcomerHistoryItem {
   price: string | null
   description: string | null
   screenshots: string[]
+  /** 当前版本号 / 版本更新日 / 支持语言（ISO2A 逗号拼）。iTunes 富化有，GP 留 null。 */
+  version: string | null
+  current_version_date: string | null
+  languages: string | null
   enrich_source: 'itunes' | 'gp' | null
   /** 读时归属：命中已建档主体（建档后立即生效，无需等下轮检出）。 */
   entity_id: number | null
@@ -377,6 +381,26 @@ export interface PublisherNewcomersOut {
   combos_without_baseline: string[]
   as_of_by_combo: Record<string, string>
   window: number
+}
+
+/** 单个 app 的商店详情（按需实时富化，零落库零 ST）。给厂商新品等不落库视图用。
+ *  found=false = 免费源未命中（区域限定 / 已下架），前端降级提示。 */
+export interface StoreDetail {
+  app_id: string
+  platform: string
+  found: boolean
+  enrich_source: 'itunes' | 'gp' | null
+  store_url: string | null
+  release_date: string | null
+  genre: string | null
+  rating: number | null
+  rating_count: number | null
+  price: string | null
+  description: string | null
+  screenshots: string[]
+  version: string | null
+  current_version_date: string | null
+  languages: string | null
 }
 
 /** 一条「App Store 新上架」：开发者账号清单 diff 出的新 app（不依赖进榜）。 */

@@ -50,5 +50,10 @@ class MarketNewcomerLog(Base):
     price: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     screenshot_urls: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON list
+    # 当前版本号 + 版本更新日（iTunes lookup 同响应里有；GP 页拿不到，留 NULL）。
+    version: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    current_version_date: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    # 支持语言（ISO2A 逗号拼，封顶 30 个）。同上：iTunes 有、GP 留 NULL。
+    languages: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
     enrich_source: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     enriched_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
