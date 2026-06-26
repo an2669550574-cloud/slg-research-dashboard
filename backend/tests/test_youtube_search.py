@@ -43,7 +43,7 @@ async def test_search_parses_cjk_candidates(monkeypatch):
 
     out = await ys.search_gameplay_videos("万国觉醒", max_results=5)
 
-    assert captured["q"] == "万国觉醒 gameplay"   # 游戏名 + 后缀，中文原样
+    assert captured["q"] == '"万国觉醒" gameplay'   # 游戏名加引号精确匹配 + 后缀，中文原样
     assert captured["n"] == 5
     assert [c.video_id for c in out] == ["AAA111", "BBB222"]  # 频道结果被过滤
     first = out[0]
@@ -117,3 +117,20 @@ async def test_search_dedups_duplicate_video_ids(monkeypatch):
     out = await ys.search_gameplay_videos("万国觉醒")
     assert [c.video_id for c in out] == ["DUP", "X2"]   # 重复被去掉
     assert [c.rank for c in out] == [1, 2]              # rank 连续
+
+
+@pytest.mark.asyncio
+async def test_search_quotes_name_and_sanitizes_inner_quotes(monkeypatch):
+    """游戏名加引号精确匹配（防通用短名拆词）；name 内已有引号换成空格不破坏 q。"""
+    monkeypatch.setattr(settings, "YOUTUBE_API_KEY", "test-key")
+    cap = {}
+
+    async def fake_raw(q, max_results):
+        cap["q"] = q
+        return {"items": []}
+    monkeypatch.setattr(ys, "_yt_search_raw", fake_raw)
+
+    await ys.search_gameplay_videos("탑 로드")           # 通用短名
+    assert cap["q"] == '"탑 로드" gameplay'
+    await ys.search_gameplay_videos('Game "X" Edition')  # 内部引号被清洗成空格
+    assert cap["q"] == '"Game  X  Edition" gameplay'
