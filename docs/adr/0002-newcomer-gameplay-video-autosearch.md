@@ -40,7 +40,7 @@ detect 新品(已有，零 ST)
 
 | 切片 | 端到端行为 | 验收 |
 |---|---|---|
-| **1a 后端搜索服务** | `services/youtube_search.py`:输入游戏名 → 调 YT API → 返回候选 list；带每日配额软护栏 + 去重（同 app_id 不重复搜） | pytest:mock YT 响应、**中文游戏名**夹具（项目硬规则：CJK 数据必验）、配额超限降级、key 缺失返回空不抛错 |
+| ✅ **1a 后端搜索服务**（2026-06-26 done，commit 68291ff） | `services/youtube_search.py`:`search_gameplay_videos` 调 YT search.list 返回候选；`evaluate_search_gate` 纯函数判去重/日上限/排次日（护栏逻辑就位，状态喂数据待 1b 接 db） | ✅ pytest 4 passed:中文游戏名夹具（CJK）、无 videoId 过滤、key 缺失短路、请求异常吞掉、护栏三态 |
 | **1b 落库 + 触发挂载** | 新建 `newcomer_video` 表（app_id / video_id / title / thumbnail / channel / url / rank / created_at）；检出链路 `record_market_newcomers` 后异步触发搜索落库 | alembic 迁移；检出新品后表里有候选；重复检出不重复落 |
 | **1c 前端展示** | 新品抽屉加「实机视频」段:缩略图卡 + 标题 + 跳 YT；人工「置顶 / 删」 | 抽屉实测；无候选时降级文案；**hooks 全部在 early return 之前**（项目硬规则，抽屉 prop 切换不崩页） |
 
@@ -88,5 +88,6 @@ detect 新品(已有，零 ST)
 - 2026-06-26:方向拍板走 B，本 ADR 落盘。**代码未开始**。
 - 2026-06-26:YT API key 已就位并本地验证可用（变量名 `YOUTUBE_API_KEY`，中文 query 实测 HTTP 200 / CJK 正常 / 召回 5 条）。**观察**：query「游戏名 gameplay」召回里混攻略/解说/玩家心态视频，非全是纯实机——印证 B「靠搜索相关性 + 人工去噪」的取舍；开发时 query 可调优（试加 `walkthrough`/`实机`/排除 `直播` 等）。
 - 2026-06-26:三处设计点已拍板（独立 `newcomer_video` 表 / 同 app_id 不重复搜 + 日上限 80 + 超额排次日 / 每新品存前 5 条），见「设计决策」段。
-- **下一步** = 开切片 1a（后端 `services/youtube_search.py` + 配额护栏 + CJK 测试）。建议等 PR #117 合入 main 后从 main 新开分支 `feat/newcomer-gameplay-video`。HK 出站待部署前实测。
+- 2026-06-26:PR #117 已合入 main（51fbedb）；从 main 新开分支 `feat/newcomer-gameplay-video`，已落 ADR docs commit（1fa7d9c）+ **切片 1a 完成并推送**（68291ff，pytest 4 passed）。配置含 `YOUTUBE_SEARCH_DAILY_CAP=80` / `MAX_RESULTS=5` / `QUERY_SUFFIX=gameplay`。
+- **下一步** = 切片 1b（新建 `newcomer_video` 表 + alembic 迁移；把 `evaluate_search_gate` 接真实 db：去重锚点查表 / 当日计数 / 待搜队列；在 `record_market_newcomers` 后异步触发 `search_gameplay_videos` 落库）。HK 出站待部署前实测。
 - 同期 PR #117（切片 3.1+3.2，需求 ③）已推送待合，与本 ADR 无依赖。
