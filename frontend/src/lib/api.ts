@@ -28,6 +28,7 @@ import type {
   NewcomerHistoryOut,
   PublisherNewcomersOut,
   StoreDetail,
+  NewcomerVideo,
   AppstoreReleasesOut,
   PublisherItunesArtist,
   PublisherItunesArtistCreate,
@@ -203,6 +204,12 @@ export const newcomersApi = {
   /** 按需取单个 app 的商店详情（免费源实时富化，零落库零 ST）。厂商新品抽屉用。 */
   enrich: (app_id: string, platform: string, country = 'us'): Promise<StoreDetail> =>
     api.get('/newcomers/enrich', { params: { app_id, platform, country } }).then(r => r.data),
+  /** 某 app 的实机玩法视频候选（定时自动搜来，零 ST）。新品抽屉用。 */
+  videos: (app_id: string): Promise<NewcomerVideo[]> =>
+    api.get('/newcomers/videos', { params: { app_id } }).then(r => r.data),
+  /** 人工去噪：删掉一条不相关候选。 */
+  deleteVideo: (id: number): Promise<{ message: string }> =>
+    api.delete(`/newcomers/videos/${id}`).then(r => r.data),
 }
 
 export interface MaterialListParams {

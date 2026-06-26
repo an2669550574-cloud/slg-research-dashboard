@@ -42,7 +42,7 @@ detect 新品(已有，零 ST)
 |---|---|---|
 | ✅ **1a 后端搜索服务**（2026-06-26 done，commit 68291ff） | `services/youtube_search.py`:`search_gameplay_videos` 调 YT search.list 返回候选；`evaluate_search_gate` 纯函数判去重/日上限/排次日（护栏逻辑就位，状态喂数据待 1b 接 db） | ✅ pytest 4 passed:中文游戏名夹具（CJK）、无 videoId 过滤、key 缺失短路、请求异常吞掉、护栏三态 |
 | ✅ **1b 落库 + 触发挂载**（2026-06-26 done，全量 468 passed） | 两张表 `newcomer_video`（候选）+ `newcomer_video_search`（搜索台账=去重锚点+当日计数；「待搜」隐式 = log 里近 LOOKBACK 天未搜的 app，无队列状态机）；`services/newcomer_video.py::sync_newcomer_videos` drain 由**独立 daily scheduler job**（03:50 UTC）触发——非 record 内联（解耦、不拖垮同步、配额可控）。alembic 0029 两表 create。 | ✅ pytest 5 passed（落库/去重/日上限/no-op/lookback）+ 迁移 up/down smoke + 全量回归 |
-| **1c 前端展示** | 新品抽屉加「实机视频」段:缩略图卡 + 标题 + 跳 YT；人工「置顶 / 删」 | 抽屉实测；无候选时降级文案；**hooks 全部在 early return 之前**（项目硬规则，抽屉 prop 切换不崩页） |
+| ✅ **1c 前端展示**（2026-06-26 done） | 后端读端点 `GET /newcomers/videos?app_id=` + 删端点 `DELETE /newcomers/videos/{id}`（零 ST，删后不会被搜回——台账已记 done）；前端 `NewcomerVideoSection`（market + publisher 两抽屉共用）：缩略图卡 + 标题 + 频道/日期 + 跳 YT + 人工删噪。无候选整段不渲染。**人工「置顶」未做**（去噪用删即够，置顶需加列迁移，留后续）。 | ✅ preview 实测（视频段渲染 + 删交互 3→2 持久化 + 无 console error）；后端 6 测试；前端 build 过；hooks 全在 early return 前 |
 
 ### 前置 blocker（实现前必须先备齐）
 
@@ -90,5 +90,6 @@ detect 新品(已有，零 ST)
 - 2026-06-26:三处设计点已拍板（独立 `newcomer_video` 表 / 同 app_id 不重复搜 + 日上限 80 + 超额排次日 / 每新品存前 5 条），见「设计决策」段。
 - 2026-06-26:PR #117 已合入 main（51fbedb）；从 main 新开分支 `feat/newcomer-gameplay-video`，已落 ADR docs commit（1fa7d9c）+ **切片 1a 完成并推送**（68291ff，pytest 4 passed）。配置含 `YOUTUBE_SEARCH_DAILY_CAP=80` / `MAX_RESULTS=5` / `QUERY_SUFFIX=gameplay`。
 - 2026-06-26:**切片 1b 完成**——两表（`newcomer_video` + `newcomer_video_search`）+ 迁移 0029（可逆）+ `sync_newcomer_videos` drain + 独立 daily job（03:50 UTC）+ 5 测试；全量回归 468 passed。实现微调:触发改**独立 daily job**（非 record 内联，解耦防拖垮同步）；新增 `YOUTUBE_SEARCH_LOOKBACK_DAYS=30`（只搜近 30 天检出，防首搜把 365 天历史全量搜爆配额）。
-- **下一步** = 切片 1c 前端：新品抽屉加「实机视频」段（缩略图卡 + 标题 + 跳 YT + 人工去噪）。需后端先补一个读端点（如 `GET /newcomers/videos?app_id=`，零 ST、读 `newcomer_video` 表）。HK 出站待部署前实测。
+- 2026-06-26:**切片 1c 完成**——读/删端点 + `NewcomerVideoSection`（两抽屉共用）+ i18n；preview 实测渲染/删交互/无 console error，前端 build + 后端 6 测试过。至此 **1a/1b/1c 三切片全完成**，方案 B 端到端打通（检出 → 定时搜 → 落库 → 抽屉展示 → 人工删噪）。
+- **下一步** = 开 PR 合入 main；**部署前必做**:① HK 出站 `googleapis.com` 实测 ② prod `.env` 填 `YOUTUBE_API_KEY` ③ 带迁移 0029，部署前打 `rollback-` tag（见 `docs/ROLLBACK.md`）。「置顶」去噪 + query 调优（压解说噪声）留作后续增强。
 - 同期 PR #117（切片 3.1+3.2，需求 ③）已推送待合，与本 ADR 无依赖。

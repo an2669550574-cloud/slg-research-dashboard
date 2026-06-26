@@ -148,3 +148,27 @@ async def test_sync_lookback_excludes_old_detections(app, monkeypatch):
     out = await nv.sync_newcomer_videos(lookback_days=30)
     assert out["searched"] == 1
     assert searched_names == ["新检出"]
+
+
+@pytest.mark.asyncio
+async def test_videos_endpoint_lists_and_deletes(client):
+    """读端点按候选序返回；删端点去噪一条（CJK 标题）。"""
+    from app.database import AsyncSessionLocal
+    from app.models.newcomer import NewcomerVideo
+    async with AsyncSessionLocal() as db:
+        db.add(NewcomerVideo(app_id="111", video_id="V1", title="万国觉醒 实机玩法",
+                             url="https://www.youtube.com/watch?v=V1", rank=1))
+        db.add(NewcomerVideo(app_id="111", video_id="V2", title="gameplay",
+                             url="https://www.youtube.com/watch?v=V2", rank=2))
+        await db.commit()
+
+    r = await client.get("/api/newcomers/videos", params={"app_id": "111"})
+    assert r.status_code == 200
+    body = r.json()
+    assert [v["video_id"] for v in body] == ["V1", "V2"]
+    assert "万国觉醒" in body[0]["title"]
+
+    rd = await client.delete(f"/api/newcomers/videos/{body[0]['id']}")
+    assert rd.status_code == 200
+    r2 = await client.get("/api/newcomers/videos", params={"app_id": "111"})
+    assert [v["video_id"] for v in r2.json()] == ["V2"]

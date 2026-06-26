@@ -6,7 +6,7 @@ import { newcomersApi, publishersApi } from '../lib/api'
 import { formatRevenue, formatNumber } from '../lib/utils'
 import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
-import { Download as DownloadIcon, Sparkles, Info, FilePlus2, Globe2, Building2, Store, RefreshCw, Star, X, ExternalLink, Repeat, Clock, Ban, ChevronDown } from 'lucide-react'
+import { Download as DownloadIcon, Sparkles, Info, FilePlus2, Globe2, Building2, Store, RefreshCw, Star, X, ExternalLink, Repeat, Clock, Ban, ChevronDown, Youtube } from 'lucide-react'
 import { COUNTRIES, PLATFORMS, platformLabel, type Country, type Platform } from '../lib/markets'
 import { GameIcon } from '../components/GameIcon'
 import { QueryError } from '../components/QueryError'
@@ -592,6 +592,55 @@ function StoreDetailSection({ d }: { d: {
 }
 
 
+/** 实机玩法视频段：定时自动搜来的 YouTube 候选（ADR 0002 切片 1c，零 ST）。
+ *  缩略图卡 + 标题 + 频道/日期 + 跳 YT + 人工删噪。无候选则整段不渲染（含未搜/0 命中）。
+ *  market / publisher 两抽屉共用，按 app_id 读，与富化来源无关。 */
+function NewcomerVideoSection({ appId }: { appId: string }) {
+  const t = useT()
+  const qc = useQueryClient()
+  const { data: videos } = useQuery({
+    queryKey: ['newcomer-videos', appId],
+    queryFn: () => newcomersApi.videos(appId),
+    staleTime: 5 * 60 * 1000,
+  })
+  const del = useMutation({
+    mutationFn: (id: number) => newcomersApi.deleteVideo(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['newcomer-videos', appId] }),
+  })
+  if (!videos || videos.length === 0) return null
+  return (
+    <div>
+      <div className="text-[11px] text-muted uppercase tracking-wider mb-1.5">{t.newcomers.drawerVideos}</div>
+      <div className="space-y-2">
+        {videos.map(v => (
+          <div key={v.id} className="group flex gap-2.5 items-start">
+            <a href={v.url} target="_blank" rel="noreferrer" className="relative shrink-0">
+              {v.thumbnail
+                ? <img src={v.thumbnail} alt="" className="w-32 h-[72px] object-cover rounded-lg border border-default" loading="lazy" />
+                : <div className="w-32 h-[72px] rounded-lg bg-elevated border border-default" />}
+              <Youtube size={18} className="absolute inset-0 m-auto text-red-500 drop-shadow" />
+            </a>
+            <div className="min-w-0 flex-1">
+              <a href={v.url} target="_blank" rel="noreferrer"
+                 className="text-xs text-secondary hover:text-primary line-clamp-2 leading-snug">{v.title}</a>
+              <div className="mt-1 flex items-center gap-2 text-[10px] text-muted">
+                {v.channel && <span className="truncate">{v.channel}</span>}
+                {v.published_at && <span className="shrink-0">{v.published_at}</span>}
+              </div>
+            </div>
+            <button onClick={() => del.mutate(v.id)} disabled={del.isPending}
+              title={t.newcomers.videoRemove}
+              className="shrink-0 p-1 text-muted hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity">
+              <X size={13} />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+
 /** 新面孔详情抽屉：免费源富化的描述/截图 + 各市场名次 + 商店页/看板跳转。
  *  hooks 全部在任何条件返回之前（prop 切换时 hook 数量不变）。
  *  跨市场合并后展示代表行（最佳名次行）的富化字段 + 全部市场的逐条检出。 */
@@ -672,6 +721,7 @@ function NewcomerDrawer({ group, onClose }: { group: GroupedNewcomer; onClose: (
             </button>
           </div>
           <StoreDetailSection d={item} />
+          <NewcomerVideoSection appId={item.app_id} />
         </div>
       </div>
     </div>
@@ -767,6 +817,7 @@ function PublisherNewcomerDrawer({ group, onClose }: { group: GroupedPublisherNe
           ) : (
             <p className="text-xs text-muted">{t.newcomers.noDesc}</p>
           )}
+          <NewcomerVideoSection appId={item.app_id} />
         </div>
       </div>
     </div>
