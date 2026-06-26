@@ -171,6 +171,14 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 
 **前端（切片 3）**：新品页加「收入榜 / 下载榜 / 两榜」筛选 chip（默认收入榜，对应 `/history?chart=`），下载榜检出卡片打 ⬇️「下载榜」徽标（`GroupedNewcomer.anyFree`）。
 
+### 竞品新品实机玩法视频自动搜集（ADR 0002，alembic 0029）
+
+新品检出后定时搜 YouTube 实机玩法视频候选落库，前端新品抽屉展示 + 人工删噪。独立 daily job（03:50 UTC）`services/newcomer_video.py::sync_newcomer_videos` 调 **YouTube Data API**（独立配额、零 ST，`YOUTUBE_API_KEY` 在 `backend/.env`）。query **游戏名加引号精确匹配**防通用/短名拆词噪声（prod 实测 `탑 로드` 裸搜全是 Million Lords/赛马娘）。两表 `newcomer_video`（候选）+ `newcomer_video_search`（搜索台账=去重锚点 + 当日上限 80）；残余同名噪声靠前端「删」。详见 [ADR 0002](adr/0002-newcomer-gameplay-video-autosearch.md)。
+
+### tracked iOS 竞品版本变更追踪（ADR 0003，alembic 0030+0031）
+
+每日 digest 流程开头内联 `services/version_tracker.py::check_tracked_versions` 重查 tracked iOS games 的 iTunes 版本（零 ST、批量 lookup），变了写 `game_histories(event_type='version')` + 进 digest「版本更新」全局段 + 详情页时间线（前端 `EVENT_TYPE_CONFIG` 已渲染）。首次填基线不算变更（防刷屏）。**iOS-only**（GP 页无版本源）。HK tracked games 多用 **GP 包名**作 app_id、iTunes 查不到 iOS，靠 `Game.ios_track_id`（人工核对的精确 trackId）补；没补的跳过（弃 iTunes search 兜底——同名歧义大）。详见 [ADR 0003](adr/0003-ios-version-tracking.md)。
+
 ---
 
 ## 标签库 + 产品作用域（PR #113，alembic 0024+0025）
