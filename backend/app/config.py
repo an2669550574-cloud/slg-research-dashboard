@@ -248,6 +248,22 @@ class Settings(BaseSettings):
     # session 本就短（~4 天），预警设 1 天（仅最后一天提醒）避免天天刷屏。
     WECHAT_EXPIRY_WARN_DAYS: int = 1
 
+    # ── 新品实机玩法视频自动搜集（YouTube Data API · ADR 0002）──────────────
+    # 竞品新品检出后按「游戏名 + gameplay」搜 YouTube 实机玩法视频候选。YT 独立
+    # 配额，完全不碰 Sensor Tower 池。留空 = 整体关闭（搜索静默 no-op、返回空），
+    # 与 newcomer enrich 同哲学。值放 backend/.env，不进 git。
+    YOUTUBE_API_KEY: Optional[str] = None
+    # 每日 search.list 调用硬上限（软护栏）。YT 免费池 10000 units/天、search=100
+    # units/次 → 100 次/天；设 80 留余量。当日触达上限后新检出 app 排次日再搜
+    # （不静默丢，见 ADR 0002 配额护栏）。
+    YOUTUBE_SEARCH_DAILY_CAP: int = 80
+    # 每个新品存几条候选（= search.list maxResults，一次调用）。前 5 条够人工挑、
+    # 不刷屏；YT 单次 maxResults 上限 50。
+    YOUTUBE_SEARCH_MAX_RESULTS: int = 5
+    # 搜索词后缀：拼成 "<游戏名> <后缀>"。默认 gameplay 召回实机；可调优（试
+    # "gameplay walkthrough" 提纯，或后续加排除词压直播/解说噪声，见 ADR 0002 观察）。
+    YOUTUBE_SEARCH_QUERY_SUFFIX: str = "gameplay"
+
     @property
     def cors_origin_list(self) -> list[str]:
         if not self.CORS_ORIGINS or self.CORS_ORIGINS.strip() == "*":
