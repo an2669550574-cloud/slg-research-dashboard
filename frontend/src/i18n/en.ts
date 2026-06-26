@@ -178,6 +178,8 @@ export const en: Translations = {
     drawerLanguages: 'Languages',
     drawerLangMore: (n: number) => `+${n} more`,
     enrichLoading: 'Fetching store details…',
+    drawerVideos: 'Gameplay videos',
+    videoRemove: 'Remove video',
     openStore: 'Store page',
     openDetail: 'Open in dashboard',
     noDesc: 'Free sources returned no detail (common for region-locked / delisted GP apps); the detection itself is unaffected.',

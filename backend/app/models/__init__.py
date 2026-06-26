@@ -5,12 +5,12 @@ from app.models.product import OwnProduct, OwnProductMaterial
 from app.models.tag import TagDimension, TagOption, MaterialTagValue, TagDimensionProduct, TagOptionProduct
 from app.models.tag_analysis import TagAnalysisSession, TagAnalysisMessage
 from app.models.publisher import PublisherEntity, PublisherAlias, PublisherAppId
-from app.models.newcomer import MarketNewcomerLog
+from app.models.newcomer import MarketNewcomerLog, NewcomerVideo, NewcomerVideoSearch
 from app.models.wechat import WechatAccount
 
 __all__ = [
     "Game", "GameRanking", "GameHistory", "Material", "CreativeAdaptation",
-    "MarketNewcomerLog",
+    "MarketNewcomerLog", "NewcomerVideo", "NewcomerVideoSearch",
     "OwnProduct", "OwnProductMaterial",
     "TagDimension", "TagOption", "MaterialTagValue", "TagDimensionProduct", "TagOptionProduct",
     "TagAnalysisSession", "TagAnalysisMessage",

@@ -189,6 +189,16 @@ async def _scheduled_sync(country: str = "US", platform: str = "ios") -> None:
         )
 
 
+async def _run_newcomer_video_sync() -> None:
+    """定时任务包装：给近期检出的新品搜 YouTube 实机玩法视频（ADR 0002 切片 1b）。
+    YT 独立配额（不碰 ST），YOUTUBE_API_KEY 未配则整体 no-op；异常不拖垮 scheduler。"""
+    from app.services.newcomer_video import sync_newcomer_videos
+    try:
+        await sync_newcomer_videos()
+    except Exception:
+        logger.exception("Newcomer video sync job crashed")
+
+
 async def _run_daily_alert_digest() -> None:
     """定时任务包装：每日情报汇总（竞品异动 + 两层新品，全 combo 一条钉钉卡）。
     纯本地库重跑检测，零配额；未配 webhook 静默 no-op；异常不拖垮 scheduler。"""
@@ -375,6 +385,17 @@ def start_scheduler() -> None:
         _run_newcomer_log_prune,
         CronTrigger(hour=3, minute=45, timezone="UTC"),
         id="newcomer_log_prune",
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
+
+    # 新品实机玩法视频搜集：03:50 UTC（prune 03:45 之后、DB 备份 04:00 之前）。
+    # 给近期检出的新品搜 YouTube 候选；YT 独立配额（不碰 ST），key 未配则空跑无害，
+    # 故无条件挂。配额护栏在 sync_newcomer_videos 内（同 app 不重搜 + 日上限 80）。
+    scheduler.add_job(
+        _run_newcomer_video_sync,
+        CronTrigger(hour=3, minute=50, timezone="UTC"),
+        id="newcomer_video_sync",
         replace_existing=True,
         misfire_grace_time=3600,
     )

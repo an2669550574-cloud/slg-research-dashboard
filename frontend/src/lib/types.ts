@@ -403,6 +403,19 @@ export interface StoreDetail {
   languages: string | null
 }
 
+/** 一条新品实机玩法视频候选（newcomer_video，ADR 0002）。定时自动搜来、零 ST。 */
+export interface NewcomerVideo {
+  id: number
+  app_id: string
+  video_id: string
+  title: string
+  channel: string | null
+  thumbnail: string | null
+  url: string
+  published_at: string | null
+  rank: number | null
+}
+
 /** 一条「App Store 新上架」：开发者账号清单 diff 出的新 app（不依赖进榜）。 */
 export interface AppstoreReleaseItem {
   entity_id: number

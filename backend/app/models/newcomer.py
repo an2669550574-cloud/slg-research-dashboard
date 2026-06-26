@@ -57,3 +57,44 @@ class MarketNewcomerLog(Base):
     languages: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
     enrich_source: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     enriched_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class NewcomerVideo(Base):
+    """竞品新品的 YouTube 实机玩法视频候选（ADR 0002 切片 1b）。
+
+    按游戏名搜来、挂 app_id（跨市场同名一致，故按 app_id 而非 combo 去重）。
+    (app_id, video_id) 唯一防同一视频重复落。YT 独立配额，零 ST。
+    """
+    __tablename__ = "newcomer_video"
+    __table_args__ = (
+        UniqueConstraint("app_id", "video_id", name="uq_newcomer_video"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    app_id: Mapped[str] = mapped_column(String(200), index=True)
+    video_id: Mapped[str] = mapped_column(String(40))
+    title: Mapped[str] = mapped_column(String(500))
+    channel: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    thumbnail: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+    url: Mapped[str] = mapped_column(String(500))
+    published_at: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # 候选序，1 起
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)
+
+
+class NewcomerVideoSearch(Base):
+    """视频搜索台账：记「哪些 app 已搜过」。
+
+    一行 = 对某 app_id 搜过一次（含搜出 0 条的情况——搜了就占配额）。三重作用：
+    - 去重锚点：app_id 在表里 = 已搜，不再重复搜（省配额）。
+    - 当日配额计数：searched_at 落在当天的行数 = 今日已用次数。
+    - 「待搜」是隐式的 = market_newcomer_log 里 app_id 不在本表的（近 LOOKBACK 天）行，
+      无需显式 pending 状态机：当日超额没搜的，下次 drain 自然仍在待搜集。
+    """
+    __tablename__ = "newcomer_video_search"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    app_id: Mapped[str] = mapped_column(String(200), unique=True)
+    name: Mapped[str] = mapped_column(String(300))
+    result_count: Mapped[int] = mapped_column(Integer, default=0)
+    searched_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)

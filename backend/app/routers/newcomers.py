@@ -12,12 +12,13 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db, utcnow_naive
+from app.models.newcomer import NewcomerVideo
 from app.models.publisher import PublisherEntity, PublisherItunesArtist, PublisherItunesApp
 from app.services.newcomers import (
     detect_newcomers, detect_publisher_newcomers, _load_entity_matchers,
@@ -398,6 +399,45 @@ async def enrich_app_detail(
             "rating_count", "price", "description", "version",
             "current_version_date", "languages")},
     )
+
+
+class NewcomerVideoOut(BaseModel):
+    """一条实机玩法视频候选（newcomer_video 表，ADR 0002 切片 1c）。"""
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    app_id: str
+    video_id: str
+    title: str
+    channel: Optional[str] = None
+    thumbnail: Optional[str] = None
+    url: str
+    published_at: Optional[str] = None
+    rank: Optional[int] = None
+
+
+@router.get("/videos", response_model=list[NewcomerVideoOut])
+async def get_newcomer_videos(
+    app_id: str = Query(..., description="iOS 数字 trackId / Android GP 包名"),
+    db: AsyncSession = Depends(get_db),
+):
+    """某 app 的实机玩法视频候选（定时自动搜来、零 ST）。按候选序升序。"""
+    rows = (await db.execute(
+        select(NewcomerVideo)
+        .where(NewcomerVideo.app_id == app_id)
+        # rank 缺失沉底（SQLite NULL 默认排最前）；正常都有值，防御性写法与其它端点一致。
+        .order_by(NewcomerVideo.rank.is_(None), NewcomerVideo.rank, NewcomerVideo.id)
+    )).scalars().all()
+    return rows
+
+
+@router.delete("/videos/{vid}")
+async def delete_newcomer_video(vid: int, db: AsyncSession = Depends(get_db)):
+    """人工去噪：删掉一条不相关候选。删后不会被重新搜回（该 app 已记搜索台账）。"""
+    row = await db.get(NewcomerVideo, vid)
+    if row is not None:
+        await db.delete(row)
+        await db.commit()
+    return {"message": "ok"}
 
 
 @router.get("/", response_model=NewcomersOut)
