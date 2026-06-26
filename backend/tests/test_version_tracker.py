@@ -1,18 +1,20 @@
-"""切片 A：tracked iOS games 版本变更追踪（需求② / ADR 0003）。
+"""tracked iOS games 版本变更追踪（需求② / ADR 0003）。
 
 验收：首次填基线不算变更 / 版本变了写 history+更新 Game / 无变更 no-op /
-mock 模式 no-op / Android（无版本源）跳过。中文游戏名（CJK 硬规则）。
+mock 模式 no-op / Android 跳过 / ios_track_id 优先走 bulk / 包名无 trackId 留白 /
+digest「版本更新」段。中文游戏名（CJK 硬规则）。
 """
 import pytest
 from sqlalchemy import select
 
 
-async def _add_game(app_id, name, platform="ios", version=None, version_date=None):
+async def _add_game(app_id, name, platform="ios", version=None, version_date=None,
+                    ios_track_id=None, publisher=None):
     from app.database import AsyncSessionLocal
     from app.models.game import Game
     async with AsyncSessionLocal() as db:
-        db.add(Game(app_id=app_id, name=name, platform=platform,
-                    version=version, version_date=version_date))
+        db.add(Game(app_id=app_id, name=name, platform=platform, version=version,
+                    version_date=version_date, ios_track_id=ios_track_id, publisher=publisher))
         await db.commit()
 
 
@@ -41,7 +43,7 @@ async def test_first_run_sets_baseline_no_change(app, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_version_change_writes_history_and_updates(app, monkeypatch):
-    """版本变了 → 写 game_histories(version) + 更新 Game 当前值 + 返回变更。"""
+    """版本变了 → 写 game_histories(version) + 更新 Game 当前值 + 返回结构化变更。"""
     from app.config import settings
     from app.database import AsyncSessionLocal
     from app.models.game import Game
@@ -107,7 +109,7 @@ async def test_mock_mode_noop(app, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_android_skipped(app, monkeypatch):
-    """Android（GP 页无版本源）不查——platform 过滤 + 非数字 id 兜底。"""
+    """Android（GP 页无版本源）不查——platform 过滤。"""
     from app.config import settings
     from app.services import version_tracker as vt
     monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
@@ -120,15 +122,56 @@ async def test_android_skipped(app, monkeypatch):
 
     await _add_game("com.x.y", "安卓游戏", platform="android")
     assert await vt.check_tracked_versions() == []
-    assert "ids" not in seen   # 没有 iOS tracked game → 提前 return，没调 bulk
+    assert "ids" not in seen   # 没有 iOS tracked game → 提前 return
+
+
+@pytest.mark.asyncio
+async def test_ios_track_id_takes_priority(app, monkeypatch):
+    """GP 包名 app_id + ios_track_id → 用 trackId 走 bulk lookup（不靠包名）。"""
+    from app.config import settings
+    from app.database import AsyncSessionLocal
+    from app.models.game import Game
+    from app.services import version_tracker as vt
+    monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
+    seen = {}
+
+    async def fake_bulk(ids, country="us"):
+        seen["ids"] = ids
+        return {"1354260888": {"version": "1.1.8", "current_version_date": "2026-06-20"}}
+    monkeypatch.setattr(vt, "fetch_apps_bulk", fake_bulk)
+
+    await _add_game("com.lilithgames.rok", "Rise of Kingdoms", ios_track_id="1354260888")
+    assert await vt.check_tracked_versions() == []      # 基线
+    assert seen["ids"] == ["1354260888"]                # 用 trackId 查，不是包名
+    async with AsyncSessionLocal() as db:
+        g = (await db.execute(select(Game).where(Game.app_id == "com.lilithgames.rok"))).scalar_one()
+    assert g.version == "1.1.8"
+
+
+@pytest.mark.asyncio
+async def test_package_without_trackid_skipped(app, monkeypatch):
+    """GP 包名 + 无 ios_track_id → 没有可用 trackId → 不查、不追踪（诚实留白）。"""
+    from app.config import settings
+    from app.services import version_tracker as vt
+    monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
+    seen = {}
+
+    async def fake_bulk(ids, country="us"):
+        seen["ids"] = ids
+        return {}
+    monkeypatch.setattr(vt, "fetch_apps_bulk", fake_bulk)
+
+    await _add_game("com.century.games.warpath", "Warpath")  # 包名，未补 trackId
+    assert await vt.check_tracked_versions() == []
+    assert "ids" not in seen   # tid_map 空 → 提前 return，没调 bulk
 
 
 def test_digest_renders_version_section():
-    """切片 B：build_daily_digest 把版本变更拼成全局「版本更新」段；纯版本日也发卡。"""
+    """build_daily_digest 把版本变更拼成全局「版本更新」段；纯版本日也发卡。"""
     from app.services.release_alerts import build_daily_digest
     changes = [{"app_id": "111", "name": "万国觉醒", "old": "2.0.1", "new": "2.1.0", "date": "2026-06-26"}]
     res = build_daily_digest([], "2026-06-26", version_changes=changes)
-    assert res is not None          # per_combo 空但有版本变更 → 仍发卡
+    assert res is not None
     _, body, _ = res
     assert "版本更新" in body
     assert "万国觉醒" in body and "2.0.1 → 2.1.0" in body

@@ -24,6 +24,9 @@ class Game(Base):
     # 变更历史进 game_histories(event_type='version')。Android 无版本源 → 留 NULL。
     version: Mapped[str] = mapped_column(String(50), nullable=True)
     version_date: Mapped[str] = mapped_column(String(20), nullable=True)
+    # 精确 iOS 数字 trackId（人工核对补）：HK tracked games 多用 GP 包名作 app_id，
+    # iTunes 用包名查不到 iOS 版本，靠这个补；version_tracker 优先用它走批量 lookup。
+    ios_track_id: Mapped[str] = mapped_column(String(30), nullable=True)
     description: Mapped[str] = mapped_column(Text, nullable=True)
     tags: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)

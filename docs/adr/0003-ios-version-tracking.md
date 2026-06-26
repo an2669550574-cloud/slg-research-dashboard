@@ -23,7 +23,8 @@
 
 ### 机制
 - **当前值**：`Game` 表加 `version` / `version_date`（alembic 0030，可空），作为比对基准 + 详情页展示。
-- **检测**：`services/version_tracker.py::check_tracked_versions` —— 批量 iTunes lookup（复用扩展后的 `appstore.fetch_apps_bulk`，一次 100 个、零额外请求）重查所有 tracked iOS games 版本，与 `Game.version` 比对。
+- **trackId 来源（关键坑）**：iTunes 批量 lookup 需 iOS 数字 trackId，但 **HK tracked games 多用 GP 包名作 app_id**（iTunes 用包名查不到 iOS，GP 包名 ≠ iOS bundleId）。故 `Game` 加 `ios_track_id`（alembic 0031）存**人工核对的精确 iOS trackId**；`version_tracker._track_id` 优先用它、否则 app_id 本身是数字时用之、都没有则**跳过不追踪**（诚实留白）。曾试 iTunes search by 游戏名兜底，prod 实测否决（见备选）。
+- **检测**：`services/version_tracker.py::check_tracked_versions` —— 按 trackId 批量 iTunes lookup（复用扩展后的 `appstore.fetch_apps_bulk`，一次 100 个、零额外请求）重查所有 tracked iOS games 版本，与 `Game.version` 比对。
   - **首次（version=NULL）填基线、不算变更**（no_baseline，与新品检测同哲学，避免功能上线把所有 app 当「刚更新」刷屏）。
   - **变了**：写一条 `game_histories(event_type='version', source='appstore')` 变更事件（title=`版本更新 X → Y`，description=release_notes）+ 更新 `Game` 当前值 + 收集进返回列表。
 - **变更历史**：复用 `GameHistory`（`event_type='version'` 本就预留，**零新表**），详情页时间线天然能展示。
@@ -54,5 +55,6 @@
 | 方案 | 否决原因 |
 |---|---|
 | 新建独立 version_snapshot 表 | `GameHistory` 已预留 `event_type='version'`，复用零新表；当前值进 Game 即够 |
+| iTunes search by 游戏名兜底（非数字 app_id 时搜版本） | prod 实测同名歧义大 + 依赖 publisher 数据质量：`Warpath` 美区全是射击游戏、搜不到 Century 的 SLG Warpath（误匹配到 Lilith 的 `Warpath: Ace Shooter`）；`Lords Mobile`/`Vikings` 因 iOS 名带副标题漏。改走「人工补精确 `ios_track_id`」，零误匹配、缺的诚实留白 |
 | 追踪所有检出 app（含 newcomer_log） | 用户拍板只盯 tracked；新品版本刚上线变化不大，且请求量大 |
 | 独立 daily job（02:50 UTC）+ digest 读 GameHistory | 要查当天事件 + 从 title 反解析 old/new（脆弱）+ 处理「读哪天事件」（event_date≠检测日）；内联 check 直接拿结构化 changes，更简单，且 check 在 webhook 检查前跑、总落库。最初按独立 job 写、落码时改内联 |
