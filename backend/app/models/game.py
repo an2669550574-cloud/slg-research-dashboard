@@ -20,6 +20,10 @@ class Game(Base):
     platform: Mapped[str] = mapped_column(String(20), default="ios")
     country: Mapped[str] = mapped_column(String(10), default="US")
     release_date: Mapped[str] = mapped_column(String(20), nullable=True)
+    # 当前 iOS 版本号 + 版本更新日：version_tracker 日级重查 iTunes 维护（零 ST）。
+    # 变更历史进 game_histories(event_type='version')。Android 无版本源 → 留 NULL。
+    version: Mapped[str] = mapped_column(String(50), nullable=True)
+    version_date: Mapped[str] = mapped_column(String(20), nullable=True)
     description: Mapped[str] = mapped_column(Text, nullable=True)
     tags: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)

@@ -312,9 +312,22 @@ def build_free_newcomer_lines(market: dict, publisher: dict,
     return lines
 
 
+def build_version_lines(changes: list[dict], cap: int) -> list[str]:
+    """版本变更 → 人读行（需求② / ADR 0003）。changes: [{name, old, new, date}]。
+
+    全局段（跨 combo），tracked iOS 竞品版本更新。封顶 cap 防极端日刷屏。
+    """
+    out: list[str] = []
+    for c in changes[:cap]:
+        date = f"（{c['date']}）" if c.get("date") else ""
+        out.append(f"🆙 **{c['name']}**：{c['old']} → {c['new']}{date}")
+    return out
+
+
 def build_daily_digest(per_combo: list[dict], today: str,
                        articles: Optional[dict] = None,
-                       entities: Optional[dict] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
+                       entities: Optional[dict] = None,
+                       version_changes: Optional[list[dict]] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
     """全 combo 检测结果 → (title, markdown, btns)。全空 → None（不发）。
 
     per_combo: [{country, platform, movement: dict|None, market: dict|None, publisher: dict|None}]
@@ -367,6 +380,13 @@ def build_daily_digest(per_combo: list[dict], today: str,
             url = _store_url(e.get("app_id", ""), c["country"], c["platform"])
             if url and len(btns) < 5 and all(b[1] != url for b in btns):
                 btns.append((f"{e['name']} →", url))
+    # 全局「版本更新」段（跨 combo，tracked iOS 竞品版本变更，ADR 0003 切片 B）。
+    # 放 combo 段之后；纯版本更新日（无异动/新品）也能让 sections 非空、照常发卡。
+    if version_changes:
+        vlines = build_version_lines(version_changes, cap)
+        if vlines:
+            total += len(version_changes)
+            sections.append("【版本更新 · iOS 竞品】\n\n" + "\n\n".join(vlines))
     if not sections:
         return None
     head = f"### 📡 SLG 每日情报 · {today}（{total} 项）"
@@ -385,6 +405,15 @@ async def send_daily_digest() -> bool:
     只纳入当天有新快照的 combo：movement 靠 today_missing 闸门，新品靠
     as_of == today 闸门——次市场（周/月级同步）的旧快照不会被每天重报。
     """
+    # 版本追踪先跑：落 game_histories(version 事件) + 更新 Game 当前值，独立于
+    # webhook 配置（无 webhook 也积累历史）。USE_MOCK_DATA / 无 iOS games 时 no-op。
+    # 返回的结构化变更（name/old/new/date）直接拼 digest「版本更新」段（ADR 0003）。
+    from app.services.version_tracker import check_tracked_versions
+    try:
+        version_changes = await check_tracked_versions()
+    except Exception:
+        logger.exception("Version check (in digest) crashed")
+        version_changes = []
     if not dingtalk.is_enabled():
         return False
     from app.services.movement import detect_movement
@@ -492,7 +521,8 @@ async def send_daily_digest() -> bool:
     except Exception:
         logger.warning("entity attribution for digest failed", exc_info=True)
 
-    msg = build_daily_digest(per_combo, today, articles=articles_by_app, entities=entities_by_app)
+    msg = build_daily_digest(per_combo, today, articles=articles_by_app,
+                             entities=entities_by_app, version_changes=version_changes)
     if msg is None:
         logger.info("daily digest: nothing to report for %s", today)
         return False
