@@ -383,6 +383,26 @@ export interface PublisherNewcomersOut {
   window: number
 }
 
+/** 单个 app 的商店详情（按需实时富化，零落库零 ST）。给厂商新品等不落库视图用。
+ *  found=false = 免费源未命中（区域限定 / 已下架），前端降级提示。 */
+export interface StoreDetail {
+  app_id: string
+  platform: string
+  found: boolean
+  enrich_source: 'itunes' | 'gp' | null
+  store_url: string | null
+  release_date: string | null
+  genre: string | null
+  rating: number | null
+  rating_count: number | null
+  price: string | null
+  description: string | null
+  screenshots: string[]
+  version: string | null
+  current_version_date: string | null
+  languages: string | null
+}
+
 /** 一条「App Store 新上架」：开发者账号清单 diff 出的新 app（不依赖进榜）。 */
 export interface AppstoreReleaseItem {
   entity_id: number

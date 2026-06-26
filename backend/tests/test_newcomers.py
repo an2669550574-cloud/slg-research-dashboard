@@ -413,3 +413,47 @@ async def test_publisher_newcomers_endpoint(client, monkeypatch):
     assert body["items"][0]["country"] == "US"
     assert "JP/ios" in body["combos_without_baseline"]
     assert body["window"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_enrich_endpoint_shapes_detail(client, monkeypatch):
+    """/enrich 转发 enrich_fields 并整形：screenshot_urls(JSON 串) → list，found=True。"""
+    import json
+    import app.services.newcomer_log as nl
+
+    async def fake_enrich(app_id, country, platform):
+        return {
+            "store_url": "https://apps.apple.com/x", "release_date": "2026-06-01",
+            "genre": "Strategy", "rating": 4.7, "rating_count": 1234, "price": "Free",
+            "description": "末日生存策略", "screenshot_urls": json.dumps(["a.jpg", "b.jpg"]),
+            "version": "1.2.3", "current_version_date": "2026-06-18",
+            "languages": "EN,ZH,JA", "enrich_source": "itunes",
+        }
+    monkeypatch.setattr(nl, "enrich_fields", fake_enrich)
+
+    r = await client.get("/api/newcomers/enrich", params={"app_id": "123", "platform": "ios"})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["found"] is True
+    assert d["version"] == "1.2.3"
+    assert d["current_version_date"] == "2026-06-18"
+    assert d["languages"] == "EN,ZH,JA"
+    assert d["screenshots"] == ["a.jpg", "b.jpg"]
+    assert d["description"] == "末日生存策略"
+
+
+@pytest.mark.asyncio
+async def test_enrich_endpoint_miss_returns_found_false(client, monkeypatch):
+    """免费源未命中（区域限定/已下架）→ found=False、不抛错，前端降级。"""
+    import app.services.newcomer_log as nl
+
+    async def fake_enrich(app_id, country, platform):
+        return None
+    monkeypatch.setattr(nl, "enrich_fields", fake_enrich)
+
+    r = await client.get("/api/newcomers/enrich", params={"app_id": "com.x.y", "platform": "android"})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["found"] is False
+    assert d["screenshots"] == []
+    assert d["version"] is None

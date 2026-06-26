@@ -177,6 +177,7 @@ export const en: Translations = {
     drawerVersionUpdated: (d: string) => `updated ${d}`,
     drawerLanguages: 'Languages',
     drawerLangMore: (n: number) => `+${n} more`,
+    enrichLoading: 'Fetching store details…',
     openStore: 'Store page',
     openDetail: 'Open in dashboard',
     noDesc: 'Free sources returned no detail (common for region-locked / delisted GP apps); the detection itself is unaffected.',

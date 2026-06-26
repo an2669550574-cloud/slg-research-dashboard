@@ -351,6 +351,55 @@ async def trigger_newcomer_history_sync():
     return {"message": "ok", **summary}
 
 
+class StoreDetailOut(BaseModel):
+    """单个 app 的商店详情（按需实时富化，零落库、零 ST 配额）。
+
+    给「厂商新品」等不落库视图用：检出沉淀(MarketNewcomerLog)是落库时富化，
+    但厂商新品实时检测、任意名次、多不在 Top100，没有沉淀富化可读——故点开
+    详情时对该 app_id 现打一次免费 iTunes lookup / GP 页解析（与落库富化同源
+    enrich_fields），found=False 表示免费源未命中（区域限定 / 已下架）。"""
+    app_id: str
+    platform: str
+    found: bool
+    enrich_source: Optional[str] = None
+    store_url: Optional[str] = None
+    release_date: Optional[str] = None
+    genre: Optional[str] = None
+    rating: Optional[float] = None
+    rating_count: Optional[int] = None
+    price: Optional[str] = None
+    description: Optional[str] = None
+    screenshots: list[str] = []
+    version: Optional[str] = None
+    current_version_date: Optional[str] = None
+    languages: Optional[str] = None
+
+
+@router.get("/enrich", response_model=StoreDetailOut)
+async def enrich_app_detail(
+    app_id: str = Query(..., description="iOS 数字 trackId / Android GP 包名"),
+    platform: str = Query("ios", pattern="^(ios|android)$"),
+    country: str = Query("us", description="iOS 优先查的 storefront（miss 退避 us/sg）"),
+):
+    """按需取单个 app 的商店详情——免费源（iOS=iTunes lookup / Android=GP 页），零 ST。
+
+    不落库（实时）：厂商新品视图点开详情时调，任意 app_id 即时可见版本/语言/简介/截图。
+    富化失败返回 found=False（前端降级提示），不抛错——与落库富化同哲学。
+    """
+    from app.services.newcomer_log import enrich_fields
+    data = await enrich_fields(app_id, country.lower(), platform.lower())
+    if not data:
+        return StoreDetailOut(app_id=app_id, platform=platform, found=False)
+    shots = json.loads(data["screenshot_urls"]) if data.get("screenshot_urls") else []
+    return StoreDetailOut(
+        app_id=app_id, platform=platform, found=True, screenshots=shots,
+        **{k: data.get(k) for k in (
+            "enrich_source", "store_url", "release_date", "genre", "rating",
+            "rating_count", "price", "description", "version",
+            "current_version_date", "languages")},
+    )
+
+
 @router.get("/", response_model=NewcomersOut)
 async def get_newcomers(
     country: Optional[str] = Query(None, description="国家代码；不传则汇总所有 SYNC_RANKING_COMBOS"),

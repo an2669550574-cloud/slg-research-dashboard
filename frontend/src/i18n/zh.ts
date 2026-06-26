@@ -199,6 +199,7 @@ export const zh = {
     drawerVersionUpdated: (d: string) => `更新于 ${d}`,
     drawerLanguages: '支持语言',
     drawerLangMore: (n: number) => `等 ${n} 种`,
+    enrichLoading: '正在拉取商店详情…',
     openStore: '商店页',
     openDetail: '看板详情',
     noDesc: '免费源未命中详情（GP 区域限定 / 已下架时常见），检出信号本身不受影响。',

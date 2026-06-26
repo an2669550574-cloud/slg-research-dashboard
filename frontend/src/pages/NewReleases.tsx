@@ -14,7 +14,7 @@ import { PageHeader } from '../components/PageHeader'
 import { WechatAccountsPanel } from '../components/WechatAccountsPanel'
 import { useLocalStorageState } from '../lib/hooks'
 import type { NewcomerHistoryItem, PublisherNewcomersOut } from '../lib/types'
-import { groupByApp, groupPublisherByApp, type GroupedNewcomer } from '../lib/newcomerGrouping'
+import { groupByApp, groupPublisherByApp, type GroupedNewcomer, type GroupedPublisherNewcomer } from '../lib/newcomerGrouping'
 
 export default function NewReleases() {
   const t = useT()
@@ -529,6 +529,69 @@ function StaleCombosWarning({ asOfByCombo, today }: { asOfByCombo: Record<string
 }
 
 
+/** 商店详情公共块：版本 / 支持语言 / 简介 / 截图。market 抽屉（落库富化）与 publisher
+ *  抽屉（按需实时富化）共用——两者富化字段同名同形（NewcomerHistoryItem / StoreDetail）。
+ *  无 hooks 之外的逻辑，纯展示；语言前 14 个码徽标，余下折叠成「等 N 种」。 */
+function StoreDetailSection({ d }: { d: {
+  version: string | null
+  current_version_date: string | null
+  languages: string | null
+  description: string | null
+  screenshots: string[]
+} }) {
+  const t = useT()
+  const langCodes = d.languages ? d.languages.split(',').filter(Boolean) : []
+  const langShown = langCodes.slice(0, 14)
+  const langMore = langCodes.length - langShown.length
+  return (
+    <>
+      {(d.version || langCodes.length > 0) && (
+        <div className="space-y-2 text-[11px] font-data">
+          {d.version && (
+            <div className="flex items-center gap-2">
+              <span className="text-muted uppercase tracking-wider w-16 shrink-0">{t.newcomers.drawerVersion}</span>
+              <span className="text-secondary">v{d.version}</span>
+              {d.current_version_date && (
+                <span className="text-muted">{t.newcomers.drawerVersionUpdated(d.current_version_date)}</span>
+              )}
+            </div>
+          )}
+          {langCodes.length > 0 && (
+            <div className="flex items-start gap-2">
+              <span className="text-muted uppercase tracking-wider w-16 shrink-0 mt-0.5">{t.newcomers.drawerLanguages}</span>
+              <span className="flex flex-wrap items-center gap-1">
+                {langShown.map(l => (
+                  <span key={l} className="px-1.5 py-0.5 bg-elevated rounded text-secondary">{l.toUpperCase()}</span>
+                ))}
+                {langMore > 0 && <span className="text-muted">{t.newcomers.drawerLangMore(langMore)}</span>}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+      <div>
+        <div className="text-[11px] text-muted uppercase tracking-wider mb-1.5">{t.newcomers.drawerDesc}</div>
+        {d.description ? (
+          <p className="text-xs text-secondary leading-relaxed whitespace-pre-wrap">{d.description}</p>
+        ) : (
+          <p className="text-xs text-muted">{t.newcomers.noDesc}</p>
+        )}
+      </div>
+      {d.screenshots.length > 0 && (
+        <div>
+          <div className="text-[11px] text-muted uppercase tracking-wider mb-1.5">{t.newcomers.drawerShots}</div>
+          <div className="flex gap-2 overflow-x-auto pb-2">
+            {d.screenshots.map(u => (
+              <img key={u} src={u} alt="" className="h-44 rounded-lg border border-default shrink-0" loading="lazy" />
+            ))}
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
+
 /** 新面孔详情抽屉：免费源富化的描述/截图 + 各市场名次 + 商店页/看板跳转。
  *  hooks 全部在任何条件返回之前（prop 切换时 hook 数量不变）。
  *  跨市场合并后展示代表行（最佳名次行）的富化字段 + 全部市场的逐条检出。 */
@@ -537,10 +600,6 @@ function NewcomerDrawer({ group, onClose }: { group: GroupedNewcomer; onClose: (
   const navigate = useNavigate()
   const item = group.rep
   const multi = group.markets.length > 1
-  // 支持语言：ISO2A 逗号拼，前 14 个展示为码徽标，余下折叠成「等 N 种」。
-  const langCodes = item.languages ? item.languages.split(',').filter(Boolean) : []
-  const langShown = langCodes.slice(0, 14)
-  const langMore = langCodes.length - langShown.length
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => { if (ev.key === 'Escape') onClose() }
     window.addEventListener('keydown', onKey)
@@ -600,30 +659,6 @@ function NewcomerDrawer({ group, onClose }: { group: GroupedNewcomer; onClose: (
               </div>
             </div>
           )}
-          {(item.version || langCodes.length > 0) && (
-            <div className="space-y-2 text-[11px] font-data">
-              {item.version && (
-                <div className="flex items-center gap-2">
-                  <span className="text-muted uppercase tracking-wider w-16 shrink-0">{t.newcomers.drawerVersion}</span>
-                  <span className="text-secondary">v{item.version}</span>
-                  {item.current_version_date && (
-                    <span className="text-muted">{t.newcomers.drawerVersionUpdated(item.current_version_date)}</span>
-                  )}
-                </div>
-              )}
-              {langCodes.length > 0 && (
-                <div className="flex items-start gap-2">
-                  <span className="text-muted uppercase tracking-wider w-16 shrink-0 mt-0.5">{t.newcomers.drawerLanguages}</span>
-                  <span className="flex flex-wrap items-center gap-1">
-                    {langShown.map(l => (
-                      <span key={l} className="px-1.5 py-0.5 bg-elevated rounded text-secondary">{l.toUpperCase()}</span>
-                    ))}
-                    {langMore > 0 && <span className="text-muted">{t.newcomers.drawerLangMore(langMore)}</span>}
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
           <div className="flex items-center gap-2">
             {item.store_url && (
               <a href={item.store_url} target="_blank" rel="noreferrer"
@@ -636,23 +671,101 @@ function NewcomerDrawer({ group, onClose }: { group: GroupedNewcomer; onClose: (
               {t.newcomers.openDetail}
             </button>
           </div>
-          <div>
-            <div className="text-[11px] text-muted uppercase tracking-wider mb-1.5">{t.newcomers.drawerDesc}</div>
-            {item.description ? (
-              <p className="text-xs text-secondary leading-relaxed whitespace-pre-wrap">{item.description}</p>
-            ) : (
-              <p className="text-xs text-muted">{t.newcomers.noDesc}</p>
-            )}
+          <StoreDetailSection d={item} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** 厂商新品详情抽屉：与 market 抽屉对称，但 publisher 检测实时不落库、无富化字段，
+ *  故点开时按需实时富化（GET /newcomers/enrich，免费源、零 ST）。loading / 未命中降级。
+ *  hooks 全部在任何 return 之前（prop 切换 hook 数量不变，避免崩页）。 */
+function PublisherNewcomerDrawer({ group, onClose }: { group: GroupedPublisherNewcomer; onClose: () => void }) {
+  const t = useT()
+  const navigate = useNavigate()
+  const item = group.rep
+  const multi = group.markets.length > 1
+  const { data: detail, isLoading } = useQuery({
+    queryKey: ['enrich', item.app_id, item.platform, item.country],
+    queryFn: () => newcomersApi.enrich(item.app_id, item.platform, item.country),
+    staleTime: 5 * 60 * 1000,
+  })
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent) => { if (ev.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <div className="fixed inset-0 z-50">
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+      <div className="absolute right-0 top-0 h-full w-full max-w-[560px] bg-surface border-l border-default overflow-y-auto">
+        <div className="sticky top-0 bg-surface/95 backdrop-blur border-b border-default px-5 py-4 flex items-center gap-3">
+          <GameIcon src={item.icon_url} name={item.name} className="w-10 h-10 rounded-xl shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-primary truncate">{item.name}</div>
+            <div className="text-xs text-muted truncate">{item.publisher}</div>
           </div>
-          {item.screenshots.length > 0 && (
+          <button onClick={onClose} className="p-1.5 text-muted hover:text-primary transition-colors"><X size={16} /></button>
+        </div>
+        <div className="px-5 py-4 space-y-4">
+          <div className="flex flex-wrap items-center gap-2 text-[11px] font-data">
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-brand-500 bg-brand-600/15">
+              <Building2 size={10} />{item.entity_name}
+            </span>
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-elevated rounded text-secondary border border-default">
+              {multi ? (<><Globe2 size={10} />{t.newcomers.marketsBadge(group.markets.length)}</>) : (<>{item.country} · {platformLabel(item.platform as Platform)}</>)}
+            </span>
+            <span className={`font-bold ${group.bestRank != null && group.bestRank <= 10 ? 'text-yellow-400' : 'text-primary'}`}>
+              #{group.bestRank ?? '—'}{multi && group.bestRank != null && <span className="ml-1 text-muted font-normal">{t.newcomers.marketBestRank}</span>}
+            </span>
+            {detail?.genre && <span className="px-1.5 py-0.5 bg-elevated rounded text-secondary">{detail.genre}</span>}
+            {detail?.rating != null && detail.rating > 0 && (
+              <span className="inline-flex items-center gap-0.5 text-amber-400">
+                <Star size={10} className="fill-current" />{detail.rating.toFixed(1)}
+                {detail.rating_count != null && detail.rating_count > 0 && <span className="text-muted">({formatNumber(detail.rating_count)})</span>}
+              </span>
+            )}
+            {detail?.price && <span className="text-muted">{t.newcomers.appstorePrice(detail.price)}</span>}
+            {detail?.release_date && <span className="text-muted">{t.newcomers.appstoreReleasedAt(detail.release_date)}</span>}
+            <span className="text-muted ml-auto">{t.newcomers.detectedAt(group.earliestAsOf)}</span>
+          </div>
+          {multi && (
             <div>
-              <div className="text-[11px] text-muted uppercase tracking-wider mb-1.5">{t.newcomers.drawerShots}</div>
-              <div className="flex gap-2 overflow-x-auto pb-2">
-                {item.screenshots.map(u => (
-                  <img key={u} src={u} alt="" className="h-44 rounded-lg border border-default shrink-0" loading="lazy" />
+              <div className="text-[11px] text-muted uppercase tracking-wider mb-1.5">{t.newcomers.drawerMarkets}</div>
+              <div className="space-y-1">
+                {group.markets.map(m => (
+                  <div key={`${m.country}/${m.platform}`} className="flex items-center gap-2 text-[11px] font-data text-secondary">
+                    <span className="px-1.5 py-0.5 bg-elevated rounded border border-default w-24 shrink-0">
+                      {m.country} · {platformLabel(m.platform as Platform)}
+                    </span>
+                    <span className={`font-bold ${m.rank != null && m.rank <= 10 ? 'text-yellow-400' : 'text-primary'}`}>#{m.rank ?? '—'}</span>
+                    {m.revenue != null && <span className="text-emerald-400">{formatRevenue(m.revenue)}</span>}
+                    <span className="text-muted ml-auto">{t.newcomers.detectedAt(m.as_of)}</span>
+                  </div>
                 ))}
               </div>
             </div>
+          )}
+          <div className="flex items-center gap-2">
+            {detail?.store_url && (
+              <a href={detail.store_url} target="_blank" rel="noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-brand-600 text-white hover:bg-brand-500 transition-colors">
+                <ExternalLink size={12} />{t.newcomers.openStore}
+              </a>
+            )}
+            <button onClick={() => navigate(`/game/${item.app_id}`)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-default text-secondary hover:text-primary hover:border-strong transition-colors">
+              {t.newcomers.openDetail}
+            </button>
+          </div>
+          {isLoading ? (
+            <div className="py-6 text-center text-xs text-muted">{t.newcomers.enrichLoading}</div>
+          ) : detail?.found ? (
+            <StoreDetailSection d={detail} />
+          ) : (
+            <p className="text-xs text-muted">{t.newcomers.noDesc}</p>
           )}
         </div>
       </div>
@@ -783,11 +896,12 @@ function AppstoreReleasesSection() {
 
 function PublisherNewcomersTable({ query, focusId }: { query: UseQueryResult<PublisherNewcomersOut>; focusId: string | null }) {
   const t = useT()
-  const navigate = useNavigate()
   const { data, isLoading, isError, refetch } = query
   const items = data?.items ?? []
   // D2：同款多市场合并成一行 + 市场徽标（与全市场视图 D1 同轴对称）。
   const groups = useMemo(() => groupPublisherByApp(items), [items])
+  // 点击行开详情抽屉（与 market 视图对称）；商店详情按需富化，抽屉内可再跳看板详情页。
+  const [selected, setSelected] = useState<GroupedPublisherNewcomer | null>(null)
 
   return (
     <div className="bg-surface border border-default rounded-xl overflow-hidden">
@@ -819,7 +933,7 @@ function PublisherNewcomersTable({ query, focusId }: { query: UseQueryResult<Pub
                   key={gr.app_id}
                   data-app-id={gr.app_id}
                   className={`cursor-pointer transition-colors ${focusId === gr.app_id ? 'bg-accent/10 focus-flash' : 'hover:bg-elevated/50'}`}
-                  onClick={() => navigate(`/game/${gr.app_id}`)}
+                  onClick={() => setSelected(gr)}
                 >
                   <td className="px-5 py-3.5">
                     <span className="inline-flex items-center gap-1.5 text-xs text-primary">
@@ -869,6 +983,7 @@ function PublisherNewcomersTable({ query, focusId }: { query: UseQueryResult<Pub
       )}
 
       <WechatAccountsPanel />
+      {selected && <PublisherNewcomerDrawer group={selected} onClose={() => setSelected(null)} />}
     </div>
   )
 }
