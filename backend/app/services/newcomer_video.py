@@ -11,6 +11,7 @@ import logging
 from datetime import timedelta
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.database import AsyncSessionLocal, utcnow_naive
@@ -64,13 +65,20 @@ async def sync_newcomer_videos(daily_cap: int | None = None,
                 out["pending_left"] += 1
                 continue
             vids = await search_gameplay_videos(name)
-            for v in vids:
-                db.add(NewcomerVideo(
-                    app_id=app_id, video_id=v.video_id, title=v.title,
-                    channel=v.channel, thumbnail=v.thumbnail, url=v.url,
-                    published_at=v.published_at, rank=v.rank))
-            db.add(NewcomerVideoSearch(app_id=app_id, name=name,
-                                       result_count=len(vids), searched_at=now))
+            try:
+                # savepoint 隔离单 app：万一撞唯一约束（残余重复 video_id /
+                # 并发两轮 drain 撞 app_id unique），只回滚这一个 app，不毁整轮。
+                async with db.begin_nested():
+                    for v in vids:
+                        db.add(NewcomerVideo(
+                            app_id=app_id, video_id=v.video_id, title=v.title,
+                            channel=v.channel, thumbnail=v.thumbnail, url=v.url,
+                            published_at=v.published_at, rank=v.rank))
+                    db.add(NewcomerVideoSearch(app_id=app_id, name=name,
+                                               result_count=len(vids), searched_at=now))
+            except IntegrityError:
+                logger.warning("video sync: skip app %s (integrity, likely concurrent/dup)", app_id)
+                continue
             used_today += 1
             out["searched"] += 1
             out["videos"] += len(vids)

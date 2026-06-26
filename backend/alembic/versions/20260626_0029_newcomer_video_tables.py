@@ -33,7 +33,8 @@ def upgrade() -> None:
         sa.Column("url", sa.String(500), nullable=False),
         sa.Column("published_at", sa.String(30), nullable=True),
         sa.Column("rank", sa.Integer(), nullable=True),
-        sa.Column("created_at", sa.DateTime(), nullable=True),
+        # NOT NULL 对齐 model（ORM 端 default=utcnow_naive 总填值）。
+        sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.UniqueConstraint("app_id", "video_id", name="uq_newcomer_video"),
     )
     op.create_index("ix_newcomer_video_app_id", "newcomer_video", ["app_id"])
@@ -44,8 +45,9 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("app_id", sa.String(200), nullable=False),
         sa.Column("name", sa.String(300), nullable=False),
-        sa.Column("result_count", sa.Integer(), nullable=True),
-        sa.Column("searched_at", sa.DateTime(), nullable=True),
+        # NOT NULL 对齐 model（ORM 端 default=0 / utcnow_naive 总填值）。
+        sa.Column("result_count", sa.Integer(), nullable=False),
+        sa.Column("searched_at", sa.DateTime(), nullable=False),
         sa.UniqueConstraint("app_id", name="uq_newcomer_video_search_app"),
     )
     op.create_index("ix_newcomer_video_search_searched_at",

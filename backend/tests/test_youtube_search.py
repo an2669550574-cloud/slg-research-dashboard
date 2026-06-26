@@ -99,3 +99,21 @@ def test_search_gate_dedup_and_quota(monkeypatch):
 
     g = ys.evaluate_search_gate(already_searched=False, used_today=10)
     assert (g.allowed, g.reason) == (True, "ok")
+
+
+@pytest.mark.asyncio
+async def test_search_dedups_duplicate_video_ids(monkeypatch):
+    """YT 单响应内重复 video_id → 去重（防落库撞唯一约束），rank 连续不跳号。"""
+    monkeypatch.setattr(settings, "YOUTUBE_API_KEY", "test-key")
+
+    async def fake_raw(q, max_results):
+        return {"items": [
+            {"id": {"videoId": "DUP"}, "snippet": {"title": "万国觉醒 实机"}},
+            {"id": {"videoId": "DUP"}, "snippet": {"title": "万国觉醒 实机（重复）"}},
+            {"id": {"videoId": "X2"}, "snippet": {"title": "另一条"}},
+        ]}
+    monkeypatch.setattr(ys, "_yt_search_raw", fake_raw)
+
+    out = await ys.search_gameplay_videos("万国觉醒")
+    assert [c.video_id for c in out] == ["DUP", "X2"]   # 重复被去掉
+    assert [c.rank for c in out] == [1, 2]              # rank 连续

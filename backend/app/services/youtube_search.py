@@ -111,9 +111,15 @@ async def search_gameplay_videos(name: str,
     except Exception:
         logger.warning("youtube search failed for %r", q, exc_info=True)
         return []
+    # 对 video_id 去重：YT 单次响应偶发同一视频重复出现，若原样下传，落库层
+    # (app_id, video_id) 唯一约束会在 commit 抛 IntegrityError。rank 用去重后的
+    # 连续序（len(out)+1），保持 1..N 不跳号。
     out: list[VideoCandidate] = []
-    for rank, item in enumerate(data.get("items") or [], 1):
-        cand = _parse_item(item, rank)
-        if cand is not None:
-            out.append(cand)
+    seen_ids: set[str] = set()
+    for item in data.get("items") or []:
+        cand = _parse_item(item, len(out) + 1)
+        if cand is None or cand.video_id in seen_ids:
+            continue
+        seen_ids.add(cand.video_id)
+        out.append(cand)
     return out

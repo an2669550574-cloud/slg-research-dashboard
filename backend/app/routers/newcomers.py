@@ -424,7 +424,8 @@ async def get_newcomer_videos(
     rows = (await db.execute(
         select(NewcomerVideo)
         .where(NewcomerVideo.app_id == app_id)
-        .order_by(NewcomerVideo.rank, NewcomerVideo.id)
+        # rank 缺失沉底（SQLite NULL 默认排最前）；正常都有值，防御性写法与其它端点一致。
+        .order_by(NewcomerVideo.rank.is_(None), NewcomerVideo.rank, NewcomerVideo.id)
     )).scalars().all()
     return rows
 

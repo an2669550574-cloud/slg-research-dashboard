@@ -172,3 +172,33 @@ async def test_videos_endpoint_lists_and_deletes(client):
     assert rd.status_code == 200
     r2 = await client.get("/api/newcomers/videos", params={"app_id": "111"})
     assert [v["video_id"] for v in r2.json()] == ["V2"]
+
+
+@pytest.mark.asyncio
+async def test_sync_survives_integrity_error_per_app(app, monkeypatch):
+    """单 app 撞唯一约束（残余重复 video_id）→ savepoint 只回滚该 app，整轮不毁、好 app 照常落库。"""
+    from app.config import settings
+    from app.database import AsyncSessionLocal
+    from app.models.newcomer import NewcomerVideo, NewcomerVideoSearch
+    from app.services import newcomer_video as nv
+    from app.services.youtube_search import VideoCandidate
+    monkeypatch.setattr(settings, "YOUTUBE_API_KEY", "test-key")
+
+    async def fake_search(name, max_results=None):
+        if name == "坏游戏":  # 模拟去重失效：同 video_id 两条 → savepoint 内撞 uq_newcomer_video
+            return [VideoCandidate("DUP", "t1", "https://y/DUP", None, None, None, 1),
+                    VideoCandidate("DUP", "t2", "https://y/DUP", None, None, None, 2)]
+        return [VideoCandidate("OK1", "好视频", "https://y/OK1", None, None, None, 1)]
+    monkeypatch.setattr(nv, "search_gameplay_videos", fake_search)
+
+    await _add_log("bad", "坏游戏")
+    await _add_log("good", "好游戏")
+    out = await nv.sync_newcomer_videos()
+
+    assert out["videos"] == 1          # 只有 good 落库，整轮没回滚
+    async with AsyncSessionLocal() as db:
+        apps = {v.app_id for v in (await db.execute(select(NewcomerVideo))).scalars().all()}
+        tasks = {t.app_id for t in (await db.execute(select(NewcomerVideoSearch))).scalars().all()}
+    assert apps == {"good"}
+    assert "good" in tasks
+    assert "bad" not in tasks          # 坏 app 没进台账，下次可重试
