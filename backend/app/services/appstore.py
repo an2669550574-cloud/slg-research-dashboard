@@ -52,9 +52,11 @@ async def fetch_app_info(app_id: str, country: str = "us") -> dict | None:
 
 async def fetch_apps_bulk(app_ids: list[str], country: str = "us") -> dict[str, dict]:
     """批量 iTunes lookup（id 逗号拼接，分块）。仅 iOS 数字 id；Android 包名
-    非数字会被过滤掉。返回 {app_id: {name, publisher, icon_url}}。
+    非数字会被过滤掉。返回 {app_id: {name, publisher, icon_url, version,
+    current_version_date, release_notes}}。
 
     榜单补全用：500 个 app 一条条查太慢，iTunes lookup 支持一次多 id。
+    version_tracker 复用同一批量查拿版本号（同响应自带，零额外请求）。
     任何网络/解析失败按块静默降级，调用方对缺失项保持原值（None）。
     """
     ids = [a for a in dict.fromkeys(str(x) for x in app_ids) if a.isdigit()]
@@ -85,6 +87,9 @@ async def fetch_apps_bulk(app_ids: list[str], country: str = "us") -> dict[str, 
                     "name": app.get("trackName"),
                     "publisher": app.get("artistName"),
                     "icon_url": app.get("artworkUrl512") or app.get("artworkUrl100"),
+                    "version": app.get("version"),
+                    "current_version_date": (app.get("currentVersionReleaseDate") or "")[:10] or None,
+                    "release_notes": app.get("releaseNotes") or None,
                 }
     return out
 
