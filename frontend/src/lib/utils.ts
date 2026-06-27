@@ -46,6 +46,7 @@ export const EVENT_TYPE_CONFIG: Record<string, { label: string; color: string; b
   revenue:    { label: '收入里程碑', color: 'text-purple-400',  bg: 'bg-purple-500' },
   marketing:  { label: '营销事件',   color: 'text-rose-400',    bg: 'bg-rose-500' },
   featuring:  { label: '官方推荐',   color: 'text-sky-400',     bg: 'bg-sky-500' },
+  region_launch: { label: '新区上线', color: 'text-teal-400',   bg: 'bg-teal-500' },
 }
 
 export const PLATFORM_CONFIG: Record<string, { label: string; color: string }> = {

@@ -503,6 +503,7 @@ export const zh = {
     revenue: '收入里程碑',
     marketing: '营销事件',
     featuring: '官方推荐',
+    region_launch: '新区上线',
   },
   gamesManage: {
     title: '游戏管理',

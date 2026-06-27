@@ -272,6 +272,9 @@ class Settings(BaseSettings):
     # 国家码；按 country 循环、每轮含全部 trackId，故请求数 = storefront 数（与游戏数
     # 无关）。默认覆盖主要 SLG 市场，可按需增删。
     REGION_LAUNCH_STOREFRONTS: str = "us,jp,kr,tw,cn,de,gb,fr,ca,br"
+    # 「竞品新进某区」事件检测窗口：releaseDate 落在近 N 天的分地区上架才算「新上线」
+    # 事件、推进每日 digest（防首填把多年前的历史上架日全量当新闻刷屏）。
+    REGION_LAUNCH_RECENT_DAYS: int = 30
 
     @property
     def region_launch_storefront_list(self) -> list[str]:

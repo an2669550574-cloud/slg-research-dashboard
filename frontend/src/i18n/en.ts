@@ -480,6 +480,7 @@ export const en: Translations = {
     revenue: 'Revenue',
     marketing: 'Marketing',
     featuring: 'Featured',
+    region_launch: 'New Region',
   },
   gamesManage: {
     title: 'Games',
