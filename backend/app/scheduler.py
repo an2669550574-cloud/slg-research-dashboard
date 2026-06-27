@@ -400,12 +400,14 @@ def start_scheduler() -> None:
         misfire_grace_time=3600,
     )
 
-    # 新品实机玩法视频搜集：03:50 UTC（prune 03:45 之后、DB 备份 04:00 之前）。
-    # 给近期检出的新品搜 YouTube 候选；YT 独立配额（不碰 ST），key 未配则空跑无害，
-    # 故无条件挂。配额护栏在 sync_newcomer_videos 内（同 app 不重搜 + 日上限 80）。
+    # 新品实机玩法视频搜集：02:45 UTC——**排在核心同步（02:30~02:38，已写 newcomer_log）
+    # 之后、每日 digest（03:00）之前**，这样当天新品的视频在 digest 拼「新品实机视频」段
+    # 时已就位（否则 digest 早于搜集，当天新品永远无视频行）。给近期检出的新品搜 YouTube
+    # 候选；YT 独立配额（不碰 ST），key 未配则空跑无害，故无条件挂。配额护栏在
+    # sync_newcomer_videos 内（同 app 不重搜 + 日上限 80）。
     scheduler.add_job(
         _run_newcomer_video_sync,
-        CronTrigger(hour=3, minute=50, timezone="UTC"),
+        CronTrigger(hour=2, minute=45, timezone="UTC"),
         id="newcomer_video_sync",
         replace_existing=True,
         misfire_grace_time=3600,

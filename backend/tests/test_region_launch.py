@@ -160,6 +160,32 @@ async def test_detect_new_region_only_recent_and_dedups(app, monkeypatch):
     assert n == 1
 
 
+@pytest.mark.asyncio
+async def test_region_history_accrues_without_webhook(app, monkeypatch):
+    """新区检测排在 webhook 闸门之前：未配 webhook 也落 region_launch 历史（与版本追踪
+    同范式，避免事件因 30 天窗口过期而永久漏记）。"""
+    from datetime import timedelta
+    from app.config import settings
+    from app.database import AsyncSessionLocal, utcnow_naive
+    from app.models.game import Game, GameRegionRelease
+    from app.models.history import GameHistory
+    from app.services import release_alerts as ra
+    monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
+    monkeypatch.setattr(settings, "DINGTALK_WEBHOOK_URL", "")   # webhook 关
+
+    recent = (utcnow_naive() - timedelta(days=2)).strftime("%Y-%m-%d")
+    async with AsyncSessionLocal() as db:
+        db.add(Game(app_id="g1", name="万国觉醒", platform="ios"))  # 无 trackId → 版本检测跳过
+        db.add(GameRegionRelease(app_id="g1", country="kr", release_date=recent))
+        await db.commit()
+
+    assert await ra.send_daily_digest() is False    # webhook 关，没发卡
+    async with AsyncSessionLocal() as db:
+        evs = (await db.execute(select(GameHistory).where(
+            GameHistory.event_type == "region_launch"))).scalars().all()
+    assert len(evs) == 1 and "KR" in evs[0].title   # 但 region_launch 历史照样落了
+
+
 def test_digest_renders_region_and_video_sections():
     """build_daily_digest 把新区上线 + 新品视频拼成全局段；纯这两类日也发卡。"""
     from app.services.release_alerts import build_daily_digest

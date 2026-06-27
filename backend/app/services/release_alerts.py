@@ -453,6 +453,15 @@ async def send_daily_digest() -> bool:
     except Exception:
         logger.exception("Version check (in digest) crashed")
         version_changes = []
+    # 竞品「新进某区」事件（需求② 子项③ / ADR 0004）：与版本检测同样**放 webhook
+    # 闸门之前**——落 game_histories(region_launch) 不依赖 webhook（无 webhook 也积累
+    # 历史 + 详情页时间线），且避免事件因 30 天窗口过期而永久漏记。零 ST 纯本地表读。
+    from app.services.region_launch import detect_new_region_launches
+    try:
+        region_changes = await detect_new_region_launches()
+    except Exception:
+        logger.exception("Region launch detection (in digest) crashed")
+        region_changes = []
     if not dingtalk.is_enabled():
         return False
     from app.services.movement import detect_movement
@@ -559,15 +568,6 @@ async def send_daily_digest() -> bool:
                         entities_by_app[aid] = name
     except Exception:
         logger.warning("entity attribution for digest failed", exc_info=True)
-
-    # 需求② 子项③：竞品「新进某区」事件（落 game_histories(region_launch) + 取结构化
-    # 变更拼 digest 段；零 ST 纯本地表读，独立于上面的版本检测）。
-    from app.services.region_launch import detect_new_region_launches
-    try:
-        region_changes = await detect_new_region_launches()
-    except Exception:
-        logger.exception("Region launch detection (in digest) crashed")
-        region_changes = []
 
     # 需求①：今日新品（非回归）已自动搜集的实机视频（非隐藏）→「新品实机视频」段。
     video_items: list[dict] = []
