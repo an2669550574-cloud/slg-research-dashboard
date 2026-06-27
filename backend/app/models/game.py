@@ -58,3 +58,24 @@ class GameRanking(Base):
     publisher: Mapped[str] = mapped_column(String(200), nullable=True)
     icon_url: Mapped[str] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class GameRegionRelease(Base):
+    """tracked iOS 竞品分地区上架日（需求② 子项③ / ADR 0004）。
+
+    每行 = 某 game 在某 storefront(country) 的 iOS releaseDate（iTunes lookup 同响应
+    自带 releaseDate，零 ST）。(app_id, country) 唯一，按 app_id 聚合看「在哪些区先上、
+    soft-launch 区序」。release_date 可空 = 该区查不到/未上架（resultCount=0 时也落一行
+    记 NULL，与「该区另一个 trackId」区分不开，诚实留空）。Android 无可靠上架日源 →
+    仅 platform='ios'（与版本追踪同取舍）。数据近静态，周级 job 刷新。
+    """
+    __tablename__ = "game_region_release"
+    __table_args__ = (
+        UniqueConstraint("app_id", "country", name="uq_game_region_release"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    app_id: Mapped[str] = mapped_column(String(100), index=True)
+    country: Mapped[str] = mapped_column(String(10))
+    release_date: Mapped[str] = mapped_column(String(20), nullable=True)
+    checked_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, onupdate=utcnow_naive)

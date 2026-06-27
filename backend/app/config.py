@@ -267,6 +267,22 @@ class Settings(BaseSettings):
     # 全量搜爆配额。0 = 不限（给所有未搜过的检出补搜）。台账去重保证每 app 只搜一次。
     YOUTUBE_SEARCH_LOOKBACK_DAYS: int = 30
 
+    # 分地区上线对照（需求② 子项③ / ADR 0004）：对每个 tracked iOS 竞品在这些
+    # storefront 查 iTunes releaseDate（零 ST，每 country 一次批量 lookup）。逗号分隔
+    # 国家码；按 country 循环、每轮含全部 trackId，故请求数 = storefront 数（与游戏数
+    # 无关）。默认覆盖主要 SLG 市场，可按需增删。
+    REGION_LAUNCH_STOREFRONTS: str = "us,jp,kr,tw,cn,de,gb,fr,ca,br"
+
+    @property
+    def region_launch_storefront_list(self) -> list[str]:
+        """REGION_LAUNCH_STOREFRONTS → 去空去重的小写国家码列表（保序）。"""
+        seen: list[str] = []
+        for c in (self.REGION_LAUNCH_STOREFRONTS or "").split(","):
+            cc = c.strip().lower()
+            if cc and cc not in seen:
+                seen.append(cc)
+        return seen
+
     @property
     def cors_origin_list(self) -> list[str]:
         if not self.CORS_ORIGINS or self.CORS_ORIGINS.strip() == "*":

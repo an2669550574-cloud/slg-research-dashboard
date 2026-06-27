@@ -491,6 +491,10 @@ export const zh = {
     rankPerMarketNote: '排名为单市场指标，无法跨市场相加；请在上方选择具体市场查看排名走势',
     rankPrefix: '排名',
     today: '今日',
+    regionTitle: '分地区上线',
+    regionHint: 'iOS App Store 各区上架日（零配额；最早上架区在前）',
+    regionEarliest: '最早',
+    regionUnknown: '未上架 / 查无',
   },
   events: {
     launch: '发布上线',

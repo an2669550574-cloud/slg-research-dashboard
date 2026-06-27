@@ -53,7 +53,8 @@ async def fetch_app_info(app_id: str, country: str = "us") -> dict | None:
 async def fetch_apps_bulk(app_ids: list[str], country: str = "us") -> dict[str, dict]:
     """批量 iTunes lookup（id 逗号拼接，分块）。仅 iOS 数字 id；Android 包名
     非数字会被过滤掉。返回 {app_id: {name, publisher, icon_url, version,
-    current_version_date, release_notes}}。
+    current_version_date, release_date, release_notes}}（release_date 随 country
+    分地区不同，供 region_launch 做分地区上线对照）。
 
     榜单补全用：500 个 app 一条条查太慢，iTunes lookup 支持一次多 id。
     version_tracker 复用同一批量查拿版本号（同响应自带，零额外请求）。
@@ -89,6 +90,9 @@ async def fetch_apps_bulk(app_ids: list[str], country: str = "us") -> dict[str, 
                     "icon_url": app.get("artworkUrl512") or app.get("artworkUrl100"),
                     "version": app.get("version"),
                     "current_version_date": (app.get("currentVersionReleaseDate") or "")[:10] or None,
+                    # 该 storefront 的首次上架日（随 country 参数分地区不同）；region_launch
+                    # 据此做分地区上线对照。version_tracker 不读此键，加之无副作用。
+                    "release_date": (app.get("releaseDate") or "")[:10] or None,
                     "release_notes": app.get("releaseNotes") or None,
                 }
     return out
