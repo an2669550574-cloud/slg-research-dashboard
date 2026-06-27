@@ -208,6 +208,10 @@ class Settings(BaseSettings):
     # 视频/图片分析用：视觉模型。Claude sonnet/opus 与 Gemini 系列支持图，
     # GLM 系列只支持 text，不能用于素材帧分析。
     TAISHI_VISION_MODEL: str = "claude-sonnet-4.5"
+    # 纯文本轻任务用（新品描述中文化 + 一句话摘要）：选便宜模型即可，量小、非关键。
+    TAISHI_TEXT_MODEL: str = "gemini-3-flash-preview"
+    # 新品中文化每日上限（防极端日批量翻译烧成本）；只对 is_slg 新品翻一次（按 app 去重）。
+    NEWCOMER_TRANSLATE_DAILY_CAP: int = 30
     # 单次调用超时（秒）。视频分析单次 8-12 帧 + 长 prompt，宽点。
     TAISHI_TIMEOUT_SECONDS: int = 120
     # 日成本软上限（美元）。超过则 /analyze 端点拒绝新请求，防止失控烧钱。
