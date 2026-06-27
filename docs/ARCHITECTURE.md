@@ -151,6 +151,26 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 
 **app_id 粒度忽略**：新品卡「忽略」按钮在有发行商名时下拉两选项——「忽略整个发行商」（`kind=publisher`，corp_squash 归一覆盖全厂）/「仅忽略此 app」（`kind=app_id`，只滤这一款）；无名退回 app_id 粒度。复用既有 `POST /publishers/ignores`，零新接口、零迁移。
 
+### 新厂商线索 CTA（PR #104）
+
+digest 里 `is_slg=false` 的市场新面孔，经忽略名单过滤后多是**真·未识别厂商线索**而非噪声。`build_newcomer_lines` 给这类行升级文案（带「建议建档」行动指引）并**行内附商店页直达**（`_store_url` 拼不出则只留文案）——底部 ActionCard 按钮全局封顶 5、每 combo 仅 1 条，线索未必挤得进，行内链接保证每条都有「立即去看」入口。已归属主体的厂商新品行不打 CTA。
+
+### 待建档新厂线索段（下载榜，PR #131）
+
+CTA 是**收入榜** `is_slg=false` 线索；**下载榜**（free）另有一套。下载榜新品段（`build_free_newcomer_lines`）只推 `is_slg=True`（装机榜休闲/工具噪声大），代价是漏掉**白名单未收录的真 SLG 新厂**（触发案例：Last Shelter: War Z / IM30 海外新壳 LAST ORIGIN STUDIO，因发行商未建档被门控吞掉）。`send_daily_digest` 补一段聚合：free 榜 `is_slg=false` + `genre` 含 Strategy（忽略名单已滤，再用 genre 压休闲噪声）→ digest 单列「🔍 待建档新厂线索」段（`build_lead_newcomer_lines`）给维护者人工核查建档 → 该厂后续新品自动进正式 SLG 段，形成「提醒→建档→不再漏」闭环。领导端「下载榜新品 · SLG」段仍只推已确认 SLG，互不混淆。**初筛仅 `genre=Strategy`（会漏 genre 缺失/非英文标）是有意从简——候选量极小（实测 ~1/天），观察后再定是否上 LLM 语义门控（成本实测 ~$0.001/天可忽略，但候选太少暂不值当）。**
+
+### 微信文章 ↔ 新品名匹配（PR #105）
+
+digest 给新品行附行业公众号文章（`_match_articles_to_apps`）。匹配走 `_name_matches` 而非裸 substring：**拉丁名**词边界 + 大小写无关（"Last War" 不再误挂 "Last Warning"）；**非拉丁名**按非空白字符数设最小长度 `WECHAT_MATCH_MIN_NAME_LEN`（默认 2，砍单字"城"噪声、保留"原神"）。**刻意不引停用词表**——多字通用名（韩文"탑 로드"）无分词仍可能误挂，观察实际误挂率再定。
+
+### 跨市场去重（前端展示，PR #103/#106）
+
+同款全球游戏（同 app_id：iOS=数字 trackId、Android=GP 包名，跨国一致且两端永不撞键）在多 combo 各检出一次，`/history`（全市场视图）与 `/publishers`（厂商新品视图）都逐市场返回多条。前端 `lib/newcomerGrouping.ts`（`groupByApp` / `groupPublisherByApp`）按 app_id 合并成一张卡 / 一行 + 多市场徽标：**最佳（最小）名次**为 headline、**最早检出**为日期、抽屉 / tooltip 列各市场名次。纯前端分组，API 未动，CSV 仍导逐市场全量（不丢粒度）。与既有**跨平台** sibling 去重（`sibling_match.py`，iOS×Android 同游戏）是**不同轴**。
+
+### 检出日志保留（PR #103）
+
+`market_newcomer_log` 检出即落库、只增不减（读路径只按 `days` 筛）。`prune_newcomer_log` 每日 03:45 UTC（回填后、备份前）删 `first_detected_at` 早于 `NEWCOMER_LOG_RETENTION_DAYS`（默认 365，≤0 关闭）的行，避免表无限膨胀。
+
 ### 数据新鲜度
 
 `/history` 返回 `as_of_by_combo`（各 combo 最近快照日，来自 `game_rankings.MAX(date)`）；前端给 ≥3 天滞后的 combo 渲染 stale 提示条，≥14 天转红。让用户看清「JP weekly 数据截至 N 天前」而非误以为是今日榜。
