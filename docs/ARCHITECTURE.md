@@ -162,7 +162,19 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 - **底部 ActionCard 按钮**：从商店直链改 **看板深链**（`_dashboard_focus_url`，两端可达、手机也能点），只取头条新品——movement 异动老游戏不在看板新品页、深链定位不到，不进按钮；商店直链在行内保留带 💻（不丢电脑端入口）。未配 `DASHBOARD_BASE_URL` 则无按钮，ActionCard 降级 markdown。
 - **连锁限制**：看板详情页里的国外资源（商店截图 mzstatic 图床 / YouTube 视频）手机端在看板内也可能加载不全；手机端保得住的是看板**自有文字情报**（中文摘要 / 收入 / 名次 / 版本 / 厂商归属），视频「播放」本质要客户端能访问 YouTube，无解、只能电脑端。
 
-代码集中在 `build_daily_digest` 拼装层 + `_block` / `_meta_inner` / `_link_line` / `_digest_tldr` helper（`services/release_alerts.py`）。**digest backlog（Workflow 6 维审查挖出、未做）**：⭐重要度排序（现 cap / `DIGEST_MOVEMENT_TOPN` / 按钮 / overflow 五处砍尾全按 `sync_combos_list` 地理顺序而非重要度 → 核心 US/iOS 可能被次市场长尾挤掉折叠；五处共用一个打分函数即可统一修 + 跨 combo「今日要闻 Top N」置顶）、⭐补「对标我方哪款」决策锚点（全链路只有 name/rank/revenue，无「该竞品对标我方哪款」=最大决策缺口）、全局段统一封顶预算、emoji 收敛、游戏名 markdown 转义。受众拆领导卡/维护者卡 + 推送时点前移 = 依赖推领导群场景（现仅测试群）。
+代码集中在 `build_daily_digest` 拼装层 + `_block` / `_meta_inner` / `_link_line` / `_digest_tldr` helper（`services/release_alerts.py`）。**digest backlog（Workflow 6 维审查挖出、未做）**：⭐补「对标我方哪款」决策锚点（全链路只有 name/rank/revenue，无「该竞品对标我方哪款」=最大决策缺口）、全局段统一封顶预算、emoji 收敛、游戏名 markdown 转义。受众拆领导卡/维护者卡 + 推送时点前移 = 依赖推领导群场景（现仅测试群）。（⭐重要度排序已落地，见下节。）
+
+### digest 重要度排序 + 今日要闻置顶（PR #136）
+
+**痛点**：此前 digest 的五处「砍尾」——combo 段排序 / 全局封顶 `DIGEST_MAX_ITEMS` / 单 combo movement 封顶 `DIGEST_MOVEMENT_TOPN` / 商店按钮取头条 / overflow 折叠——一律按 `sync_combos_list` 的**地理顺序**或 movement 的**固定类序**（空降→窜升→暴跌→收入异动）砍。后果：① 末类的大额收入异动会被前类的榜尾长尾空降挤出 movement TopN；② 次市场高名次新品永远排不进 5 个按钮名额；③ 跨 combo 没有「今天最该看的几件事」入口。
+
+**统一打分**（`_event_score` × `_market_weight`，`services/release_alerts.py`）喂这五处：
+
+- `_event_score(kind, e)`：单事件「强度」分（不含市场权重）。`_rank_height(rank)`（名次越靠前权重越大，0..1）做主轴，叠收入异动 `|pct|` / 窜升跳数。相对序拍定：高名次收入异动 > 头部空降/市场新品 > 大幅窜升 > 榜尾长尾空降/跌出（`test_digest_importance_event_score_ordering` 锁死）。
+- `_market_weight(country, platform)`：市场权重 US 1.5 / JP 1.15 / KR 1.1…× 平台 iOS 1.0 / 安卓 0.9。**刻意压窄到 1.0~1.5**——只做轻微倾斜，不能把事件强度整个吃掉（否则今日要闻被核心市场榜尾占满）；KR 的 #1 空降仍压过 US 的 #45 长尾（`test_digest_importance_market_weight_is_gentle_tilt`）。
+- **五处的修法**：① combo 段按 `_combo_sort_key`（市场权重为**主键**、combo 内最高单项为辅）排序——核心 US/iOS 永居前列、全局封顶砍的必是次市场；② `build_movement_lines` 内按 `_event_score` 降序再切 `DIGEST_MOVEMENT_TOPN`（combo 内市场权重恒定，故只按事件强度）；③ 按钮 `_ranked_newcomer_buttons` 全局按 `_event_score × 市场权重` 排序取头部新品；④ overflow 计数不变，但砍的已是真·次要项。「核心 combo 永不被封顶挤掉」由排序主键保证，与市场权重量级解耦。
+- **跨 combo「📌 今日要闻」置顶**（`build_highlight_lines` + `_highlight_line`）：`_collect_scored_items` 收全 combo 的 movement + 三类新品（下载榜只算 is_slg=True，与推送门控一致；回归项已滤）→ 取重要度 Top `DIGEST_HIGHLIGHTS_TOPN`（默认 5）→ 内联市场标签的紧凑行，放 TL;DR 之后、combo 段之前。**仅当全卡事件数 > TOPN 才渲染**（小卡本身已短、置顶会与正文重复）。覆盖面**仅 ranking 派生的 per-combo 竞品事件**——版本/新区/视频/待建档是各自独立的全局段（本就不受地理顺序挤压），不纳入要闻。
+- 入参 `per_combo` 不被 mutate（排序走副本，`test_digest_does_not_mutate_input_order`）；常态下排序与现地理顺序几乎一致（US→JP→KR、iOS→安卓），只有次市场冒大事件才上浮，低惊扰。
 
 ### 新厂商线索 CTA（PR #104）
 

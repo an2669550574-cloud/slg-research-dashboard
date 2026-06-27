@@ -166,6 +166,10 @@ class Settings(BaseSettings):
     # 全卡全局 item 上限（按 combo 粒度累加，超出的 combo 折叠成
     # 「…另有 N 项，看板查看全部」一行，保证卡片长度可控）。
     DIGEST_MAX_ITEMS: int = 30
+    # 卡顶「今日要闻」跨 combo 置顶条数：把全卡最高重要度的 N 个事件（市场权重 ×
+    # 事件强度，见 release_alerts._event_score）抽出来置顶，保证核心市场大事件不被
+    # 次市场长尾折叠挤掉。仅当全卡事件数 > 该值才渲染（小卡本身已短、不重复）。0=关。
+    DIGEST_HIGHLIGHTS_TOPN: int = 5
 
     # ── App Store 清单雷达（免费 iTunes lookup，零 ST 配额）──────────────
     # 每轮对每个开发者账号扫这些 storefront（逗号小写）。SLG 几乎都先软启动：
