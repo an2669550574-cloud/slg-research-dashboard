@@ -324,10 +324,37 @@ def build_version_lines(changes: list[dict], cap: int) -> list[str]:
     return out
 
 
+def build_video_lines(items: list[dict], cap: int) -> list[str]:
+    """新品实机视频 → 人读行（需求① / ADR 0002）。items: [{name, count, url}]。
+
+    让领导在钉钉就看到「系统给新竞品自动搜了实机视频」，免开网站。url = 头条视频。
+    封顶 cap 防刷屏。
+    """
+    out: list[str] = []
+    for it in items[:cap]:
+        link = f" [看第一条]({it['url']})" if it.get("url") else ""
+        out.append(f"🎬 **{it['name']}**：已搜集 {it['count']} 条实机玩法视频{link}")
+    return out
+
+
+def build_region_launch_lines(changes: list[dict], cap: int) -> list[str]:
+    """竞品新进某区 → 人读行（需求② 子项③ / ADR 0004）。changes: [{name, country, date}]。
+
+    全局段，tracked iOS 竞品新上架的 storefront（扩区动作）。封顶 cap 防刷屏。
+    """
+    out: list[str] = []
+    for c in changes[:cap]:
+        date = f"（{c['date']}）" if c.get("date") else ""
+        out.append(f"🌍 **{c['name']}**：新进 {c['country']} 区{date}")
+    return out
+
+
 def build_daily_digest(per_combo: list[dict], today: str,
                        articles: Optional[dict] = None,
                        entities: Optional[dict] = None,
-                       version_changes: Optional[list[dict]] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
+                       version_changes: Optional[list[dict]] = None,
+                       video_items: Optional[list[dict]] = None,
+                       region_changes: Optional[list[dict]] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
     """全 combo 检测结果 → (title, markdown, btns)。全空 → None（不发）。
 
     per_combo: [{country, platform, movement: dict|None, market: dict|None, publisher: dict|None}]
@@ -387,6 +414,18 @@ def build_daily_digest(per_combo: list[dict], today: str,
         if vlines:
             total += len(version_changes)
             sections.append("【版本更新 · iOS 竞品】\n\n" + "\n\n".join(vlines))
+    # 全局「竞品新区上线」段（需求② 子项③ / ADR 0004）：tracked iOS 竞品新进某区。
+    if region_changes:
+        rlines = build_region_launch_lines(region_changes, cap)
+        if rlines:
+            total += len(region_changes)
+            sections.append("【竞品新区上线 · iOS】\n\n" + "\n\n".join(rlines))
+    # 全局「新品实机视频」段（需求① / ADR 0002）：今日新品已自动搜集的实机视频。
+    if video_items:
+        vid_lines = build_video_lines(video_items, cap)
+        if vid_lines:
+            total += len(video_items)
+            sections.append("【新品实机视频】\n\n" + "\n\n".join(vid_lines))
     if not sections:
         return None
     head = f"### 📡 SLG 每日情报 · {today}（{total} 项）"
@@ -521,8 +560,47 @@ async def send_daily_digest() -> bool:
     except Exception:
         logger.warning("entity attribution for digest failed", exc_info=True)
 
+    # 需求② 子项③：竞品「新进某区」事件（落 game_histories(region_launch) + 取结构化
+    # 变更拼 digest 段；零 ST 纯本地表读，独立于上面的版本检测）。
+    from app.services.region_launch import detect_new_region_launches
+    try:
+        region_changes = await detect_new_region_launches()
+    except Exception:
+        logger.exception("Region launch detection (in digest) crashed")
+        region_changes = []
+
+    # 需求①：今日新品（非回归）已自动搜集的实机视频（非隐藏）→「新品实机视频」段。
+    video_items: list[dict] = []
+    try:
+        newcomer_apps: dict[str, str] = {}
+        for c in per_combo:
+            for key in ("market", "publisher", "free_market", "free_publisher"):
+                for n in ((c.get(key) or {}).get("newcomers") or []):
+                    aid, nm = n.get("app_id"), n.get("name")
+                    if aid and nm and not n.get("is_reentry"):
+                        newcomer_apps.setdefault(aid, nm)
+        if newcomer_apps:
+            from app.models.newcomer import NewcomerVideo
+            async with AsyncSessionLocal() as db:
+                vids = (await db.execute(
+                    select(NewcomerVideo)
+                    .where(NewcomerVideo.app_id.in_(list(newcomer_apps)),
+                           NewcomerVideo.hidden_at.is_(None))
+                    .order_by(NewcomerVideo.app_id, NewcomerVideo.rank.is_(None),
+                              NewcomerVideo.rank, NewcomerVideo.id)
+                )).scalars().all()
+            by_app: dict[str, list] = {}
+            for v in vids:
+                by_app.setdefault(v.app_id, []).append(v)
+            for aid, vlist in by_app.items():
+                video_items.append({"name": newcomer_apps[aid], "count": len(vlist),
+                                    "url": vlist[0].url})
+    except Exception:
+        logger.exception("Video items for digest failed")
+
     msg = build_daily_digest(per_combo, today, articles=articles_by_app,
-                             entities=entities_by_app, version_changes=version_changes)
+                             entities=entities_by_app, version_changes=version_changes,
+                             video_items=video_items, region_changes=region_changes)
     if msg is None:
         logger.info("daily digest: nothing to report for %s", today)
         return False

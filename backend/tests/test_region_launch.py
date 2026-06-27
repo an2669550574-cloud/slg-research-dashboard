@@ -124,6 +124,55 @@ async def test_sync_noop_mock_and_no_trackid(app, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_detect_new_region_only_recent_and_dedups(app, monkeypatch):
+    """新区检测：只播报近 N 天上架日的区（历史老日期不算）；落 GameHistory；二次去重。"""
+    from datetime import timedelta
+    from app.config import settings
+    from app.database import AsyncSessionLocal, utcnow_naive
+    from app.models.game import GameRegionRelease
+    from app.models.history import GameHistory
+    from app.services import region_launch as rl
+    monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
+
+    recent = (utcnow_naive() - timedelta(days=3)).strftime("%Y-%m-%d")
+    old = (utcnow_naive() - timedelta(days=400)).strftime("%Y-%m-%d")
+    await _add_game("g1", "万国觉醒")
+    async with AsyncSessionLocal() as db:
+        db.add(GameRegionRelease(app_id="g1", country="kr", release_date=recent))  # 近期 → 事件
+        db.add(GameRegionRelease(app_id="g1", country="us", release_date=old))     # 老 → 不报
+        db.add(GameRegionRelease(app_id="g1", country="cn", release_date=None))    # NULL → 不报
+        await db.commit()
+
+    changes = await rl.detect_new_region_launches(recent_days=30)
+    assert len(changes) == 1
+    assert changes[0]["name"] == "万国觉醒" and changes[0]["country"] == "KR"
+    async with AsyncSessionLocal() as db:
+        evs = (await db.execute(select(GameHistory).where(
+            GameHistory.event_type == "region_launch"))).scalars().all()
+    assert len(evs) == 1 and "KR" in evs[0].title    # 落 GameHistory，详情页时间线可见
+
+    # 二次检测：已播报过 → 去重、不再产出 / 不重复落库。
+    again = await rl.detect_new_region_launches(recent_days=30)
+    assert again == []
+    async with AsyncSessionLocal() as db:
+        n = len((await db.execute(select(GameHistory).where(
+            GameHistory.event_type == "region_launch"))).scalars().all())
+    assert n == 1
+
+
+def test_digest_renders_region_and_video_sections():
+    """build_daily_digest 把新区上线 + 新品视频拼成全局段；纯这两类日也发卡。"""
+    from app.services.release_alerts import build_daily_digest
+    region = [{"app_id": "g1", "name": "万国觉醒", "country": "KR", "date": "2026-06-25"}]
+    videos = [{"name": "末日喧嚣", "count": 3, "url": "https://www.youtube.com/watch?v=V1"}]
+    res = build_daily_digest([], "2026-06-27", region_changes=region, video_items=videos)
+    assert res is not None
+    _, body, _ = res
+    assert "竞品新区上线" in body and "万国觉醒" in body and "新进 KR 区" in body
+    assert "新品实机视频" in body and "末日喧嚣" in body and "3 条" in body
+
+
+@pytest.mark.asyncio
 async def test_regions_endpoint_orders_earliest_first(client):
     """端点按上架日升序、NULL 沉底（最早区先 = soft-launch 区序一目了然）。"""
     from app.database import AsyncSessionLocal
