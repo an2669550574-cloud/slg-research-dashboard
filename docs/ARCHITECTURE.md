@@ -187,6 +187,16 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 - **markdown 转义**（`_md_name(s, maxlen=32)`）：折叠空白 + 超长截断 + 方括号→圆括号（防 `名](url` 误成链接）+ 转义 `* _ \\` `` ` `` `~`（防加粗错位/代码块），套到所有 markdown **正文文本**名字插值位（movement / 三类新品 / 待建档 / 版本 / 视频 / 新区 / 今日要闻 / 商店雷达 / `_meta_inner` 厂商）。ActionCard 按钮 title 是纯文本不过它；`[锚文本](url)` 文章标题另有 sanitize（只括号替换）。
 - **上线开关**：HK `backend/.env` 配 `DINGTALK_WEBHOOK_URL_LEADER`（+ `DINGTALK_SECRET_LEADER` / `DINGTALK_WEBHOOK_LABEL_LEADER`，**敏感不进 git**）→ `compose --env-file .env up -d backend` 重读即生效；不配 = 维持单卡单群（向后兼容）。
 
+### digest 对标我方哪款（PR #139）
+
+**缺口**：digest 此前只有竞品 `name/rank/revenue`，不告诉领导「这竞品**对标我方哪款**产品 / 威胁我方什么」——领导扫一条异动得自己脑补「跟我们有关系吗、要不要管」。**纯本地零 ST / 零 LLM** 补上这个决策锚点。
+
+- **数据**：`own_products.match_keywords`（逗号分隔题材词，如 `丧尸,末日,survival,zombie`；alembic `0035`，纯加列）。挑**区分度高**的词——泛词（如 `war`）会全命中。
+- **匹配**（`_match_own_product` / `_load_own_products`）：纯小写子串匹配，第一个产品优先（`is_default` → `id` 排序）。竞品文本：**新品**用「名字 + LLM 中文摘要 `summary_cn`」（题材信号最浓）、**movement** 老竞品用名字。`send_daily_digest` 一次性建 `own_matches{app_id: 我方产品名}`，整段 try/except 兜底——匹配失败不影响其它情报。
+- **渲染**：命中给 movement / 三类新品 / 今日要闻 行尾打 `⚔️ 对标《X》`（⚔️ 刻意避开已表「看板」的 🎯；产品名过 `_md_name`）；TL;DR 加 `⚔️ 对标 N` 置顶提威胁面。**领导卡 + 维护者卡都显示**（纯决策信号，不像待建档那样剥离领导卡）。
+- **录入**：「我方产品」页（`ProductsManage.tsx`）编辑面板加对标关键词输入框 + 卡片 chip。不填则该段静默、不影响其它情报；一次录入长期复用。
+- **匹配局限（有意从简）**：子串匹配会漏「同义不同词」（产品配「丧尸」但竞品摘要写「僵尸」需各自列全）、可能误命中泛词——靠录入方挑词把关，不引同义词库/LLM 语义匹配（候选量小、成本不值当，观察后再定）。movement 仅有名字、命中率低于新品，属预期。
+
 ### 新厂商线索 CTA（PR #104）
 
 digest 里 `is_slg=false` 的市场新面孔，经忽略名单过滤后多是**真·未识别厂商线索**而非噪声。`build_newcomer_lines` 给这类行升级文案（带「建议建档」行动指引）并**行内附商店页直达**（`_store_url` 拼不出则只留文案）——底部 ActionCard 按钮全局封顶 5、每 combo 仅 1 条，线索未必挤得进，行内链接保证每条都有「立即去看」入口。已归属主体的厂商新品行不打 CTA。
