@@ -106,6 +106,44 @@ async def test_translate_noop_mock_and_no_key(app, monkeypatch):
     assert await ni.translate_pending_newcomers() == 0
 
 
+def test_parse_robust_against_footnote_and_truncation():
+    """_parse：① JSON 后带脚注（raw_decode 忽略尾部）② 译文被截断（抢救 summary，
+    让行退出 NULL 重试集，不每天空翻）。"""
+    from app.services.newcomer_i18n import _parse
+    # ① 合法 JSON + 尾部散文/脚注（贪婪 {.*} 会失败，raw_decode 不会）
+    foot = '{"summary": "末日生存 SLG", "translation": "中文描述。"}\n注：仅供参考{x}'
+    assert _parse(foot) == {"summary": "末日生存 SLG", "translation": "中文描述。"}
+    # ② max_tokens 截断 translation → JSON 不完整 → 至少抢救出 summary
+    trunc = '{"summary": "二战策略游戏", "translation": "很长的中文译文开头但是被截断了'
+    got = _parse(trunc)
+    assert got and got.get("summary") == "二战策略游戏" and not got.get("translation")
+    # ③ 彻底无 JSON → None
+    assert _parse("抱歉我无法处理") is None
+
+
+@pytest.mark.asyncio
+async def test_translate_salvages_summary_on_truncation(app, monkeypatch):
+    """译文截断时仍写 summary_cn → 该行不再被重选（避免永久重试空翻）。"""
+    from app.config import settings
+    from app.database import AsyncSessionLocal
+    from app.models.newcomer import MarketNewcomerLog
+    from app.services import newcomer_i18n as ni
+    monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
+    monkeypatch.setattr(settings, "TAISHI_API_KEY", "k")
+    calls: list = []
+    truncated = '{"summary": "丧尸末日 SLG", "translation": "中文译文被截断'
+    monkeypatch.setattr(ni.llm_gateway, "get_client", lambda: _Client(truncated, calls))
+
+    await _add_log("g9", "末日喧嚣", "US")
+    assert await ni.translate_pending_newcomers() == 1
+    async with AsyncSessionLocal() as db:
+        r = (await db.execute(select(MarketNewcomerLog).where(
+            MarketNewcomerLog.app_id == "g9"))).scalar_one()
+    assert r.summary_cn == "丧尸末日 SLG" and r.description_cn is None  # summary 落库，退出重试集
+    # 二次：summary_cn 已非空 → 不再选中、不再调 LLM
+    assert await ni.translate_pending_newcomers() == 0 and len(calls) == 1
+
+
 def test_digest_newcomer_line_carries_summary():
     """build_newcomer_lines 把一句话中文摘要拼进新品行（📝）。"""
     from app.services.release_alerts import build_newcomer_lines
