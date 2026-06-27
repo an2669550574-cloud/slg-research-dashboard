@@ -221,11 +221,13 @@ def build_newcomer_lines(market: dict, publisher: dict,
                          articles: Optional[dict] = None,
                          entities: Optional[dict] = None,
                          country: Optional[str] = None,
-                         platform: Optional[str] = None) -> list[str]:
+                         platform: Optional[str] = None,
+                         summaries: Optional[dict] = None) -> list[str]:
     """两层新品检测 → 人读行。
     enrich: {app_id: {genre, price, release_date}}
     articles: {app_id: [WechatArticle]} 微信公众号文章
     entities: {app_id: 中文厂商主体} —— 市场新面孔补中文归属（厂商新品行自带 entity_name）
+    summaries: {app_id: 一句话中文摘要} —— LLM 中文化，让领导一眼看懂「这是什么游戏」
     country/platform: 该 combo 的市场坐标，用于给「新厂商待识别」线索行内拼商店页直达
     （缺省 None = 不拼链接，向后兼容老调用 / 单测）。
 
@@ -236,6 +238,7 @@ def build_newcomer_lines(market: dict, publisher: dict,
     enrich = enrich or {}
     articles = articles or {}
     entities = entities or {}
+    summaries = summaries or {}
     lines = []
     market_real = [n for n in (market.get("newcomers") or []) if not n.get("is_reentry")]
     for n in market_real[:10]:
@@ -249,6 +252,8 @@ def build_newcomer_lines(market: dict, publisher: dict,
                           downloads=n.get("downloads"),
                           entity=entities.get(aid) or n.get("publisher"))
         base = f"✨ **{n['name']}** 空降 **#{n['rank']}**{tag}" + meta
+        if (s := summaries.get(aid)):   # LLM 一句话中文：领导一眼看懂这是什么游戏
+            base += f"\n   📝 {s}"
         # 线索行内自带商店页链接：底部 ActionCard 按钮全局封顶 5 个、每 combo 只取 1 条，
         # 线索未必挤得进——行内链接让每条待识别线索都有「立即去看」入口。拼不出则只留文案。
         if is_lead and country and platform:
@@ -267,6 +272,8 @@ def build_newcomer_lines(market: dict, publisher: dict,
         rank = f"#{n['rank']}" if n.get("rank") else "进榜"
         meta = _meta_line(revenue=n.get("revenue"), downloads=n.get("downloads"))
         base = f"🏢 **{n['entity_name']}** 新品 **{n['name']}** {rank}" + meta
+        if (s := summaries.get(aid)):
+            base += f"\n   📝 {s}"
         focus = _dashboard_focus_url(aid or "", "publisher")
         if focus:
             base += f"\n   🎯 [看板定位]({focus})"
@@ -354,7 +361,8 @@ def build_daily_digest(per_combo: list[dict], today: str,
                        entities: Optional[dict] = None,
                        version_changes: Optional[list[dict]] = None,
                        video_items: Optional[list[dict]] = None,
-                       region_changes: Optional[list[dict]] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
+                       region_changes: Optional[list[dict]] = None,
+                       summaries: Optional[dict] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
     """全 combo 检测结果 → (title, markdown, btns)。全空 → None（不发）。
 
     per_combo: [{country, platform, movement: dict|None, market: dict|None, publisher: dict|None}]
@@ -372,7 +380,7 @@ def build_daily_digest(per_combo: list[dict], today: str,
         mv_all = build_movement_lines(c["movement"], entities=entities) if c.get("movement") else []
         nc_blocks = (build_newcomer_lines(c.get("market") or {}, c.get("publisher") or {},
                                           enrich=c.get("enrich"), articles=articles,
-                                          entities=entities,
+                                          entities=entities, summaries=summaries,
                                           country=c["country"], platform=c["platform"])
                      if (c.get("market") or c.get("publisher")) else [])
         # 下载榜新品（ADR 0001 切片 2）：只推 is_slg=True，⬇️ 段单列。
@@ -462,6 +470,13 @@ async def send_daily_digest() -> bool:
     except Exception:
         logger.exception("Region launch detection (in digest) crashed")
         region_changes = []
+    # 新品中文化（LLM 网关）：给今日 is_slg 新品补 summary_cn/description_cn。放 webhook
+    # 闸门**之前**——前端抽屉也要中文，不依赖 webhook。USE_MOCK_DATA/无 key 整体 no-op。
+    from app.services.newcomer_i18n import translate_pending_newcomers
+    try:
+        await translate_pending_newcomers()
+    except Exception:
+        logger.exception("Newcomer translate (in digest) crashed")
     if not dingtalk.is_enabled():
         return False
     from app.services.movement import detect_movement
@@ -569,16 +584,18 @@ async def send_daily_digest() -> bool:
     except Exception:
         logger.warning("entity attribution for digest failed", exc_info=True)
 
-    # 需求①：今日新品（非回归）已自动搜集的实机视频（非隐藏）→「新品实机视频」段。
+    # 今日新品（非回归）app_id → 名：视频段 + 一句话摘要段共用。
+    newcomer_apps: dict[str, str] = {}
+    for c in per_combo:
+        for key in ("market", "publisher", "free_market", "free_publisher"):
+            for n in ((c.get(key) or {}).get("newcomers") or []):
+                aid, nm = n.get("app_id"), n.get("name")
+                if aid and nm and not n.get("is_reentry"):
+                    newcomer_apps.setdefault(aid, nm)
+
+    # 需求①：今日新品已自动搜集的实机视频（非隐藏）→「新品实机视频」段。
     video_items: list[dict] = []
     try:
-        newcomer_apps: dict[str, str] = {}
-        for c in per_combo:
-            for key in ("market", "publisher", "free_market", "free_publisher"):
-                for n in ((c.get(key) or {}).get("newcomers") or []):
-                    aid, nm = n.get("app_id"), n.get("name")
-                    if aid and nm and not n.get("is_reentry"):
-                        newcomer_apps.setdefault(aid, nm)
         if newcomer_apps:
             from app.models.newcomer import NewcomerVideo
             async with AsyncSessionLocal() as db:
@@ -598,9 +615,26 @@ async def send_daily_digest() -> bool:
     except Exception:
         logger.exception("Video items for digest failed")
 
+    # 新品一句话中文摘要（LLM 已在上面翻好，这里取出给 digest 新品行）。
+    summaries_by_app: dict[str, str] = {}
+    try:
+        if newcomer_apps:
+            from app.models.newcomer import MarketNewcomerLog
+            async with AsyncSessionLocal() as db:
+                srows = (await db.execute(
+                    select(MarketNewcomerLog.app_id, MarketNewcomerLog.summary_cn)
+                    .where(MarketNewcomerLog.app_id.in_(list(newcomer_apps)),
+                           MarketNewcomerLog.summary_cn.is_not(None))
+                )).all()
+            for aid, s in srows:
+                summaries_by_app.setdefault(aid, s)
+    except Exception:
+        logger.exception("Newcomer summaries for digest failed")
+
     msg = build_daily_digest(per_combo, today, articles=articles_by_app,
                              entities=entities_by_app, version_changes=version_changes,
-                             video_items=video_items, region_changes=region_changes)
+                             video_items=video_items, region_changes=region_changes,
+                             summaries=summaries_by_app)
     if msg is None:
         logger.info("daily digest: nothing to report for %s", today)
         return False

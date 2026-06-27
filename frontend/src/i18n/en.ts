@@ -172,6 +172,8 @@ export const en: Translations = {
     rangeDays: (n: number) => `${n}d`,
     attributedTo: (n: string) => `Attributed: ${n}`,
     drawerDesc: 'Description',
+    descShowOriginal: 'Original',
+    descShowCn: '中文',
     drawerShots: 'Screenshots',
     drawerVersion: 'Version',
     drawerVersionUpdated: (d: string) => `updated ${d}`,

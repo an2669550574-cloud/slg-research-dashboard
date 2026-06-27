@@ -323,6 +323,9 @@ export interface NewcomerHistoryItem {
   rating_count: number | null
   price: string | null
   description: string | null
+  /** 中文化（LLM 网关，只对 is_slg 新品）：一句话摘要 + 描述全文中译；未翻为 null。 */
+  summary_cn: string | null
+  description_cn: string | null
   screenshots: string[]
   /** 当前版本号 / 版本更新日 / 支持语言（ISO2A 逗号拼）。iTunes 富化有，GP 留 null。 */
   version: string | null

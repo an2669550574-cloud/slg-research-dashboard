@@ -57,6 +57,10 @@ class MarketNewcomerLog(Base):
     languages: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
     enrich_source: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     enriched_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # 中文化（LLM 网关，只对 is_slg 新品、按 app 翻一次）：summary_cn = 一句话「这是什么
+    # 游戏」（进 digest + 抽屉副标题）；description_cn = 商店描述全文中译（抽屉，可切原文）。
+    summary_cn: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    description_cn: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
 class NewcomerVideo(Base):

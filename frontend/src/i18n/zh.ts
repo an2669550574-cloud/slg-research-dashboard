@@ -194,6 +194,8 @@ export const zh = {
     rangeDays: (n: number) => `${n} 天`,
     attributedTo: (n: string) => `已归属 ${n}`,
     drawerDesc: '简介',
+    descShowOriginal: '查看原文',
+    descShowCn: '查看中文',
     drawerShots: '截图',
     drawerVersion: '当前版本',
     drawerVersionUpdated: (d: string) => `更新于 ${d}`,

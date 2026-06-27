@@ -537,14 +537,25 @@ function StoreDetailSection({ d }: { d: {
   current_version_date: string | null
   languages: string | null
   description: string | null
+  /** 中文化（market 抽屉走落库翻译；publisher 实时富化暂无 → 可选）。 */
+  summary_cn?: string | null
+  description_cn?: string | null
   screenshots: string[]
 } }) {
   const t = useT()
+  // 描述默认显示中文译文（若有），可切回原文；无译文则恒显原文，按钮不出现。
+  const [showOriginal, setShowOriginal] = useState(false)
   const langCodes = d.languages ? d.languages.split(',').filter(Boolean) : []
   const langShown = langCodes.slice(0, 14)
   const langMore = langCodes.length - langShown.length
+  const descText = (d.description_cn && !showOriginal) ? d.description_cn : d.description
   return (
     <>
+      {d.summary_cn && (
+        <div className="rounded-lg border border-brand-500/40 bg-brand-500/10 px-3 py-2 text-xs text-secondary leading-relaxed">
+          📝 {d.summary_cn}
+        </div>
+      )}
       {(d.version || langCodes.length > 0) && (
         <div className="space-y-2 text-[11px] font-data">
           {d.version && (
@@ -570,9 +581,17 @@ function StoreDetailSection({ d }: { d: {
         </div>
       )}
       <div>
-        <div className="text-[11px] text-muted uppercase tracking-wider mb-1.5">{t.newcomers.drawerDesc}</div>
-        {d.description ? (
-          <p className="text-xs text-secondary leading-relaxed whitespace-pre-wrap">{d.description}</p>
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="text-[11px] text-muted uppercase tracking-wider">{t.newcomers.drawerDesc}</span>
+          {d.description_cn && d.description && (
+            <button onClick={() => setShowOriginal(v => !v)}
+              className="text-[10px] text-muted hover:text-secondary transition-colors">
+              {showOriginal ? t.newcomers.descShowCn : t.newcomers.descShowOriginal}
+            </button>
+          )}
+        </div>
+        {descText ? (
+          <p className="text-xs text-secondary leading-relaxed whitespace-pre-wrap">{descText}</p>
         ) : (
           <p className="text-xs text-muted">{t.newcomers.noDesc}</p>
         )}

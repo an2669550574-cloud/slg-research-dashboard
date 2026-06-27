@@ -44,7 +44,7 @@ describe('formatRevenue', () => {
 describe('EVENT_TYPE_CONFIG / PLATFORM_CONFIG', () => {
   it('covers all expected event kinds', () => {
     expect(Object.keys(EVENT_TYPE_CONFIG).sort()).toEqual(
-      ['featuring', 'launch', 'marketing', 'ranking', 'revenue', 'version']
+      ['featuring', 'launch', 'marketing', 'ranking', 'region_launch', 'revenue', 'version']
     )
   })
 
