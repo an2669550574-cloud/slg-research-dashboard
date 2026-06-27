@@ -10,8 +10,10 @@
 trackId 取自 `Game.ios_track_id`（人工核对补的精确 iOS id）优先，否则 app_id 本身是
 数字时用之。HK 现有 tracked games 多用 GP 包名作 app_id（iTunes 用包名查不到 iOS，
 GP 包名 ≠ iOS bundleId），故靠 ios_track_id 补；没补 trackId 的 app 跳过、不追踪
-（曾试 iTunes search by 游戏名兜底，但同名歧义大——如 'Warpath' 美区全是射击游戏、
-查不到 Century 的 SLG Warpath——故改走「人工补精确 trackId」，零误匹配）。
+（曾试 iTunes search by 游戏名兜底，但泛词名同名歧义大、iOS 名常带副标题——如
+'Lords Mobile'/'Vikings' 按名搜会漏——故改走「人工补精确 trackId」，零误匹配。
+注：'Warpath' 实为 Lilith 的 'Warpath: Ace Shooter'(id 1529067679, genre=Strategy)，
+初稿曾被 Century(GP 包名)/Lilith(iOS 发行) 品牌混淆误判为「误匹配」，2026-06-27 已更正补入）。
 Android 无版本源（GP 页 JSON-LD 无 version）→ 只查 platform='ios' 的 tracked games。
 """
 import logging
