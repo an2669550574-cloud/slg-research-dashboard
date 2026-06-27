@@ -79,9 +79,9 @@ def _combo_label(country: str, platform: str) -> str:
     return f"{_market_label(country, platform)} 畅销榜"
 
 
-def _meta_line(*, genre=None, revenue=None, downloads=None, entity=None) -> str:
-    """条目下方的中文富化子行：品类 · 日收入 · 下载 · 厂商。全空则不占行。
-    用 markdown 引用块（`> `）渲染成灰色竖条子行——与主标题行形成层次、折行自带缩进。"""
+def _meta_inner(*, genre=None, revenue=None, downloads=None, entity=None) -> str:
+    """meta 子行的纯内容（无 markdown 前缀）：品类 · 日收入 · 下载 · 厂商。全空返回 ""。
+    新品行用它拼独立引用段（见 _block）；movement 仍走 _meta_line 的行尾拼接。"""
     parts = []
     if (g := _genre_cn(genre)):
         parts.append(g)
@@ -91,9 +91,15 @@ def _meta_line(*, genre=None, revenue=None, downloads=None, entity=None) -> str:
         parts.append(f"下载 {_fmt_num(downloads)}")
     if entity:
         parts.append(f"厂商 {entity}")
-    if not parts:
-        return ""
-    return "\n> " + " · ".join(parts)
+    return " · ".join(parts)
+
+
+def _meta_line(*, genre=None, revenue=None, downloads=None, entity=None) -> str:
+    """条目下方的中文富化子行（引用块）。movement 用；新品行改用 _meta_inner + 独立段。
+    钉钉 markdown 引用块会把后续单 \\n 续行 lazy-continuation 吸进同段并折叠换行，故
+    带后续续行（摘要/链接）的新品行**不能**用本函数拼，必须 `\\n\\n` 分段（见 _block）。"""
+    inner = _meta_inner(genre=genre, revenue=revenue, downloads=downloads, entity=entity)
+    return "\n> " + inner if inner else ""
 
 
 def _store_url(app_id: str, country: str, platform: str) -> Optional[str]:
@@ -116,6 +122,33 @@ def _dashboard_focus_url(app_id: str, view: str) -> Optional[str]:
     if not base or not aid:
         return None
     return f"{base}/newcomers?focus={quote(aid, safe='')}&view={view}"
+
+
+def _block(parts) -> str:
+    """新品行各「段」用 `\\n\\n` 分隔——钉钉 markdown 只认空行换行，单 `\\n` 续行会被
+    折叠粘连（真机验证：摘要/链接全黏进 meta 引用块一坨）。过滤空段。"""
+    return "\n\n".join(p for p in parts if p)
+
+
+def _link_line(app_id: str, view: str, *, country=None, platform=None,
+               with_store: bool = False, articles=None) -> str:
+    """新品行的链接段，合并成一行（少续行 = 钉钉移动端更清爽）：
+    🔗 商店页 · 🎯 看板，末尾接 📰 文章（≤2 篇）。全空返回 ""。"""
+    segs = []
+    if with_store and country and platform:
+        if (url := _store_url(app_id or "", country, platform)):
+            segs.append(f"💻 [商店页]({url})")   # 💻=外网链接，手机端打不开（见底部图例）
+    if (focus := _dashboard_focus_url(app_id or "", view)):
+        segs.append(f"🎯 [看板]({focus})")   # 看板自建·两端可达
+    line = " · ".join(segs)
+    arts = []
+    for a in (articles or [])[:2]:
+        title = (a.title or "").replace("[", "(").replace("]", ")").replace("|", "/")
+        title = " ".join(title.split())
+        arts.append(f"[{title}]({a.link})")
+    if arts:
+        line += (" · " if line else "") + "📰 " + " / ".join(arts)
+    return line
 
 
 # ── 每日情报汇总（竞品异动 + 两层新品，全 combo 一条） ─────────────────────
@@ -250,41 +283,31 @@ def build_newcomer_lines(market: dict, publisher: dict,
     for n in market_real[:10]:
         aid = n.get("app_id")
         is_lead = not n.get("is_slg")
-        # #99 忽略名单过滤后，is_slg=false 多是「真新厂商线索」而非噪声——文案从单纯
-        # 提示升级成带行动指引（建议建档），并行内附商店页直达（见下）。
+        # #99 忽略名单过滤后，is_slg=false 多是「真新厂商线索」而非噪声——升级文案带
+        # 行动指引（建议建档）+ 行内商店页直达（底部按钮封顶 5、每 combo 1 条，挤不进）。
         tag = "  ⚠️ 新厂商待识别 · 建议建档" if is_lead else ""
         en = enrich.get(aid) or {}
-        meta = _meta_line(genre=en.get("genre"), revenue=n.get("revenue"),
-                          downloads=n.get("downloads"),
-                          entity=entities.get(aid) or n.get("publisher"))
-        base = f"✨ **{n['name']}** 空降 **#{n['rank']}**{tag}" + meta
-        if (s := summaries.get(aid)):   # LLM 一句话中文：领导一眼看懂这是什么游戏
-            base += f"\n   📝 {s}"
-        # 线索行内自带商店页链接：底部 ActionCard 按钮全局封顶 5 个、每 combo 只取 1 条，
-        # 线索未必挤得进——行内链接让每条待识别线索都有「立即去看」入口。拼不出则只留文案。
-        if is_lead and country and platform:
-            url = _store_url(aid or "", country, platform)
-            if url:
-                base += f"\n   🔗 [查看商店页]({url})"
-        # 看板定位深链：点进新品页高亮该 app（未配 DASHBOARD_BASE_URL 时省略）。
-        focus = _dashboard_focus_url(aid or "", "market")
-        if focus:
-            base += f"\n   🎯 [看板定位]({focus})"
-        base += _articles_suffix(articles.get(aid))
-        lines.append(base)
+        inner = _meta_inner(genre=en.get("genre"), revenue=n.get("revenue"),
+                            downloads=n.get("downloads"),
+                            entity=entities.get(aid) or n.get("publisher"))
+        lines.append(_block([
+            f"✨ **{n['name']}** 空降 **#{n['rank']}**{tag}",
+            f"> {inner}" if inner else "",
+            f"📝 {summaries.get(aid)}" if summaries.get(aid) else "",   # LLM 一句话：领导秒懂
+            _link_line(aid or "", "market", country=country, platform=platform,
+                       with_store=is_lead, articles=articles.get(aid)),
+        ]))
     publisher_real = [n for n in (publisher.get("newcomers") or []) if not n.get("is_reentry")]
     for n in publisher_real[:10]:
         aid = n.get("app_id")
         rank = f"#{n['rank']}" if n.get("rank") else "进榜"
-        meta = _meta_line(revenue=n.get("revenue"), downloads=n.get("downloads"))
-        base = f"🏢 **{n['entity_name']}** 新品 **{n['name']}** {rank}" + meta
-        if (s := summaries.get(aid)):
-            base += f"\n   📝 {s}"
-        focus = _dashboard_focus_url(aid or "", "publisher")
-        if focus:
-            base += f"\n   🎯 [看板定位]({focus})"
-        base += _articles_suffix(articles.get(aid))
-        lines.append(base)
+        inner = _meta_inner(revenue=n.get("revenue"), downloads=n.get("downloads"))
+        lines.append(_block([
+            f"🏢 **{n['entity_name']}** 新品 **{n['name']}** {rank}",
+            f"> {inner}" if inner else "",
+            f"📝 {summaries.get(aid)}" if summaries.get(aid) else "",
+            _link_line(aid or "", "publisher", articles=articles.get(aid)),
+        ]))
     return lines
 
 
@@ -314,14 +337,13 @@ def build_free_newcomer_lines(market: dict, publisher: dict,
     for n in list(merged.values())[:10]:
         aid = n.get("app_id")
         rank = f"#{n['rank']}" if n.get("rank") else "上榜"
-        meta = _meta_line(downloads=n.get("downloads"),
-                          entity=n.get("entity_name") or entities.get(aid) or n.get("publisher"))
-        base = f"⬇️ **{n['name']}** 下载榜 **{rank}**" + meta
-        focus = _dashboard_focus_url(aid or "", "market")
-        if focus:
-            base += f"\n   🎯 [看板定位]({focus})"
-        base += _articles_suffix(articles.get(aid))
-        lines.append(base)
+        inner = _meta_inner(downloads=n.get("downloads"),
+                            entity=n.get("entity_name") or entities.get(aid) or n.get("publisher"))
+        lines.append(_block([
+            f"⬇️ **{n['name']}** 下载榜 **{rank}**",
+            f"> {inner}" if inner else "",
+            _link_line(aid or "", "market", articles=articles.get(aid)),
+        ]))
     return lines
 
 
@@ -346,11 +368,12 @@ def build_lead_newcomer_lines(lead_items: list[dict]) -> list[str]:
         pub = it.get("publisher") or "未知发行商"
         genre = it.get("genre") or ""
         suffix = f" · {genre}" if genre else ""
-        line = f"🔍 **{it.get('name') or aid}**（{mkt} 下载榜 {rank}{suffix}）｜发行商：{pub}"
         focus = _dashboard_focus_url(aid, "market")
-        if focus:
-            line += f"\n   🎯 [看板核查]({focus})"
-        out.append(line)
+        out.append(_block([
+            f"🔍 **{it.get('name') or aid}**（{mkt} 下载榜 {rank}{suffix}）",
+            f"> 发行商 {pub}",
+            f"🎯 [看板核查]({focus})" if focus else "",
+        ]))
         if len(out) >= cap:
             break
     return out
@@ -376,7 +399,7 @@ def build_video_lines(items: list[dict], cap: int) -> list[str]:
     """
     out: list[str] = []
     for it in items[:cap]:
-        link = f" [看第一条]({it['url']})" if it.get("url") else ""
+        link = f" 💻 [看第一条]({it['url']})" if it.get("url") else ""   # YouTube=外网，手机打不开
         out.append(f"🎬 **{it['name']}**：已搜集 {it['count']} 条实机玩法视频{link}")
     return out
 
@@ -391,6 +414,36 @@ def build_region_launch_lines(changes: list[dict], cap: int) -> list[str]:
         date = f"（{c['date']}）" if c.get("date") else ""
         out.append(f"🌍 **{c['name']}**：新进 {c['country']} 区{date}")
     return out
+
+
+def _digest_tldr(per_combo: list[dict], version_changes, region_changes,
+                 video_items, lead_items) -> str:
+    """开头一句话总览（TL;DR）：让领导打开卡片先有「今天整体什么情况」的锚点，不用读完
+    全卡才判断。新品按 app_id 去重跨榜/combo（市场+厂商+下载榜同一 app 只算一次）。"""
+    move = 0
+    new_apps: set = set()
+    for c in per_combo:
+        mv = c.get("movement") or {}
+        move += sum(len(mv.get(k) or []) for k in
+                    ("new_entrants", "surges", "drops", "revenue_spikes"))
+        for key in ("market", "publisher", "free_market", "free_publisher"):
+            for x in ((c.get(key) or {}).get("newcomers") or []):
+                if not x.get("is_reentry") and x.get("app_id"):
+                    new_apps.add(x["app_id"])
+    bits = []
+    if move:
+        bits.append(f"📊 异动 {move}")
+    if new_apps:
+        bits.append(f"✨ 新品 {len(new_apps)}")
+    if version_changes:
+        bits.append(f"🆙 版本 {len(version_changes)}")
+    if region_changes:
+        bits.append(f"🌍 新区 {len(region_changes)}")
+    if video_items:
+        bits.append(f"🎬 视频 {len(video_items)}")
+    if lead_items:
+        bits.append(f"🔍 待建档 {len(lead_items)}")
+    return " · ".join(bits)
 
 
 def build_daily_digest(per_combo: list[dict], today: str,
@@ -436,7 +489,7 @@ def build_daily_digest(per_combo: list[dict], today: str,
         overflow += len(mv_all) - len(mv_blocks)       # movement 尾部超额（按重要性砍）
         shown += len(mv_blocks) + len(nc_blocks) + len(free_blocks)
         # 分组小标题（异动 / 收入榜新品 / 下载榜新品）让领导一眼分清。
-        parts = [f"**{_combo_label(c['country'], c['platform'])}**"]
+        parts = [f"**{_market_label(c['country'], c['platform'])}**"]
         if mv_blocks:
             parts.append("【榜单异动】\n\n" + "\n\n".join(mv_blocks))
         if nc_blocks:
@@ -444,15 +497,17 @@ def build_daily_digest(per_combo: list[dict], today: str,
         if free_blocks:
             parts.append("【下载榜新品 · SLG】\n\n" + "\n\n".join(free_blocks))
         sections.append("\n\n".join(parts))
-        # 按钮：异动(空降/窜升) + 新品(市场/厂商) 各取头条直达商店页；全局最多 5、去重。
-        # 新品也产出按钮——纯新品日不再无可点项；安卓包名拼 GP 链接（_store_url）。
-        for e in (((c.get("movement") or {}).get("new_entrants") or [])[:1]
-                  + ((c.get("movement") or {}).get("surges") or [])[:1]
-                  + [n for n in ((c.get("market") or {}).get("newcomers") or []) if not n.get("is_reentry")][:1]
-                  + [n for n in ((c.get("publisher") or {}).get("newcomers") or []) if not n.get("is_reentry")][:1]):
-            url = _store_url(e.get("app_id", ""), c["country"], c["platform"])
+        # 按钮：每 combo 取头条新品（市场 + 厂商各 1）→ **看板深链**（两端可达、手机也能点；
+        # 商店直链已在行内保留带 💻）。不取 movement——异动的老游戏不在看板新品页、深链定位
+        # 不到。未配 DASHBOARD_BASE_URL 则无按钮，ActionCard 自动降级 markdown。全局最多 5、去重。
+        for n, view in (
+                [(x, "market") for x in
+                 [m for m in ((c.get("market") or {}).get("newcomers") or []) if not m.get("is_reentry")][:1]]
+                + [(x, "publisher") for x in
+                   [m for m in ((c.get("publisher") or {}).get("newcomers") or []) if not m.get("is_reentry")][:1]]):
+            url = _dashboard_focus_url(n.get("app_id", ""), view)
             if url and len(btns) < 5 and all(b[1] != url for b in btns):
-                btns.append((f"{e['name']} →", url))
+                btns.append((f"{n['name']} →", url))
     # 全局「版本更新」段（跨 combo，tracked iOS 竞品版本变更，ADR 0003 切片 B）。
     # 放 combo 段之后；纯版本更新日（无异动/新品）也能让 sections 非空、照常发卡。
     if version_changes:
@@ -480,17 +535,21 @@ def build_daily_digest(per_combo: list[dict], today: str,
         if lead_lines:
             total += len(lead_lines)
             sections.append(
-                "🔍 **待建档新厂线索**（下载榜疑似 SLG、白名单未收录 → 请人工核查建档）"
+                "【🔍 待建档新厂线索】（下载榜疑似 SLG、白名单未收录 → 请人工核查建档）"
                 "\n\n" + "\n\n".join(lead_lines))
     if not sections:
         return None
-    head = f"### 📡 SLG 每日情报 · {today}（{total} 项）"
-    body = [head] + sections
+    head = f"### 📡 SLG 每日情报 · {today}"
+    tldr = _digest_tldr(per_combo, version_changes, region_changes, video_items, lead_items)
+    body = [head] + ([f"> {tldr}"] if tldr else []) + sections
     if overflow:
         # 配了看板基址就把「看板查看全部」做成深链（落到新品页），否则纯文案。
         base = (settings.DASHBOARD_BASE_URL or "").rstrip("/")
         tail = f"[看板查看全部]({base}/newcomers)" if base else "看板查看全部"
         body.append(f"> …另有 **{overflow}** 项未在此展示，{tail}")
+    # 链接可达性图例（仅当卡里有 💻 外网链接时挂）：领导手机端据此知道哪些要电脑端。
+    if any("💻" in s for s in sections):
+        body.append("> 💻 链接需**电脑端**钉钉打开（手机端外网受限）；🎯 看板 · 📰 文章手机可直接点")
     return f"每日情报 {today}", "\n\n---\n\n".join(body), btns
 
 

@@ -96,15 +96,15 @@ def test_daily_digest_human_readable_no_machine_codes():
     assert "✨ **神秘新游** 空降 **#12**" in text and "新厂商待识别" in text
     # A4：新厂商线索（is_slg=false）文案带行动指引 + 行内商店页直达（不挤底部按钮名额）
     assert "新厂商待识别 · 建议建档" in text
-    assert "🔗 [查看商店页](https://apps.apple.com/us/app/id999)" in text
+    assert "💻 [商店页](https://apps.apple.com/us/app/id999)" in text
     # 富化子行（引用块）：日收入压缩 K/M、下载量、厂商归属（未匹配主体退回发行商名）
     assert "> 日收入 $123K · 下载 5K · 厂商 Mystery Studio" in text
     assert "🏢 **江娱互动** 新品 **Top Heroes 顶级英雄** #77" in text
-    assert "🇺🇸 美国 · iOS 畅销榜" in text and "JP" not in text  # 中文市场标签；空 combo 不出段
+    assert "🇺🇸 美国 · iOS" in text and "JP" not in text  # 中文市场标签；空 combo 不出段
     # 分组小标题：异动与新品分区
     assert "【榜单异动】" in text and "【新品上架】" in text
-    # iOS 数字 app_id → 商店页按钮
-    assert ("寒霜启示录 →", "https://apps.apple.com/us/app/id123") in btns
+    # 按钮改看板深链（需 DASHBOARD_BASE_URL）；本测试未配 → 无按钮，ActionCard 降级 markdown
+    assert btns == []
 
 
 def test_daily_digest_filters_reentries_from_newcomer_lines():
@@ -143,16 +143,16 @@ def test_newcomer_lines_lead_cta_and_store_link():
     text = "\n".join(lines)
     # 线索：文案 CTA + iOS 数字 id 拼 App Store 链接
     assert "陌生新游" in text and "新厂商待识别 · 建议建档" in text
-    assert "🔗 [查看商店页](https://apps.apple.com/us/app/id999)" in text
+    assert "💻 [商店页](https://apps.apple.com/us/app/id999)" in text
     # 已识别 SLG：不打 CTA、不加链接
     assert "已知 SLG" in text
     known_line = next(l for l in lines if "已知 SLG" in l)
-    assert "新厂商待识别" not in known_line and "查看商店页" not in known_line
+    assert "新厂商待识别" not in known_line and "商店页" not in known_line
 
     # 缺 country/platform（老调用/单测）：文案照常升级，链接优雅省略，不抛
     lines2 = build_newcomer_lines(market, {"newcomers": []})
     text2 = "\n".join(lines2)
-    assert "新厂商待识别 · 建议建档" in text2 and "查看商店页" not in text2
+    assert "新厂商待识别 · 建议建档" in text2 and "商店页" not in text2
 
 
 def test_daily_digest_treats_missing_is_reentry_as_true_first():
@@ -281,15 +281,18 @@ def test_store_url_gp_and_ios():
     assert _store_url("nopackage", "us", "android") is None    # 安卓无 . 不是包名
 
 
-def test_daily_digest_newcomer_and_android_buttons():
-    """纯新品日（无 movement）也产出商店按钮；安卓包名拼 GP 链接。"""
+def test_daily_digest_newcomer_buttons_use_dashboard(monkeypatch):
+    """按钮取头条新品 → 看板深链（两端可达、手机也能点），商店直链改走行内带 💻。
+    movement 不进按钮（异动老游戏看板新品页定位不到）。"""
     from app.services.release_alerts import build_daily_digest
+    monkeypatch.setattr("app.config.settings.DASHBOARD_BASE_URL",
+                        "https://board.example.com", raising=False)
     market = {"newcomers": [{"app_id": "com.x.y", "rank": 4, "name": "安卓新游",
                              "publisher": "P", "is_slg": False, "is_reentry": False}]}
     per_combo = [{"country": "JP", "platform": "android", "movement": None,
                   "market": market, "publisher": None}]
     _, _, btns = build_daily_digest(per_combo, "2026-06-14")
-    assert ("安卓新游 →", "https://play.google.com/store/apps/details?id=com.x.y") in btns
+    assert ("安卓新游 →", "https://board.example.com/newcomers?focus=com.x.y&view=market") in btns
 
 
 def test_daily_digest_movement_cap(monkeypatch):
@@ -308,7 +311,7 @@ def test_daily_digest_movement_cap(monkeypatch):
     assert "**AA**" in text and "**BB**" in text
     assert "**CC**" not in text                      # movement 第3条被 cap=2 砍
     assert "另有 **1** 项未在此展示" in text
-    assert "（3 项）" in text                          # 标题 total 仍是真实总数
+    assert "📊 异动 3" in text                          # TL;DR 总览计真实总数
 
 
 def test_daily_digest_global_cap_overflow(monkeypatch):
@@ -325,7 +328,7 @@ def test_daily_digest_global_cap_overflow(monkeypatch):
     _, text, _ = ra.build_daily_digest(per_combo, "2026-06-14")
     assert "游1" in text and "游2" not in text        # 第二 combo 被全局封顶
     assert "另有 **1** 项未在此展示" in text
-    assert "（2 项）" in text                          # total 仍计全部
+    assert "✨ 新品 2" in text                          # TL;DR 总览计全部新品（去重）
 
 
 def test_dashboard_focus_link(monkeypatch):
@@ -342,8 +345,8 @@ def test_dashboard_focus_link(monkeypatch):
     ]}
     lines = ra.build_newcomer_lines(market, publisher, country="US", platform="ios")
     text = "\n".join(lines)
-    assert "🎯 [看板定位](https://board.example.com/newcomers?focus=123&view=market)" in text
-    assert "🎯 [看板定位](https://board.example.com/newcomers?focus=com.x.y&view=publisher)" in text
+    assert "🎯 [看板](https://board.example.com/newcomers?focus=123&view=market)" in text
+    assert "🎯 [看板](https://board.example.com/newcomers?focus=com.x.y&view=publisher)" in text
     # overflow 折叠行做成深链
     monkeypatch.setattr("app.config.settings.DIGEST_MAX_ITEMS", 1, raising=False)
     per_combo = [
@@ -364,7 +367,7 @@ def test_dashboard_focus_link_omitted_when_unset(monkeypatch):
         {"app_id": "123", "rank": 5, "name": "市场新游", "publisher": "P", "is_slg": True, "is_reentry": False},
     ]}
     lines = ra.build_newcomer_lines(market, {"newcomers": []}, country="US", platform="ios")
-    assert "看板定位" not in "\n".join(lines)
+    assert "🎯 [看板]" not in "\n".join(lines)
 
 
 # ── 方案①：下载榜 is_slg=false 真新厂「待建档线索」段 ─────────────────────────
