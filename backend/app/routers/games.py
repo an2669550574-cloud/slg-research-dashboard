@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from typing import Optional, Literal
 from app.database import get_db, utcnow_naive
-from app.models.game import Game, GameRanking, CHART_GROSSING
+from app.models.game import Game, GameRanking, GameRegionRelease, CHART_GROSSING
 from app.rate_limit import refresh_cooldown
 from app.services.sensor_tower import sensor_tower_service, MOCK_SLG_GAMES, _resolve_window
 from app.services.appstore import fetch_app_info
@@ -11,7 +11,7 @@ from app.services.slg_publishers import is_slg
 from app.services.sibling_match import find_sibling_app_ids
 from app.scheduler import sync_daily_rankings
 from app.config import settings
-from app.schemas import GameCreate, GameOut, GameUpdate, RankingTodayOut, MetricsOut, MetricsCoverage, AggregateLeaderboardOut
+from app.schemas import GameCreate, GameOut, GameUpdate, RankingTodayOut, MetricsOut, MetricsCoverage, AggregateLeaderboardOut, RegionReleaseOut
 
 router = APIRouter(prefix="/api/games", tags=["games"])
 
@@ -264,6 +264,30 @@ async def get_game(app_id: str, db: AsyncSession = Depends(get_db)):
             updated_at=now,
         )
     raise HTTPException(status_code=404, detail="Game not found")
+
+
+@router.get("/{app_id}/regions", response_model=list[RegionReleaseOut])
+async def get_game_regions(app_id: str, db: AsyncSession = Depends(get_db)):
+    """tracked iOS 竞品分地区上架日（需求② 子项③ / ADR 0004）。
+
+    按上架日升序：最早上架（常是 soft-launch 先行区）排最前；release_date 为 NULL
+    （该区查不到 / 未上架）沉底。零 ST，周级 job 维护，POST /regions/sync 可手动刷。
+    """
+    rows = (await db.execute(
+        select(GameRegionRelease)
+        .where(GameRegionRelease.app_id == app_id)
+        .order_by(GameRegionRelease.release_date.is_(None),
+                  GameRegionRelease.release_date,
+                  GameRegionRelease.country)
+    )).scalars().all()
+    return rows
+
+
+@router.post("/regions/sync")
+async def trigger_region_launch_sync():
+    """手动刷新所有 tracked iOS 竞品分地区上架日（零 ST）。供首次填充 / 即时更新。"""
+    from app.services.region_launch import sync_region_launches
+    return await sync_region_launches()
 
 
 @router.post("/lookup")

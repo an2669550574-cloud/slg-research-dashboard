@@ -199,6 +199,17 @@ async def _run_newcomer_video_sync() -> None:
         logger.exception("Newcomer video sync job crashed")
 
 
+async def _run_region_launch_sync() -> None:
+    """定时任务包装：刷新 tracked iOS 竞品分地区上架日（需求② 子项③ / ADR 0004）。
+    零 ST（iTunes lookup），USE_MOCK_DATA / 无可用 trackId 则整体 no-op；周级即可
+    （上架日近静态）；异常不拖垮 scheduler。"""
+    from app.services.region_launch import sync_region_launches
+    try:
+        await sync_region_launches()
+    except Exception:
+        logger.exception("Region launch sync job crashed")
+
+
 async def _run_daily_alert_digest() -> None:
     """定时任务包装：每日情报汇总（竞品异动 + 两层新品，全 combo 一条钉钉卡）。
     纯本地库重跑检测，零配额；未配 webhook 静默 no-op；异常不拖垮 scheduler。"""
@@ -398,6 +409,17 @@ def start_scheduler() -> None:
         id="newcomer_video_sync",
         replace_existing=True,
         misfire_grace_time=3600,
+    )
+
+    # 分地区上线对照刷新：每周一 04:20 UTC（视频 03:50 + DB 备份 04:00 之后）。
+    # 上架日近静态，周级足够；零 ST（iTunes lookup），无可用 trackId 则空跑无害，
+    # 故无条件挂。请求数 = storefront 数（REGION_LAUNCH_STOREFRONTS），与游戏数无关。
+    scheduler.add_job(
+        _run_region_launch_sync,
+        CronTrigger(day_of_week="mon", hour=4, minute=20, timezone="UTC"),
+        id="region_launch_sync",
+        replace_existing=True,
+        misfire_grace_time=3600 * 3,
     )
 
     # App Store 开发者清单 diff：每日一轮，北京时间 09:00（= 01:00 UTC，避开

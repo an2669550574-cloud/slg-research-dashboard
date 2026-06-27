@@ -345,6 +345,49 @@ function MaterialsPanel({ appId }: { appId: string }) {
   )
 }
 
+// 主要 storefront 国旗（缺省回退到国家码本身），让分地区上线一眼可读。
+const REGION_FLAG: Record<string, string> = {
+  us: '🇺🇸', jp: '🇯🇵', kr: '🇰🇷', tw: '🇹🇼', cn: '🇨🇳',
+  de: '🇩🇪', gb: '🇬🇧', fr: '🇫🇷', ca: '🇨🇦', br: '🇧🇷',
+}
+
+/** 分地区上线（需求② 子项③ / ADR 0004）：tracked iOS 竞品各 storefront 上架日，
+ *  按上架日升序（最早区先 = soft-launch 区序），最早区高亮。无数据整段不渲染。 */
+function RegionLaunch({ appId }: { appId: string }) {
+  const t = useT()
+  const { data: regions = [] } = useQuery({
+    queryKey: ['game-regions', appId],
+    queryFn: () => gamesApi.regions(appId),
+  })
+  if (regions.length === 0) return null
+  const earliest = regions.find(r => r.release_date)?.release_date ?? null
+  return (
+    <div className="bg-surface border border-default rounded-xl p-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 mb-4">
+        <h2 className="text-sm font-semibold text-primary">{t.gameDetail.regionTitle}</h2>
+        <span className="text-xs text-muted">{t.gameDetail.regionHint}</span>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+        {regions.map(r => {
+          const isEarliest = !!r.release_date && r.release_date === earliest
+          return (
+            <div key={r.country}
+              className={`flex items-center justify-between rounded-lg border px-3 py-2 ${isEarliest ? 'border-brand-500 bg-brand-500/10' : 'border-default bg-base'}`}>
+              <span className="text-sm text-primary">
+                {REGION_FLAG[r.country] ? `${REGION_FLAG[r.country]} ` : ''}{r.country.toUpperCase()}
+              </span>
+              <span className="text-xs tabular-nums text-muted text-right">
+                {r.release_date ?? t.gameDetail.regionUnknown}
+                {isEarliest && <span className="ml-1 text-brand-500">· {t.gameDetail.regionEarliest}</span>}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 type RangeMode = { kind: 'preset'; days: number } | { kind: 'custom'; start: string; end: string }
 
 export default function GameDetail() {
@@ -567,6 +610,8 @@ export default function GameDetail() {
           </div>
         ))}
       </div>
+
+      <RegionLaunch appId={appId!} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-surface border border-default rounded-xl p-5">

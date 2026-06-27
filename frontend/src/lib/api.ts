@@ -29,6 +29,7 @@ import type {
   PublisherNewcomersOut,
   StoreDetail,
   NewcomerVideo,
+  RegionRelease,
   AppstoreReleasesOut,
   PublisherItunesArtist,
   PublisherItunesArtistCreate,
@@ -136,6 +137,8 @@ export const gamesApi = {
     api.get(`/games/${appId}/coverage`, {
       params: opts.mergeSiblings ? { merge_siblings: true } : undefined,
     }).then(r => r.data),
+  regions: (appId: string): Promise<RegionRelease[]> =>
+    api.get(`/games/${appId}/regions`).then(r => r.data),
   aggregateLeaderboard: (params: { days?: number; slg_only?: boolean; limit?: number } = {}): Promise<AggregateLeaderboardOut[]> =>
     api.get('/games/aggregate-leaderboard', { params }).then(r => r.data),
   metrics: (appId: string, params: MetricsParams = {}): Promise<MetricsOut> =>

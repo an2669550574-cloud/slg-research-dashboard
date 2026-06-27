@@ -48,7 +48,7 @@
 **回退**：job 空跑无害；`Game.version` 列留 NULL 无害；移除 job 即停。
 
 ## 未做（单独评估，非本 ADR 范围）
-- **分地区上线时间对照**：iTunes 可多 storefront 查 `releaseDate`，但要 N 倍请求、且安卓全缺；价值待验证，不和版本追踪捆。
+- **分地区上线时间对照**：iTunes 可多 storefront 查 `releaseDate`，但要 N 倍请求、且安卓全缺；价值待验证，不和版本追踪捆。**→ 2026-06-27 已评估并落地，见 ADR 0004**（实测「N 倍请求」是免费 iTunes、非 ST 配额问题；专用表 + 周级 job + GameDetail 区块，iOS-only）。
 - 安卓版本源（无可靠免费途径）。
 
 ## 备选方案（已否决）

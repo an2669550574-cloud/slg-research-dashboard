@@ -46,6 +46,14 @@ class GameOut(BaseModel):
     updated_at: datetime
 
 
+class RegionReleaseOut(BaseModel):
+    """tracked iOS 竞品某 storefront 的上架日（需求② 子项③ / ADR 0004）。"""
+    model_config = ConfigDict(from_attributes=True)
+
+    country: str
+    release_date: Optional[str] = None  # NULL = 该区查不到 / 未上架
+
+
 class GameRankingOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

@@ -468,6 +468,10 @@ export const en: Translations = {
     rankPerMarketNote: 'Rank is a per-market metric and cannot be summed across markets — pick a specific market above to see the rank trend',
     rankPrefix: 'Rank',
     today: 'today',
+    regionTitle: 'Regional Launch',
+    regionHint: 'iOS App Store release date per storefront (zero quota; earliest first)',
+    regionEarliest: 'earliest',
+    regionUnknown: 'not launched / not found',
   },
   events: {
     launch: 'Launch',

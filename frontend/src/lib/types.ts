@@ -416,6 +416,12 @@ export interface NewcomerVideo {
   rank: number | null
 }
 
+/** tracked iOS 竞品某 storefront 的上架日（需求② 子项③ / ADR 0004）。release_date 为 null = 该区查不到/未上架。 */
+export interface RegionRelease {
+  country: string
+  release_date: string | null
+}
+
 /** 一条「App Store 新上架」：开发者账号清单 diff 出的新 app（不依赖进榜）。 */
 export interface AppstoreReleaseItem {
   entity_id: number
