@@ -190,10 +190,16 @@ class Settings(BaseSettings):
     DINGTALK_WEBHOOK_URL: str = ""
     DINGTALK_SECRET: str = ""
     # DINGTALK_WEBHOOK_LABEL: 当前 webhook 对应群的人读别名，仅用于发送日志区分（不进
-    # 卡片内容）。当前 = 仅本人的「测试群」；后续要把部分推送发到领导在的群时，**另配
-    # 一个 webhook + 别名**（如 DINGTALK_WEBHOOK_URL_LEADER / 别名「领导群」），靠别名
-    # 在日志里一眼分清这条发到了哪个群。
+    # 卡片内容）。当前 = 仅本人的「测试群」（= maintainer 群，收全量含待建档/雷达/重登提醒）。
     DINGTALK_WEBHOOK_LABEL: str = "测试群"
+    # ── 领导群（leader target）──────────────────────────────────────────
+    # 每日 digest 双发: maintainer 群收全量(含待建档/视频/运维杂讯)，领导群收**剥离维护者
+    # 杂讯的精简情报卡**。**只有这三项独立配了 leader webhook，才真往领导群发第二张卡**
+    # （未配 = 维持今天的单卡单群，向后兼容；不会把领导版卡误发回 maintainer 群）。
+    # 值放 backend/.env，不进 git。维护者类提醒(微信重登/商店雷达/自检)永远只发 maintainer。
+    DINGTALK_WEBHOOK_URL_LEADER: str = ""
+    DINGTALK_SECRET_LEADER: str = ""
+    DINGTALK_WEBHOOK_LABEL_LEADER: str = "领导群"
 
     # 看板对外可访问基址（如 https://<域名>，**不含**末尾斜杠）。仅用于在每日 digest
     # 里给新品行拼「看板定位」深链（?focus=<app_id> 进新品页高亮该卡）。空 = 不拼深链

@@ -32,8 +32,9 @@ async def test_send_disabled_noop(monkeypatch):
     dt = importlib.import_module("app.services.dingtalk")
     from app.config import settings
     monkeypatch.setattr(settings, "DINGTALK_WEBHOOK_URL", "")
+    monkeypatch.setattr(settings, "DINGTALK_WEBHOOK_URL_LEADER", "", raising=False)
     called = []
-    monkeypatch.setattr(dt, "_post_payload", lambda payload: called.append(payload))
+    monkeypatch.setattr(dt, "_post_payload", lambda payload, **kw: called.append(payload))
     assert await dt.send_markdown("标题", "内容") is False
     assert called == []
 
@@ -46,14 +47,14 @@ async def test_send_adds_keyword_prefix_and_swallows_errors(monkeypatch):
     monkeypatch.setattr(settings, "DINGTALK_WEBHOOK_URL", "https://example.com/hook")
 
     sent = []
-    async def ok(payload):
+    async def ok(payload, **kw):
         sent.append(payload)
         return True
     monkeypatch.setattr(dt, "_post_payload", ok)
     assert await dt.send_markdown("竞品异动 US/ios", "text") is True
     assert sent[0]["markdown"]["title"] == "SLG · 竞品异动 US/ios"  # 关键词前缀
 
-    async def boom(payload):
+    async def boom(payload, **kw):
         raise RuntimeError("network down")
     monkeypatch.setattr(dt, "_post_payload", boom)
     assert await dt.send_markdown("x", "y") is False  # 吞掉异常不抛
@@ -250,7 +251,7 @@ async def test_send_daily_digest_end_to_end(client, monkeypatch):
     monkeypatch.setattr(settings, "DINGTALK_WEBHOOK_URL", "https://example.com/hook")
     monkeypatch.setattr(settings, "SYNC_RANKING_COMBOS", "US:ios")
     sent = []
-    async def fake_card(title, text, btns=None):
+    async def fake_card(title, text, btns=None, **kw):
         sent.append((title, text, btns))
         return True
     monkeypatch.setattr(dt, "send_action_card", fake_card)
@@ -451,7 +452,7 @@ async def test_send_daily_digest_lead_section_filters_by_genre(client, monkeypat
     monkeypatch.setattr(settings, "SYNC_RANKING_COMBOS", "US:ios")
     monkeypatch.setattr(settings, "FREE_CHART_COMBOS", "US:ios")
     sent = []
-    async def fake_card(title, text, btns=None):
+    async def fake_card(title, text, btns=None, **kw):
         sent.append((title, text, btns))
         return True
     monkeypatch.setattr(dt, "send_action_card", fake_card)
@@ -460,8 +461,9 @@ async def test_send_daily_digest_lead_section_filters_by_genre(client, monkeypat
     assert len(sent) == 1
     _, text, _ = sent[0]
     assert "待建档新厂线索" in text
-    assert "warz_new" in text          # is_slg=false + Strategy → 浮现给维护者
-    assert "puzzle_new" not in text    # genre 初筛压掉休闲噪声
+    # 名字带 `_` 会被 _md_name 转义(warz\_new)，故断言走稳定的发行商串识别 warz 行
+    assert "Unknown SLG Studio" in text   # is_slg=false + Strategy → 浮现给维护者
+    assert "Casual Maker" not in text     # genre 初筛压掉休闲噪声(puzzle_new 整行被滤)
 
 
 # ── 重要度排序（统一打分喂 排序 / 全局封顶 / movement TopN / 按钮 / 今日要闻）──────
@@ -594,3 +596,133 @@ def test_digest_does_not_mutate_input_order():
     ]
     ra.build_daily_digest(per_combo, "2026-06-28")
     assert [c["country"] for c in per_combo] == ["KR", "US"]   # 入参顺序不变
+
+
+# ── P0-2: 游戏名/厂商名 markdown 转义 + 截断 ──────────────────────────────────
+
+def test_md_name_escapes_and_truncates():
+    """ST 原始名里的 markdown 格式字符被转义/替换，长名被截断——防卡片破版。"""
+    from app.services.release_alerts import _md_name
+    # 方括号 → 圆括号(防误拼链接)，* _ ` ~ \ 转义(防加粗错位/代码块)
+    assert _md_name("War [Beta] *X* _v2_") == r"War (Beta) \*X\* \_v2\_"
+    assert _md_name("a`b~c\\d") == r"a\`b\~c\\d"
+    # 折叠换行/多空白
+    assert _md_name("Last   War\nZ") == "Last War Z"
+    # 超长截断带省略号；maxlen=None 不截
+    assert _md_name("A" * 40).endswith("…") and len(_md_name("A" * 40)) == 32
+    assert _md_name("A" * 40, maxlen=None) == "A" * 40
+    # 空/None 安全
+    assert _md_name(None) == "" and _md_name("") == ""
+
+
+def test_digest_escapes_game_name_no_broken_markdown():
+    """端到端: 含 [Beta]/* 的脏名进 digest 不破版——加粗不错位、方括号不成死链。"""
+    from app.services.release_alerts import build_movement_lines
+    mv = {"new_entrants": [{"app_id": "1", "name": "Doom [Beta] *Z*",
+                            "prev_rank": None, "cur_rank": 3}],
+          "surges": [], "drops": [], "revenue_spikes": []}
+    line = build_movement_lines(mv)[0]
+    assert "**Doom (Beta) \\*Z\\***" in line   # 外层加粗完整、内部 * 已转义
+    assert "[Beta]" not in line                  # 方括号已替换，不会误成链接
+
+
+# ── P0-1/P0-4: 领导卡受众剥离 + 双发路由 + 主卡失败升 Sentry ────────────────────
+
+def test_digest_leader_audience_strips_maintainer_noise():
+    """领导卡剥离维护者杂讯（待建档段/建议建档尾标/TLDR 待建档计数），但保留竞品情报。"""
+    from app.services.release_alerts import build_daily_digest
+    market = {"newcomers": [{"app_id": "999", "rank": 12, "name": "陌生新游",
+                             "publisher": "无名工作室", "is_slg": False, "is_reentry": False}]}
+    per_combo = [{"country": "US", "platform": "ios", "movement": None,
+                  "market": market, "publisher": None}]
+    lead = [{"app_id": "com.a.b", "name": "疑似新厂SLG", "publisher": "无名工作室",
+             "rank": 7, "country": "US", "platform": "ios", "genre": "Strategy"}]
+    _, m_text, _ = build_daily_digest(per_combo, "2026-06-28", lead_items=lead, audience="maintainer")
+    _, l_text, _ = build_daily_digest(per_combo, "2026-06-28", lead_items=lead, audience="leader")
+    # maintainer：维护者杂讯齐全
+    assert "待建档新厂线索" in m_text and "建议建档" in m_text and "🔍 待建档" in m_text
+    # leader：杂讯全剥离
+    assert "待建档新厂线索" not in l_text
+    assert "建议建档" not in l_text
+    assert "🔍 待建档" not in l_text
+    # 但新对手情报保留（is_slg=false 仍是"新对手上架"，只是去掉建档动作）
+    assert "陌生新游" in l_text
+
+
+@pytest.mark.asyncio
+async def test_send_daily_digest_dual_send_routing(client, monkeypatch):
+    """配了 leader webhook → 同一检测数据发两张卡: maintainer 版 + leader 版，各走各群，
+    均 critical=True。专测路由，build_daily_digest 打桩返回带 audience 标记的文案。"""
+    import importlib
+    ra = importlib.import_module("app.services.release_alerts")
+    dt = importlib.import_module("app.services.dingtalk")
+    from app.config import settings
+    monkeypatch.setattr(settings, "DINGTALK_WEBHOOK_URL", "https://example.com/maintainer")
+    monkeypatch.setattr(settings, "DINGTALK_WEBHOOK_URL_LEADER", "https://example.com/leader", raising=False)
+    monkeypatch.setattr(settings, "SYNC_RANKING_COMBOS", "US:ios")
+    monkeypatch.setattr(ra, "build_daily_digest",
+                        lambda *a, audience="maintainer", **k: ("t", f"CARD::{audience}", []))
+    sent = []
+    async def fake_card(title, text, btns=None, target="maintainer", critical=False):
+        sent.append((text, target, critical))
+        return True
+    monkeypatch.setattr(dt, "send_action_card", fake_card)
+    assert await ra.send_daily_digest() is True
+    by_target = {t: (text, crit) for text, t, crit in sent}
+    assert set(by_target) == {"maintainer", "leader"}
+    assert by_target["maintainer"][0] == "CARD::maintainer"
+    assert by_target["leader"][0] == "CARD::leader"
+    assert by_target["maintainer"][1] is True and by_target["leader"][1] is True  # 主卡 critical
+
+
+@pytest.mark.asyncio
+async def test_send_daily_digest_single_send_without_leader(client, monkeypatch):
+    """未独立配 leader webhook → 只发 maintainer 一张（向后兼容），不把领导版重发回维护者群。"""
+    import importlib
+    ra = importlib.import_module("app.services.release_alerts")
+    dt = importlib.import_module("app.services.dingtalk")
+    from app.config import settings
+    monkeypatch.setattr(settings, "DINGTALK_WEBHOOK_URL", "https://example.com/maintainer")
+    monkeypatch.setattr(settings, "DINGTALK_WEBHOOK_URL_LEADER", "", raising=False)
+    monkeypatch.setattr(settings, "SYNC_RANKING_COMBOS", "US:ios")
+    monkeypatch.setattr(ra, "build_daily_digest",
+                        lambda *a, audience="maintainer", **k: ("t", f"CARD::{audience}", []))
+    sent = []
+    async def fake_card(title, text, btns=None, target="maintainer", critical=False):
+        sent.append(target)
+        return True
+    monkeypatch.setattr(dt, "send_action_card", fake_card)
+    assert await ra.send_daily_digest() is True
+    assert sent == ["maintainer"]
+
+
+@pytest.mark.asyncio
+async def test_critical_send_failure_logs_error(monkeypatch, caplog):
+    """critical=True 的发送终态失败打 logger.error（进 Sentry）；critical=False 仍 warning。"""
+    import importlib, logging
+    dt = importlib.import_module("app.services.dingtalk")
+    from app.config import settings
+    monkeypatch.setattr(settings, "DINGTALK_WEBHOOK_URL", "https://example.com/hook")
+    async def boom(payload, **kw):
+        raise RuntimeError("network down")
+    monkeypatch.setattr(dt, "_post_payload", boom)
+    with caplog.at_level(logging.WARNING):
+        await dt.send_action_card("t", "x", [("a", "https://x")], critical=False)
+        await dt.send_action_card("t", "x", [("a", "https://x")], critical=True)
+    fails = [r.levelno for r in caplog.records if "send failed" in r.getMessage()]
+    assert logging.ERROR in fails and logging.WARNING in fails
+
+
+def test_leader_target_falls_back_but_configured_flag_strict(monkeypatch):
+    """_target_fields('leader') 未配时回退 maintainer（任意调用方不报错）；
+    但 leader_target_configured() 严格判，未配返回 False（digest 据此不双发）。"""
+    import importlib
+    dt = importlib.import_module("app.services.dingtalk")
+    from app.config import settings
+    monkeypatch.setattr(settings, "DINGTALK_WEBHOOK_URL", "https://m/hook")
+    monkeypatch.setattr(settings, "DINGTALK_WEBHOOK_URL_LEADER", "", raising=False)
+    assert dt.leader_target_configured() is False
+    assert dt._target_fields("leader")[0] == "https://m/hook"   # 回退 maintainer
+    monkeypatch.setattr(settings, "DINGTALK_WEBHOOK_URL_LEADER", "https://l/hook", raising=False)
+    assert dt.leader_target_configured() is True
+    assert dt._target_fields("leader")[0] == "https://l/hook"   # 独立群

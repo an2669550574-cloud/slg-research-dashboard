@@ -66,6 +66,25 @@ def _genre_cn(g: Optional[str]) -> Optional[str]:
     return _GENRE_CN.get(g.strip().lower(), g)
 
 
+_MD_FMT_RE = re.compile(r"([\\`*_~])")  # 行内格式字符：反斜杠/代码/加粗斜体/删除线
+
+
+def _md_name(s, maxlen: Optional[int] = 32) -> str:
+    """**粗体/正文文本位**的名字净化——防 ST 原始游戏名/厂商名把卡片渲染破版：
+    ① 折叠换行/多余空白 ② 超长截断（maxlen，None=不截）③ 方括号 → 圆括号（否则
+    `名](url` 会误拼成链接）④ 转义 `* _ \\` `` ` `` `~`（否则触发加粗错位/代码块）。
+
+    只用于 markdown **正文文本**插值（`**{name}**` / 厂商名 / 版本号等）。ActionCard
+    按钮 title 是纯文本、不要过它；`[锚文本](url)` 里的文章标题另有 sanitize（只需括号
+    替换、不转义格式符，见 `_link_line` / `_articles_suffix`）。ST 原始名几乎必然某天带
+    `[Beta]` / `*` / 方括号，这一道是「推领导前最容易当面出丑」的防线。"""
+    s = " ".join(str(s if s is not None else "").split())
+    if maxlen and len(s) > maxlen:
+        s = s[:maxlen - 1].rstrip() + "…"
+    s = s.replace("[", "(").replace("]", ")")
+    return _MD_FMT_RE.sub(r"\\\1", s)
+
+
 def _market_label(country: str, platform: str) -> str:
     """市场+平台标识（不带榜种），如「🇺🇸 美国 · 安卓」。下载榜/跨段复用，避免
     `_combo_label` 的「畅销榜」后缀与下载榜语境打架。"""
@@ -90,7 +109,7 @@ def _meta_inner(*, genre=None, revenue=None, downloads=None, entity=None) -> str
     if downloads:
         parts.append(f"下载 {_fmt_num(downloads)}")
     if entity:
-        parts.append(f"厂商 {entity}")
+        parts.append(f"厂商 {_md_name(entity)}")
     return " · ".join(parts)
 
 
@@ -226,22 +245,22 @@ def build_movement_lines(s: dict, entities: Optional[dict] = None,
     for e in s["new_entrants"]:
         frm = "榜外" if e["prev_rank"] is None else f"#{e['prev_rank']}"
         scored.append((_event_score("new_entrant", e),
-                       f"🆕 **{e['name']}** 空降 **#{e['cur_rank']}**（{frm} →）" + _meta(e)))
+                       f"🆕 **{_md_name(e['name'])}** 空降 **#{e['cur_rank']}**（{frm} →）" + _meta(e)))
     for e in s["surges"]:
         scored.append((_event_score("surge", e),
-                       f"📈 **{e['name']}** #{e['prev_rank']} → **#{e['cur_rank']}**（↑{e['prev_rank'] - e['cur_rank']}）" + _meta(e)))
+                       f"📈 **{_md_name(e['name'])}** #{e['prev_rank']} → **#{e['cur_rank']}**（↑{e['prev_rank'] - e['cur_rank']}）" + _meta(e)))
     for e in s["drops"]:
         to = "榜外" if e["cur_rank"] is None else f"#{e['cur_rank']}"
         scored.append((_event_score("drop", e),
-                       f"📉 **{e['name']}** 跌出 Top 榜（#{e['prev_rank']} → {to}）" + _meta(e)))
+                       f"📉 **{_md_name(e['name'])}** 跌出 Top 榜（#{e['prev_rank']} → {to}）" + _meta(e)))
     for e in s["revenue_spikes"]:
         # 收入异动主行已带前后金额，厂商归属**内联行尾**（不另起引用块——否则子行只剩
         # 孤零零一个厂商，跟在折行的主行后面很飘）。
         ent = entities.get(e.get("app_id")) or e.get("publisher")
         rk = f"现 #{e['cur_rank']} · " if e.get("cur_rank") else ""  # 收入涨跌的排名参照系
-        tail = f" · 厂商 {ent}" if ent else ""
+        tail = f" · 厂商 {_md_name(ent)}" if ent else ""
         scored.append((_event_score("revenue_spike", e),
-                       f"💰 **{e['name']}** {rk}收入 **{e['pct']:+.0f}%**（{_fmt_money(e['prev_revenue'])} → {_fmt_money(e['cur_revenue'])}）{tail}"))
+                       f"💰 **{_md_name(e['name'])}** {rk}收入 **{e['pct']:+.0f}%**（{_fmt_money(e['prev_revenue'])} → {_fmt_money(e['cur_revenue'])}）{tail}"))
     scored.sort(key=lambda x: x[0], reverse=True)   # 稳定排序：同分保持类内原序
     lines = [ln for _, ln in scored]
     return lines[:cap] if cap else lines
@@ -324,7 +343,8 @@ def build_newcomer_lines(market: dict, publisher: dict,
                          entities: Optional[dict] = None,
                          country: Optional[str] = None,
                          platform: Optional[str] = None,
-                         summaries: Optional[dict] = None) -> list[str]:
+                         summaries: Optional[dict] = None,
+                         lead_cta: bool = True) -> list[str]:
     """两层新品检测 → 人读行。
     enrich: {app_id: {genre, price, release_date}}
     articles: {app_id: [WechatArticle]} 微信公众号文章
@@ -332,6 +352,8 @@ def build_newcomer_lines(market: dict, publisher: dict,
     summaries: {app_id: 一句话中文摘要} —— LLM 中文化，让领导一眼看懂「这是什么游戏」
     country/platform: 该 combo 的市场坐标，用于给「新厂商待识别」线索行内拼商店页直达
     （缺省 None = 不拼链接，向后兼容老调用 / 单测）。
+    lead_cta: is_slg=false 线索行是否带「建议建档」尾标 + 商店页直达。默认 True（维护者卡）；
+    领导卡传 False——「建档」是维护者动作、对领导是杂讯，剥掉后该行退回纯「新对手上架」。
 
     **回归过滤**：`is_reentry=True` 的项不进 digest（老游戏跌出 baseline 又回来，
     标"新品"是误导）。is_reentry 字段在 no_baseline combo 里缺省，缺省 = False
@@ -345,16 +367,16 @@ def build_newcomer_lines(market: dict, publisher: dict,
     market_real = [n for n in (market.get("newcomers") or []) if not n.get("is_reentry")]
     for n in market_real[:10]:
         aid = n.get("app_id")
-        is_lead = not n.get("is_slg")
-        # #99 忽略名单过滤后，is_slg=false 多是「真新厂商线索」而非噪声——升级文案带
-        # 行动指引（建议建档）+ 行内商店页直达（底部按钮封顶 5、每 combo 1 条，挤不进）。
+        # #99 忽略名单过滤后，is_slg=false 多是「真新厂商线索」而非噪声——维护者卡升级文案带
+        # 行动指引（建议建档）+ 行内商店页直达；领导卡 lead_cta=False 剥掉这套维护者动作。
+        is_lead = (not n.get("is_slg")) and lead_cta
         tag = "  ⚠️ 新厂商待识别 · 建议建档" if is_lead else ""
         en = enrich.get(aid) or {}
         inner = _meta_inner(genre=en.get("genre"), revenue=n.get("revenue"),
                             downloads=n.get("downloads"),
                             entity=entities.get(aid) or n.get("publisher"))
         lines.append(_block([
-            f"✨ **{n['name']}** 空降 **#{n['rank']}**{tag}",
+            f"✨ **{_md_name(n['name'])}** 空降 **#{n['rank']}**{tag}",
             f"> {inner}" if inner else "",
             f"📝 {summaries.get(aid)}" if summaries.get(aid) else "",   # LLM 一句话：领导秒懂
             _link_line(aid or "", "market", country=country, platform=platform,
@@ -366,7 +388,7 @@ def build_newcomer_lines(market: dict, publisher: dict,
         rank = f"#{n['rank']}" if n.get("rank") else "进榜"
         inner = _meta_inner(revenue=n.get("revenue"), downloads=n.get("downloads"))
         lines.append(_block([
-            f"🏢 **{n['entity_name']}** 新品 **{n['name']}** {rank}",
+            f"🏢 **{_md_name(n['entity_name'])}** 新品 **{_md_name(n['name'])}** {rank}",
             f"> {inner}" if inner else "",
             f"📝 {summaries.get(aid)}" if summaries.get(aid) else "",
             _link_line(aid or "", "publisher", articles=articles.get(aid)),
@@ -403,7 +425,7 @@ def build_free_newcomer_lines(market: dict, publisher: dict,
         inner = _meta_inner(downloads=n.get("downloads"),
                             entity=n.get("entity_name") or entities.get(aid) or n.get("publisher"))
         lines.append(_block([
-            f"⬇️ **{n['name']}** 下载榜 **{rank}**",
+            f"⬇️ **{_md_name(n['name'])}** 下载榜 **{rank}**",
             f"> {inner}" if inner else "",
             _link_line(aid or "", "market", articles=articles.get(aid)),
         ]))
@@ -433,8 +455,8 @@ def build_lead_newcomer_lines(lead_items: list[dict]) -> list[str]:
         suffix = f" · {genre}" if genre else ""
         focus = _dashboard_focus_url(aid, "market")
         out.append(_block([
-            f"🔍 **{it.get('name') or aid}**（{mkt} 下载榜 {rank}{suffix}）",
-            f"> 发行商 {pub}",
+            f"🔍 **{_md_name(it.get('name') or aid)}**（{mkt} 下载榜 {rank}{suffix}）",
+            f"> 发行商 {_md_name(pub)}",
             f"🎯 [看板核查]({focus})" if focus else "",
         ]))
         if len(out) >= cap:
@@ -450,7 +472,7 @@ def build_version_lines(changes: list[dict], cap: int) -> list[str]:
     out: list[str] = []
     for c in changes[:cap]:
         date = f"（{c['date']}）" if c.get("date") else ""
-        out.append(f"🆙 **{c['name']}**：{c['old']} → {c['new']}{date}")
+        out.append(f"🆙 **{_md_name(c['name'])}**：{_md_name(c['old'], maxlen=None)} → {_md_name(c['new'], maxlen=None)}{date}")
     return out
 
 
@@ -463,7 +485,7 @@ def build_video_lines(items: list[dict], cap: int) -> list[str]:
     out: list[str] = []
     for it in items[:cap]:
         link = f" 💻 [看第一条]({it['url']})" if it.get("url") else ""   # YouTube=外网，手机打不开
-        out.append(f"🎬 **{it['name']}**：已搜集 {it['count']} 条实机玩法视频{link}")
+        out.append(f"🎬 **{_md_name(it['name'])}**：已搜集 {it['count']} 条实机玩法视频{link}")
     return out
 
 
@@ -475,7 +497,7 @@ def build_region_launch_lines(changes: list[dict], cap: int) -> list[str]:
     out: list[str] = []
     for c in changes[:cap]:
         date = f"（{c['date']}）" if c.get("date") else ""
-        out.append(f"🌍 **{c['name']}**：新进 {c['country']} 区{date}")
+        out.append(f"🌍 **{_md_name(c['name'])}**：新进 {c['country']} 区{date}")
     return out
 
 
@@ -551,19 +573,19 @@ def _highlight_line(item: dict) -> str:
     mkt = _market_label(item["country"], item["platform"])
     kind = item["kind"]
     if kind == "new_entrant":
-        return f"{mkt} 🆕 **{e['name']}** 空降 #{e['cur_rank']}"
+        return f"{mkt} 🆕 **{_md_name(e['name'])}** 空降 #{e['cur_rank']}"
     if kind == "surge":
-        return f"{mkt} 📈 **{e['name']}** #{e['prev_rank']} → #{e['cur_rank']}"
+        return f"{mkt} 📈 **{_md_name(e['name'])}** #{e['prev_rank']} → #{e['cur_rank']}"
     if kind == "drop":
         to = "榜外" if e.get("cur_rank") is None else f"#{e['cur_rank']}"
-        return f"{mkt} 📉 **{e['name']}** 跌出 Top（#{e['prev_rank']} → {to}）"
+        return f"{mkt} 📉 **{_md_name(e['name'])}** 跌出 Top（#{e['prev_rank']} → {to}）"
     if kind == "revenue_spike":
         rk = f"#{e['cur_rank']} · " if e.get("cur_rank") else ""
-        return f"{mkt} 💰 **{e['name']}** {rk}收入 {e['pct']:+.0f}%"
+        return f"{mkt} 💰 **{_md_name(e['name'])}** {rk}收入 {e['pct']:+.0f}%"
     # 三类新品（market / publisher / free）：厂商新品用 entity_name，其余用 name
     nm = e.get("name") or e.get("entity_name") or "—"
     rk = f" #{e['rank']}" if e.get("rank") else ""
-    return f"{mkt} ✨ **{nm}**{rk}"
+    return f"{mkt} ✨ **{_md_name(nm)}**{rk}"
 
 
 def build_highlight_lines(per_combo: list[dict], topn: int) -> list[str]:
@@ -624,13 +646,18 @@ def build_daily_digest(per_combo: list[dict], today: str,
                        video_items: Optional[list[dict]] = None,
                        region_changes: Optional[list[dict]] = None,
                        summaries: Optional[dict] = None,
-                       lead_items: Optional[list[dict]] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
+                       lead_items: Optional[list[dict]] = None,
+                       audience: str = "maintainer") -> Optional[tuple[str, str, list[tuple[str, str]]]]:
     """全 combo 检测结果 → (title, markdown, btns)。全空 → None（不发）。
 
     per_combo: [{country, platform, movement: dict|None, market: dict|None, publisher: dict|None}]
     articles: {app_id: [WechatArticle]} 微信公众号文章（按 app_id 聚合）
     entities: {app_id: 中文厂商主体}（市场新面孔 / 异动行补中文归属）
+    audience: "maintainer"（默认，全量卡）/ "leader"（领导卡）。领导卡剥离维护者杂讯：
+    跳过「待建档新厂线索」整段、新品行不拼「建议建档」尾标、TL;DR 不计「待建档 N」。
+    检测数据两个 audience 共用一份（send_daily_digest 渲染两遍），零额外 ST。
     """
+    is_leader = audience == "leader"
     sections: list[str] = []
     cap = settings.DIGEST_MAX_ITEMS
     mv_cap = settings.DIGEST_MOVEMENT_TOPN
@@ -645,7 +672,8 @@ def build_daily_digest(per_combo: list[dict], today: str,
         nc_blocks = (build_newcomer_lines(c.get("market") or {}, c.get("publisher") or {},
                                           enrich=c.get("enrich"), articles=articles,
                                           entities=entities, summaries=summaries,
-                                          country=c["country"], platform=c["platform"])
+                                          country=c["country"], platform=c["platform"],
+                                          lead_cta=not is_leader)
                      if (c.get("market") or c.get("publisher")) else [])
         # 下载榜新品（ADR 0001 切片 2）：只推 is_slg=True，⬇️ 段单列。
         free_blocks = (build_free_newcomer_lines(c.get("free_market") or {},
@@ -690,9 +718,10 @@ def build_daily_digest(per_combo: list[dict], today: str,
             total += len(video_items)
             sections.append("【新品实机视频】\n\n" + "\n\n".join(vid_lines))
     # 全局「待建档新厂线索」段（方案①）：下载榜 is_slg=false（白名单未收录）但
-    # genre=Strategy 的新品，单列给维护者核查建档——补救白名单滞后导致的漏推（领导端
-    # 的「下载榜新品 · SLG」段仍只推已确认 SLG，这段标注清楚是「待核查线索」不混淆）。
-    if lead_items:
+    # genre=Strategy 的新品，单列给**维护者**核查建档——补救白名单滞后导致的漏推。
+    # **领导卡跳过整段**（建档是维护者动作、对领导是杂讯）；领导卡的「下载榜新品 · SLG」
+    # 段仍只推已确认 SLG，不混淆。
+    if lead_items and not is_leader:
         lead_lines = build_lead_newcomer_lines(lead_items)
         if lead_lines:
             total += len(lead_lines)
@@ -702,7 +731,9 @@ def build_daily_digest(per_combo: list[dict], today: str,
     if not sections:
         return None
     head = f"### 📡 SLG 每日情报 · {today}"
-    tldr = _digest_tldr(per_combo, version_changes, region_changes, video_items, lead_items)
+    # 领导卡 TL;DR 不计「待建档 N」（那段已剥离）。
+    tldr = _digest_tldr(per_combo, version_changes, region_changes, video_items,
+                        None if is_leader else lead_items)
     # 「今日要闻」跨 combo 置顶：全卡最高重要度的事件抽出来放最前，保证核心市场大事件
     # 不被次市场长尾折叠挤掉、领导一眼抓重点（事件数 ≤ TOPN 时不渲染，避免与正文重复）。
     hi_lines = build_highlight_lines(per_combo, settings.DIGEST_HIGHLIGHTS_TOPN)
@@ -752,7 +783,8 @@ async def send_daily_digest() -> bool:
         await translate_pending_newcomers()
     except Exception:
         logger.exception("Newcomer translate (in digest) crashed")
-    if not dingtalk.is_enabled():
+    # 维护者群或领导群任一配了 webhook 就跑（两群独立，不因没配 maintainer 就漏发领导卡）。
+    if not (dingtalk.is_enabled() or dingtalk.leader_target_configured()):
         return False
     from app.services.movement import detect_movement
     from app.services.newcomers import (
@@ -936,15 +968,31 @@ async def send_daily_digest() -> bool:
     except Exception:
         logger.exception("Lead newcomer candidates (digest) failed")
 
-    msg = build_daily_digest(per_combo, today, articles=articles_by_app,
-                             entities=entities_by_app, version_changes=version_changes,
-                             video_items=video_items, region_changes=region_changes,
-                             summaries=summaries_by_app, lead_items=lead_items)
-    if msg is None:
+    # 同一份检测数据渲染两遍（零额外 ST/查询），分发两个群：
+    # - maintainer 卡（全量，含待建档/视频/建档 CTA）→ 维护者群，永远发。
+    # - leader 卡（剥离维护者杂讯）→ 领导群，**仅当独立配了 leader webhook** 才发
+    #   （未配则只发 maintainer，维持今天的单卡行为，不把领导版卡重发进维护者群）。
+    # critical=True：主卡是「每日必达」，终态失败升 Sentry ERROR 让维护者立刻补。
+    def _render(audience):
+        return build_daily_digest(per_combo, today, articles=articles_by_app,
+                                  entities=entities_by_app, version_changes=version_changes,
+                                  video_items=video_items, region_changes=region_changes,
+                                  summaries=summaries_by_app, lead_items=lead_items,
+                                  audience=audience)
+
+    sent_any = False
+    msg_m = _render("maintainer")
+    if msg_m is None:
         logger.info("daily digest: nothing to report for %s", today)
-        return False
-    title, text, btns = msg
-    return await dingtalk.send_action_card(title, text, btns)
+    else:
+        sent_any = await dingtalk.send_action_card(*msg_m, target="maintainer",
+                                                   critical=True) or sent_any
+    if dingtalk.leader_target_configured():
+        msg_l = _render("leader")
+        if msg_l is not None:
+            sent_any = await dingtalk.send_action_card(*msg_l, target="leader",
+                                                       critical=True) or sent_any
+    return sent_any
 
 
 # ── 微信公众号登录过期提醒 ─────────────────────────────────────────────────
@@ -984,7 +1032,8 @@ async def alert_wechat_login_if_needed() -> bool:
     built = build_wechat_expiry_alert(status, time.time(), settings.WECHAT_EXPIRY_WARN_DAYS)
     if not built:
         return False
-    return await dingtalk.send_markdown(*built)
+    # 维护者运维提醒（含 ssh 重扫码指令）——钉死 maintainer 群，永不进领导群。
+    return await dingtalk.send_markdown(*built, target="maintainer")
 
 
 # ── 应用商店雷达（iOS + GP 清单 diff，每轮检出即推） ────────────────────────
@@ -1023,10 +1072,10 @@ def build_appstore_digest(
         for app, entity_name, _label in rows[:15]:
             released = f" · 上架 {app.release_date}" if app.release_date else ""
             genre = f" · {app.genre}" if app.genre else ""
-            lines.append(f"🆕 **{app.name}** — {entity_name}（{_platform_tag(app)}）"
+            lines.append(f"🆕 **{_md_name(app.name)}** — {_md_name(entity_name)}（{_platform_tag(app)}）"
                          f"{genre}{released}{_sf_text(app)}")
             if app.track_view_url and len(btns) < 5:
-                btns.append((f"{app.name} →", app.track_view_url))
+                btns.append((f"{app.name} →", app.track_view_url))   # 按钮 title 纯文本，不过 _md_name
         if len(rows) > 15:
             lines.append(f"…等共 {len(rows)} 款，看板查看全部")
     if expanded:
@@ -1034,7 +1083,7 @@ def build_appstore_digest(
         for app, entity_name, added in expanded[:15]:
             added_label = "/".join(s.upper() for s in added)
             now_label = "/".join(s.upper() for s in (app.storefronts or "").split(",") if s)
-            lines.append(f"🌍 **{app.name}** — {entity_name} 新增 **{added_label}**（现 {now_label}）")
+            lines.append(f"🌍 **{_md_name(app.name)}** — {_md_name(entity_name)} 新增 **{added_label}**（现 {now_label}）")
             if app.track_view_url and len(btns) < 5:
                 btns.append((f"{app.name} →", app.track_view_url))
         if len(expanded) > 15:
@@ -1077,4 +1126,5 @@ async def alert_appstore_releases(
     if msg is None:
         return False
     title, text, btns = msg
-    return await dingtalk.send_action_card(title, text, btns)
+    # 商店雷达是维护者向（厂商建档线索、软启动信号）——钉死 maintainer 群，不进领导群。
+    return await dingtalk.send_action_card(title, text, btns, target="maintainer")
