@@ -176,7 +176,7 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 - **跨 combo「📌 今日要闻」置顶**（`build_highlight_lines` + `_highlight_line`）：`_collect_scored_items` 收全 combo 的 movement + 三类新品（下载榜只算 is_slg=True，与推送门控一致；回归项已滤）→ 取重要度 Top `DIGEST_HIGHLIGHTS_TOPN`（默认 5）→ 内联市场标签的紧凑行，放 TL;DR 之后、combo 段之前。**仅当全卡事件数 > TOPN 才渲染**（小卡本身已短、置顶会与正文重复）。覆盖面**仅 ranking 派生的 per-combo 竞品事件**——版本/新区/视频/待建档是各自独立的全局段（本就不受地理顺序挤压），不纳入要闻。
 - 入参 `per_combo` 不被 mutate（排序走副本，`test_digest_does_not_mutate_input_order`）；常态下排序与现地理顺序几乎一致（US→JP→KR、iOS→安卓），只有次市场冒大事件才上浮，低惊扰。
 
-### 领导群 / 维护者群双卡分发 + markdown 转义（PR #137）
+### 领导群 / 维护者群双卡分发 + markdown 转义（PR #138）
 
 **命题**：digest 当前发「测试群」（仅维护者本人）；推到**有领导的群**前，得先把「受众 + 可信度」做扎实——否则待建档/微信重登等维护者杂讯会直接进领导群，且 ST 原始游戏名某天带 `[Beta]`/`*` 就破版。这是 44-agent 审查（见 git 历史的 `digest-leader-push-audit` workflow）判定的 P0 最小集。
 
