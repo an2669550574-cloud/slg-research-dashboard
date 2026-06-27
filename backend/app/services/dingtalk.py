@@ -45,10 +45,12 @@ async def _post_payload(payload: dict) -> bool:
         resp = await client.post(_signed_url(), json=payload)
         resp.raise_for_status()
         body = resp.json()
+    label = settings.DINGTALK_WEBHOOK_LABEL or "默认"
     if body.get("errcode") != 0:
-        logger.warning("DingTalk webhook rejected message: errcode=%s errmsg=%s",
-                       body.get("errcode"), body.get("errmsg"))
+        logger.warning("DingTalk webhook「%s」rejected: errcode=%s errmsg=%s",
+                       label, body.get("errcode"), body.get("errmsg"))
         return False
+    logger.info("DingTalk sent → 「%s」", label)
     return True
 
 

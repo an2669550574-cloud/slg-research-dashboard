@@ -108,6 +108,7 @@
 ## 命名易混淆点（写错过、要记住）
 
 - **"龙腾简合 Long Tech" ≠ [16] 龙腾简合 OneMT**：业内 "Long Tech Network Limited"（《Last Shelter》《Rise of Castles》出版方）**实属 [11] 龙创悦动 IM30 的海外马甲**，`long tech` alias 现挂在 [11]。改 [16] OneMT 主体时**不要**把 Long Tech 系产品挂过去。早期种子主体「龙腾简合 Long Tech」已废（[10] ID 空），PR#81 初稿也犯过同样错误。
+  - **[11] IM30 现有两个海外发行壳**（防「为啥 IM30 挂这些 alias」困惑）：`long tech`（LONG TECH NETWORK，Last Shelter: Survival / Last Empire War Z / Rise of Castles）＋ `last origin studio`（**LAST ORIGIN STUDIO LIMITED**，Last Shelter: War Z / `com.more.lastshelter.gp`，末日丧尸 4X SLG）。后者 2026-06-27 由下载榜新品监测以 is_slg=false 浮现 → 隐私政策托管于官方域名 `im30.net` 实锤归属（同 DEQU 范例）→ alias + app_id 建档进 [11]，关系 `controlling`（同官方域名运营受控，无股权登记故不用 wholly_owned）。IM30 是纯末日 SLG 厂、旗下壳用 **alias 门控**（与多品类大厂的 app_id 钉相反）。
 - **HABBY × 腾讯传闻已查证否定**（2026-06-20）：HABBY 公开融资轮次仅大观资本/北极光/真格，**无腾讯任何阶段记录**。brief 已戳记锁死，勿再回头查。
 - **NetEase Games 不应给「网易」加 alias**：荒野行動是 BR 误进策略榜，加 alias 会污染合计。网易主体（id=70）现有用 app_id 钉率土系列的设计是对的。
 - **腾讯 (id=38) `app_ids=[]` 是正确状态**：腾讯出海 SLG 通过 Level Infinite / Proxima Beta / 子工作室 publisher 发行已正确归属到 [27] Level Infinite 等；publisher 字段含 "Tencent" 的只有 PUBG (BR)，**不要强行钉**。

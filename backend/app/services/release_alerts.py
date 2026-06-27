@@ -66,11 +66,17 @@ def _genre_cn(g: Optional[str]) -> Optional[str]:
     return _GENRE_CN.get(g.strip().lower(), g)
 
 
-def _combo_label(country: str, platform: str) -> str:
+def _market_label(country: str, platform: str) -> str:
+    """市场+平台标识（不带榜种），如「🇺🇸 美国 · 安卓」。下载榜/跨段复用，避免
+    `_combo_label` 的「畅销榜」后缀与下载榜语境打架。"""
     flag = _COMBO_FLAG.get(country.lower(), "")
     cc = _COUNTRY_CN.get(country.lower(), country.upper())
     pf = _PLATFORM_CN.get(platform.lower(), platform)
-    return f"{flag} {cc} · {pf} 畅销榜".strip()
+    return f"{flag} {cc} · {pf}".strip()
+
+
+def _combo_label(country: str, platform: str) -> str:
+    return f"{_market_label(country, platform)} 畅销榜"
 
 
 def _meta_line(*, genre=None, revenue=None, downloads=None, entity=None) -> str:
@@ -319,6 +325,37 @@ def build_free_newcomer_lines(market: dict, publisher: dict,
     return lines
 
 
+def build_lead_newcomer_lines(lead_items: list[dict]) -> list[str]:
+    """下载榜 is_slg=false 但 genre=Strategy 的新品 → 「待建档新厂线索」行（方案①）。
+
+    is_slg 白名单滞后维护，会把「未识别的真新厂」（典型如 LAST ORIGIN STUDIO /
+    Last Shelter: War Z）挡在下载榜 SLG 推送门控（build_free_newcomer_lines）之外 →
+    漏推给领导。这段把这类线索单列给维护者：人工核查后建档进白名单 → 该厂后续新品
+    自动进 SLG 推送，形成「提醒 → 建档 → 不再漏」闭环。忽略名单已在 detect_newcomers
+    滤过确认非 SLG，调用方再用 genre 初筛压掉休闲噪声（Puzzle/工具等）。封顶防刷屏。"""
+    out: list[str] = []
+    cap = settings.DIGEST_MAX_ITEMS
+    seen: set[str] = set()
+    for it in lead_items:
+        aid = it.get("app_id")
+        if not aid or aid in seen:
+            continue
+        seen.add(aid)
+        rank = f"#{it['rank']}" if it.get("rank") else "上榜"
+        mkt = _market_label(it.get("country", ""), it.get("platform", ""))
+        pub = it.get("publisher") or "未知发行商"
+        genre = it.get("genre") or ""
+        suffix = f" · {genre}" if genre else ""
+        line = f"🔍 **{it.get('name') or aid}**（{mkt} 下载榜 {rank}{suffix}）｜发行商：{pub}"
+        focus = _dashboard_focus_url(aid, "market")
+        if focus:
+            line += f"\n   🎯 [看板核查]({focus})"
+        out.append(line)
+        if len(out) >= cap:
+            break
+    return out
+
+
 def build_version_lines(changes: list[dict], cap: int) -> list[str]:
     """版本变更 → 人读行（需求② / ADR 0003）。changes: [{name, old, new, date}]。
 
@@ -362,7 +399,8 @@ def build_daily_digest(per_combo: list[dict], today: str,
                        version_changes: Optional[list[dict]] = None,
                        video_items: Optional[list[dict]] = None,
                        region_changes: Optional[list[dict]] = None,
-                       summaries: Optional[dict] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
+                       summaries: Optional[dict] = None,
+                       lead_items: Optional[list[dict]] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
     """全 combo 检测结果 → (title, markdown, btns)。全空 → None（不发）。
 
     per_combo: [{country, platform, movement: dict|None, market: dict|None, publisher: dict|None}]
@@ -434,6 +472,16 @@ def build_daily_digest(per_combo: list[dict], today: str,
         if vid_lines:
             total += len(video_items)
             sections.append("【新品实机视频】\n\n" + "\n\n".join(vid_lines))
+    # 全局「待建档新厂线索」段（方案①）：下载榜 is_slg=false（白名单未收录）但
+    # genre=Strategy 的新品，单列给维护者核查建档——补救白名单滞后导致的漏推（领导端
+    # 的「下载榜新品 · SLG」段仍只推已确认 SLG，这段标注清楚是「待核查线索」不混淆）。
+    if lead_items:
+        lead_lines = build_lead_newcomer_lines(lead_items)
+        if lead_lines:
+            total += len(lead_lines)
+            sections.append(
+                "🔍 **待建档新厂线索**（下载榜疑似 SLG、白名单未收录 → 请人工核查建档）"
+                "\n\n" + "\n\n".join(lead_lines))
     if not sections:
         return None
     head = f"### 📡 SLG 每日情报 · {today}（{total} 项）"
@@ -631,10 +679,40 @@ async def send_daily_digest() -> bool:
     except Exception:
         logger.exception("Newcomer summaries for digest failed")
 
+    # 方案①「待建档新厂线索」：下载榜 is_slg=false（白名单未收录）但 genre=Strategy 的
+    # 新品，单列给维护者核查建档（补救白名单滞后漏推，见 LAST ORIGIN STUDIO 案例）。
+    # 忽略名单已在 detect_newcomers 滤过；这里查 free 行 genre 再压掉休闲噪声。零配额。
+    lead_items: list[dict] = []
+    try:
+        cand: dict[str, dict] = {}
+        for c in per_combo:
+            for key in ("free_market", "free_publisher"):
+                for n in ((c.get(key) or {}).get("newcomers") or []):
+                    aid = n.get("app_id")
+                    if (aid and not n.get("is_slg") and not n.get("is_reentry")
+                            and aid not in cand):
+                        cand[aid] = {"app_id": aid, "name": n.get("name"),
+                                     "publisher": n.get("publisher"), "rank": n.get("rank"),
+                                     "country": c["country"], "platform": c["platform"]}
+        if cand:
+            from app.models.newcomer import MarketNewcomerLog
+            async with AsyncSessionLocal() as db:
+                grows = (await db.execute(
+                    select(MarketNewcomerLog.app_id, MarketNewcomerLog.genre)
+                    .where(MarketNewcomerLog.app_id.in_(list(cand)),
+                           MarketNewcomerLog.chart_type == CHART_FREE)
+                )).all()
+            genre_by_app = {aid: (g or "") for aid, g in grows}
+            for aid, info in cand.items():
+                if "strateg" in genre_by_app.get(aid, "").lower():
+                    lead_items.append({**info, "genre": genre_by_app.get(aid, "")})
+    except Exception:
+        logger.exception("Lead newcomer candidates (digest) failed")
+
     msg = build_daily_digest(per_combo, today, articles=articles_by_app,
                              entities=entities_by_app, version_changes=version_changes,
                              video_items=video_items, region_changes=region_changes,
-                             summaries=summaries_by_app)
+                             summaries=summaries_by_app, lead_items=lead_items)
     if msg is None:
         logger.info("daily digest: nothing to report for %s", today)
         return False

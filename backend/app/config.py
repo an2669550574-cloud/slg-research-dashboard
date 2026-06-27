@@ -185,6 +185,11 @@ class Settings(BaseSettings):
     #   模式时留空，关键词建议设 "SLG"——所有消息标题都带该前缀）。
     DINGTALK_WEBHOOK_URL: str = ""
     DINGTALK_SECRET: str = ""
+    # DINGTALK_WEBHOOK_LABEL: 当前 webhook 对应群的人读别名，仅用于发送日志区分（不进
+    # 卡片内容）。当前 = 仅本人的「测试群」；后续要把部分推送发到领导在的群时，**另配
+    # 一个 webhook + 别名**（如 DINGTALK_WEBHOOK_URL_LEADER / 别名「领导群」），靠别名
+    # 在日志里一眼分清这条发到了哪个群。
+    DINGTALK_WEBHOOK_LABEL: str = "测试群"
 
     # 看板对外可访问基址（如 https://<域名>，**不含**末尾斜杠）。仅用于在每日 digest
     # 里给新品行拼「看板定位」深链（?focus=<app_id> 进新品页高亮该卡）。空 = 不拼深链

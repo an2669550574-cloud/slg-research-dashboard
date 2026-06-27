@@ -365,3 +365,97 @@ def test_dashboard_focus_link_omitted_when_unset(monkeypatch):
     ]}
     lines = ra.build_newcomer_lines(market, {"newcomers": []}, country="US", platform="ios")
     assert "看板定位" not in "\n".join(lines)
+
+
+# ── 方案①：下载榜 is_slg=false 真新厂「待建档线索」段 ─────────────────────────
+
+def test_lead_newcomer_lines_render_and_dedup(monkeypatch):
+    """待建档线索行：含名次/genre/发行商/看板核查链接，按 app_id 去重；
+    市场标签用下载榜语境（不带「畅销榜」后缀，与 _combo_label 区分）。"""
+    monkeypatch.setattr("app.config.settings.DASHBOARD_BASE_URL",
+                        "https://board.example.com", raising=False)
+    from app.services.release_alerts import build_lead_newcomer_lines
+    items = [
+        {"app_id": "com.x.warz", "name": "Last Shelter: War Z",
+         "publisher": "LAST ORIGIN STUDIO LIMITED", "rank": 12,
+         "country": "US", "platform": "android", "genre": "Strategy"},
+        {"app_id": "com.x.warz", "name": "dup", "publisher": "p", "rank": 99,
+         "country": "US", "platform": "android", "genre": "Strategy"},  # 同 app_id → 去重
+    ]
+    lines = build_lead_newcomer_lines(items)
+    assert len(lines) == 1
+    assert "Last Shelter: War Z" in lines[0]
+    assert "LAST ORIGIN STUDIO LIMITED" in lines[0]
+    assert "Strategy" in lines[0]
+    assert "看板核查" in lines[0]
+    assert "#12" in lines[0]
+    assert "畅销榜" not in lines[0]          # 下载榜段不能误用收入榜标签
+    assert "下载榜" in lines[0]
+
+
+def test_daily_digest_lead_section_alone_still_sends():
+    """只有待建档线索、无其它情报 → 仍发卡（不漏）且出现该段；不传 lead_items 则 None。"""
+    from app.services.release_alerts import build_daily_digest
+    per_combo = [{"country": "US", "platform": "ios", "movement": None,
+                  "market": None, "publisher": None}]
+    lead = [{"app_id": "com.a.b", "name": "疑似新厂SLG", "publisher": "无名工作室",
+             "rank": 7, "country": "US", "platform": "ios", "genre": "Strategy"}]
+    msg = build_daily_digest(per_combo, "2026-06-27", lead_items=lead)
+    assert msg is not None
+    _, text, _ = msg
+    assert "待建档新厂线索" in text
+    assert "疑似新厂SLG" in text
+    # 同样 per_combo 但不传 lead_items + 无其它情报 → 不发卡（向后兼容）
+    assert build_daily_digest(per_combo, "2026-06-27") is None
+
+
+@pytest.mark.asyncio
+async def test_send_daily_digest_lead_section_filters_by_genre(client, monkeypatch):
+    """方案①闭环：下载榜 is_slg=false 但 genre=Strategy 的新品进「待建档线索」段（补救
+    白名单滞后漏推，LAST ORIGIN STUDIO 症状）；genre=Puzzle 休闲噪声被 genre 初筛压掉。"""
+    import importlib
+    from datetime import timedelta
+    ra = importlib.import_module("app.services.release_alerts")
+    dt = importlib.import_module("app.services.dingtalk")
+    from app.config import settings
+    from app.database import AsyncSessionLocal, utcnow_naive
+    from app.models.game import GameRanking, CHART_FREE
+    from app.models.newcomer import MarketNewcomerLog
+
+    today = utcnow_naive().strftime("%Y-%m-%d")
+    prev = (utcnow_naive() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    async with AsyncSessionLocal() as db:
+        free_rows = [
+            ("free_vet", prev, 1, "Some Pub"),
+            ("free_vet", today, 1, "Some Pub"),
+            ("warz_new", today, 5, "Unknown SLG Studio"),   # is_slg=false + Strategy → 进 lead
+            ("puzzle_new", today, 6, "Casual Maker"),        # is_slg=false + Puzzle → 滤掉
+        ]
+        for aid, date, rank, pub in free_rows:
+            db.add(GameRanking(app_id=aid, date=date, rank=rank, country="US",
+                               platform="ios", name=aid, publisher=pub,
+                               chart_type=CHART_FREE))
+        db.add(MarketNewcomerLog(country="US", platform="ios", app_id="warz_new",
+                                 chart_type="free", as_of=today, name="warz_new",
+                                 publisher="Unknown SLG Studio", genre="Strategy", is_slg=False))
+        db.add(MarketNewcomerLog(country="US", platform="ios", app_id="puzzle_new",
+                                 chart_type="free", as_of=today, name="puzzle_new",
+                                 publisher="Casual Maker", genre="Puzzle", is_slg=False))
+        await db.commit()
+
+    monkeypatch.setattr(settings, "DINGTALK_WEBHOOK_URL", "https://example.com/hook")
+    monkeypatch.setattr(settings, "SYNC_RANKING_COMBOS", "US:ios")
+    monkeypatch.setattr(settings, "FREE_CHART_COMBOS", "US:ios")
+    sent = []
+    async def fake_card(title, text, btns=None):
+        sent.append((title, text, btns))
+        return True
+    monkeypatch.setattr(dt, "send_action_card", fake_card)
+
+    assert await ra.send_daily_digest() is True
+    assert len(sent) == 1
+    _, text, _ = sent[0]
+    assert "待建档新厂线索" in text
+    assert "warz_new" in text          # is_slg=false + Strategy → 浮现给维护者
+    assert "puzzle_new" not in text    # genre 初筛压掉休闲噪声
