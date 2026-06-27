@@ -151,8 +151,9 @@ async def test_sync_lookback_excludes_old_detections(app, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_videos_endpoint_lists_and_deletes(client):
-    """读端点按候选序返回；删端点去噪一条（CJK 标题）。"""
+async def test_videos_endpoint_lists_and_soft_deletes(client):
+    """读端点按候选序返回；删端点软删去噪一条（CJK 标题）——行保留、默认列表隐藏、
+    include_hidden 可取回，且噪声样本带 hidden_at（供回溯统计召回质量）。"""
     from app.database import AsyncSessionLocal
     from app.models.newcomer import NewcomerVideo
     async with AsyncSessionLocal() as db:
@@ -167,11 +168,43 @@ async def test_videos_endpoint_lists_and_deletes(client):
     body = r.json()
     assert [v["video_id"] for v in body] == ["V1", "V2"]
     assert "万国觉醒" in body[0]["title"]
+    assert body[0]["hidden_at"] is None
 
     rd = await client.delete(f"/api/newcomers/videos/{body[0]['id']}")
     assert rd.status_code == 200
+
+    # 默认列表：被删的 V1 隐藏，只剩 V2。
     r2 = await client.get("/api/newcomers/videos", params={"app_id": "111"})
     assert [v["video_id"] for v in r2.json()] == ["V2"]
+
+    # include_hidden：V1 仍在（行未物删），带 hidden_at 戳记 → 噪声样本可回溯。
+    r3 = await client.get("/api/newcomers/videos",
+                          params={"app_id": "111", "include_hidden": "true"})
+    all_rows = {v["video_id"]: v for v in r3.json()}
+    assert set(all_rows) == {"V1", "V2"}
+    assert all_rows["V1"]["hidden_at"] is not None
+    assert all_rows["V2"]["hidden_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_delete_video_idempotent(client):
+    """重复删同一条：幂等、不刷新 hidden_at（首删时刻为准）。"""
+    from app.database import AsyncSessionLocal
+    from app.models.newcomer import NewcomerVideo
+    async with AsyncSessionLocal() as db:
+        db.add(NewcomerVideo(app_id="222", video_id="W1", title="噪声候选",
+                             url="https://www.youtube.com/watch?v=W1", rank=1))
+        await db.commit()
+
+    body = (await client.get("/api/newcomers/videos", params={"app_id": "222"})).json()
+    vid = body[0]["id"]
+    await client.delete(f"/api/newcomers/videos/{vid}")
+    first = (await client.get("/api/newcomers/videos",
+             params={"app_id": "222", "include_hidden": "true"})).json()[0]["hidden_at"]
+    await client.delete(f"/api/newcomers/videos/{vid}")  # 二次删
+    second = (await client.get("/api/newcomers/videos",
+              params={"app_id": "222", "include_hidden": "true"})).json()[0]["hidden_at"]
+    assert first is not None and first == second  # 时刻不被二次删刷新
 
 
 @pytest.mark.asyncio

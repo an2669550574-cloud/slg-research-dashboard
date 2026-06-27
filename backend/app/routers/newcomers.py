@@ -413,29 +413,42 @@ class NewcomerVideoOut(BaseModel):
     url: str
     published_at: Optional[str] = None
     rank: Optional[int] = None
+    hidden_at: Optional[datetime] = None  # 软删去噪标记；默认列表里恒为 None
 
 
 @router.get("/videos", response_model=list[NewcomerVideoOut])
 async def get_newcomer_videos(
     app_id: str = Query(..., description="iOS 数字 trackId / Android GP 包名"),
+    include_hidden: bool = Query(
+        False, description="True 时连人工去噪(软删)的候选一并返回，供回溯统计召回噪声率"),
     db: AsyncSession = Depends(get_db),
 ):
-    """某 app 的实机玩法视频候选（定时自动搜来、零 ST）。按候选序升序。"""
+    """某 app 的实机玩法视频候选（定时自动搜来、零 ST）。按候选序升序。
+
+    人工去噪走软删：默认只返回未隐藏候选（`hidden_at IS NULL`），与前端 UX 一致；
+    传 include_hidden=true 可连被删的噪声样本一起取出（观察召回质量 / 设计停用词）。
+    """
+    stmt = select(NewcomerVideo).where(NewcomerVideo.app_id == app_id)
+    if not include_hidden:
+        stmt = stmt.where(NewcomerVideo.hidden_at.is_(None))
     rows = (await db.execute(
-        select(NewcomerVideo)
-        .where(NewcomerVideo.app_id == app_id)
         # rank 缺失沉底（SQLite NULL 默认排最前）；正常都有值，防御性写法与其它端点一致。
-        .order_by(NewcomerVideo.rank.is_(None), NewcomerVideo.rank, NewcomerVideo.id)
+        stmt.order_by(NewcomerVideo.rank.is_(None), NewcomerVideo.rank, NewcomerVideo.id)
     )).scalars().all()
     return rows
 
 
 @router.delete("/videos/{vid}")
 async def delete_newcomer_video(vid: int, db: AsyncSession = Depends(get_db)):
-    """人工去噪：删掉一条不相关候选。删后不会被重新搜回（该 app 已记搜索台账）。"""
+    """人工去噪：软删一条不相关候选（置 hidden_at，保留行）。
+
+    软删而非物删：保留噪声样本，供回溯统计召回噪声率 + 设计停用词（ADR 0002 观察缺口）。
+    默认列表 (`hidden_at IS NULL`) 不再返回它，前端 UX 与硬删一致；已记搜索台账，
+    不会被重新搜回。幂等：重复删不刷新 hidden_at。
+    """
     row = await db.get(NewcomerVideo, vid)
-    if row is not None:
-        await db.delete(row)
+    if row is not None and row.hidden_at is None:
+        row.hidden_at = utcnow_naive()
         await db.commit()
     return {"message": "ok"}
 

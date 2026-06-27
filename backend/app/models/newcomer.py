@@ -80,6 +80,9 @@ class NewcomerVideo(Base):
     published_at: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # 候选序，1 起
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)
+    # 人工去噪走软删：置 hidden_at 而非物删，保留噪声样本供回溯统计召回质量 / 设计停用词。
+    # NULL = 未隐藏（默认列表只返回这些）。
+    hidden_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class NewcomerVideoSearch(Base):
