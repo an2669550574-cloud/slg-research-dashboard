@@ -171,13 +171,21 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 
 **前端（切片 3）**：新品页加「收入榜 / 下载榜 / 两榜」筛选 chip（默认收入榜，对应 `/history?chart=`），下载榜检出卡片打 ⬇️「下载榜」徽标（`GroupedNewcomer.anyFree`）。
 
-### 竞品新品实机玩法视频自动搜集（ADR 0002，alembic 0029）
+### 竞品新品实机玩法视频自动搜集（ADR 0002，alembic 0029+0032）
 
-新品检出后定时搜 YouTube 实机玩法视频候选落库，前端新品抽屉展示 + 人工删噪。独立 daily job（03:50 UTC）`services/newcomer_video.py::sync_newcomer_videos` 调 **YouTube Data API**（独立配额、零 ST，`YOUTUBE_API_KEY` 在 `backend/.env`）。query **游戏名加引号精确匹配**防通用/短名拆词噪声（prod 实测 `탑 로드` 裸搜全是 Million Lords/赛马娘）。两表 `newcomer_video`（候选）+ `newcomer_video_search`（搜索台账=去重锚点 + 当日上限 80）；残余同名噪声靠前端「删」。详见 [ADR 0002](adr/0002-newcomer-gameplay-video-autosearch.md)。
+新品检出后定时搜 YouTube 实机玩法视频候选落库，前端新品抽屉展示 + 人工去噪。独立 daily job（**02:45 UTC**，排在核心同步 02:30~02:38 之后、digest 03:00 之前，让当天新品视频赶上当天卡）`services/newcomer_video.py::sync_newcomer_videos` 调 **YouTube Data API**（独立配额、零 ST，`YOUTUBE_API_KEY` 在 `backend/.env`）。query **游戏名加引号精确匹配**防通用/短名拆词噪声（prod 实测 `탑 로드` 裸搜全是 Million Lords/赛马娘）。两表 `newcomer_video`（候选）+ `newcomer_video_search`（搜索台账=去重锚点 + 当日上限 80）。**人工去噪走软删**（`newcomer_video.hidden_at`，alembic 0032）：删的不物删而置 `hidden_at`，列表默认 `hidden_at IS NULL`（前端 UX 不变），**保留噪声样本供回溯统计召回率 + 设计停用词**；`GET /newcomers/videos?include_hidden=true` 可取回。digest【新品实机视频】段只取非隐藏候选（数据源固有同名噪声靠前端「删」收）。详见 [ADR 0002](adr/0002-newcomer-gameplay-video-autosearch.md)。
 
 ### tracked iOS 竞品版本变更追踪（ADR 0003，alembic 0030+0031）
 
 每日 digest 流程开头内联 `services/version_tracker.py::check_tracked_versions` 重查 tracked iOS games 的 iTunes 版本（零 ST、批量 lookup），变了写 `game_histories(event_type='version')` + 进 digest「版本更新」全局段 + 详情页时间线（前端 `EVENT_TYPE_CONFIG` 已渲染）。首次填基线不算变更（防刷屏）。**iOS-only**（GP 页无版本源）。HK tracked games 多用 **GP 包名**作 app_id、iTunes 查不到 iOS，靠 `Game.ios_track_id`（人工核对的精确 trackId）补；没补的跳过（弃 iTunes search 兜底——同名歧义大）。详见 [ADR 0003](adr/0003-ios-version-tracking.md)。
+
+### tracked iOS 竞品分地区上线时间对照（ADR 0004，alembic 0033）
+
+`game_region_release(app_id, country, release_date)` 存 tracked iOS 竞品在各 storefront 的 iTunes `releaseDate`（随 country 分地区不同，零 ST）。`services/region_launch.py::sync_region_launches` 周级 job（周一 04:20 UTC）逐 country 批量 lookup → **原子 upsert**（SQLite `ON CONFLICT`，抗周级 job 与手动 `POST /games/regions/sync` 并发撞唯一约束）。`GET /games/{app_id}/regions` 按上架日升序（最早区先=soft-launch 区序，NULL 沉底）+ GameDetail「分地区上线」区块（最早区高亮）。**新进某区事件**：`detect_new_region_launches`（digest 内联、webhook 闸门**前**，无 webhook 也积累历史）检测近 `REGION_LAUNCH_RECENT_DAYS`(30) 天新上架的区 → 写 `game_histories(event_type='region_launch')`、按 (app_id,country) 去重 → digest【竞品新区上线】段 + 详情页时间线。**iOS-only**（GP 无上架日源）；`resultCount=0` 记 NULL（区分不了「未上架」vs「该区另一 trackId」，诚实留空）。详见 [ADR 0004](adr/0004-ios-region-launch-tracking.md)。
+
+### 新品详情中文化（LLM 网关，alembic 0034）
+
+商店描述是源区语言（日/韩/英），团队读费劲。`services/newcomer_i18n.py::translate_pending_newcomers`（digest 内联、webhook 闸门**前**，前端抽屉也要中文）给 **is_slg** 新品走太石 LLM 网关（`TAISHI_TEXT_MODEL`=便宜文本模型）**按 app 翻一次**（跨 combo 去重、回写该 app 全部行）→ `market_newcomer_log.summary_cn`（一句话「这是什么游戏」→ digest 新品行 📝 + 抽屉副标题）+ `description_cn`（描述全文中译 → 抽屉默认显示、可切原文）。每日封顶 `NEWCOMER_TRANSLATE_DAILY_CAP`(30)、便宜模型 cost <$0.15/天（不并入 `LLM_DAILY_BUDGET`，量小有意豁免）。`_parse` 用 `raw_decode` 抗尾部脚注 + 截断时抢救 summary（防长描述译文截断→JSON 失败→`summary_cn IS NULL` 永久重译空翻）。`USE_MOCK_DATA` / 无 `TAISHI_API_KEY` → no-op。
 
 ---
 
