@@ -225,13 +225,58 @@ def _event_score(kind: str, e: dict) -> float:
     return 1.0
 
 
+# ── 对标我方哪款（决策锚点，纯本地零 ST/零 LLM）─────────────────────────────
+# digest 现只有竞品 name/rank/revenue，不告诉领导「这竞品对标我方哪款」=最大决策缺口。
+# 给我方产品（own_products.match_keywords）配题材关键词，对竞品名 + LLM 中文摘要做小写
+# 子串匹配，命中给该行打「⚔️ 对标《本品》」+ TL;DR 计数，让领导一眼看出「要不要管」。
+
+def _match_own_product(text: str, products: list[tuple[str, list[str]]]) -> Optional[tuple[str, str]]:
+    """竞品文本 → 命中的我方产品 (产品名, 命中关键词)，第一个命中即返回（标签要短）。
+    纯小写子串匹配；关键词质量（区分度）由录入方把关，泛词会全命中。"""
+    t = (text or "").lower()
+    if not t:
+        return None
+    for name, kws in products:
+        for kw in kws:
+            if kw and kw in t:
+                return (name, kw)
+    return None
+
+
+def _own_tag(app_id, own_matches: Optional[dict]) -> str:
+    """竞品行尾「对标我方哪款」标签：命中 → ` ⚔️ 对标《X》`，否则 ``。⚔️ 刻意避开已表
+    「看板」的 🎯。产品名过 _md_name 防破版。"""
+    name = (own_matches or {}).get(app_id)
+    return f" ⚔️ 对标《{_md_name(name, maxlen=20)}》" if name else ""
+
+
+async def _load_own_products() -> list[tuple[str, list[str]]]:
+    """我方产品 (name, [小写关键词]) ——「对标我方哪款」匹配用。无 match_keywords 的跳过。
+    按 is_default 优先、id 次之排序，命中多款时标签优先取默认/先建那款（确定性）。"""
+    from app.models.product import OwnProduct
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(
+            select(OwnProduct.name, OwnProduct.match_keywords)
+            .where(OwnProduct.match_keywords.is_not(None))
+            .order_by(OwnProduct.is_default.desc(), OwnProduct.id)
+        )).all()
+    out: list[tuple[str, list[str]]] = []
+    for name, kw in rows:
+        kws = [k.strip().lower() for k in (kw or "").split(",") if k.strip()]
+        if kws:
+            out.append((name, kws))
+    return out
+
+
 # ── 每日情报汇总（竞品异动 + 两层新品，全 combo 一条） ─────────────────────
 
 def build_movement_lines(s: dict, entities: Optional[dict] = None,
-                         cap: Optional[int] = None) -> list[str]:
+                         cap: Optional[int] = None,
+                         own_matches: Optional[dict] = None) -> list[str]:
     """movement 摘要 → 人读行，**按重要度降序**（同分稳定保序）。与 Sentry 的
     [NEW]/[UP] 机器码刻意分离。
     entities: {app_id: 中文厂商主体} —— 给每条补「日收入 · 下载 · 厂商归属」子行。
+    own_matches: {app_id: 我方产品名} —— 命中则行尾打「⚔️ 对标《X》」（对标我方哪款）。
     cap: 单 combo 展示行上限（按 `_event_score` 砍掉重要性较低的尾部，不再按
     空降/窜升/暴跌/收入异动 的固定类序砍——否则末类的大额收入异动会被前类长尾挤掉），
     None=不限。combo 内市场权重恒定，故只按事件强度排序即与全卡口径一致。"""
@@ -241,18 +286,21 @@ def build_movement_lines(s: dict, entities: Optional[dict] = None,
         return _meta_line(revenue=e.get("revenue"), downloads=e.get("downloads"),
                           entity=entities.get(e.get("app_id")) or e.get("publisher"))
 
+    def _tag(e):
+        return _own_tag(e.get("app_id"), own_matches)
+
     scored: list[tuple[float, str]] = []
     for e in s["new_entrants"]:
         frm = "榜外" if e["prev_rank"] is None else f"#{e['prev_rank']}"
         scored.append((_event_score("new_entrant", e),
-                       f"🆕 **{_md_name(e['name'])}** 空降 **#{e['cur_rank']}**（{frm} →）" + _meta(e)))
+                       f"🆕 **{_md_name(e['name'])}** 空降 **#{e['cur_rank']}**（{frm} →）" + _tag(e) + _meta(e)))
     for e in s["surges"]:
         scored.append((_event_score("surge", e),
-                       f"📈 **{_md_name(e['name'])}** #{e['prev_rank']} → **#{e['cur_rank']}**（↑{e['prev_rank'] - e['cur_rank']}）" + _meta(e)))
+                       f"📈 **{_md_name(e['name'])}** #{e['prev_rank']} → **#{e['cur_rank']}**（↑{e['prev_rank'] - e['cur_rank']}）" + _tag(e) + _meta(e)))
     for e in s["drops"]:
         to = "榜外" if e["cur_rank"] is None else f"#{e['cur_rank']}"
         scored.append((_event_score("drop", e),
-                       f"📉 **{_md_name(e['name'])}** 跌出 Top 榜（#{e['prev_rank']} → {to}）" + _meta(e)))
+                       f"📉 **{_md_name(e['name'])}** 跌出 Top 榜（#{e['prev_rank']} → {to}）" + _tag(e) + _meta(e)))
     for e in s["revenue_spikes"]:
         # 收入异动主行已带前后金额，厂商归属**内联行尾**（不另起引用块——否则子行只剩
         # 孤零零一个厂商，跟在折行的主行后面很飘）。
@@ -260,7 +308,7 @@ def build_movement_lines(s: dict, entities: Optional[dict] = None,
         rk = f"现 #{e['cur_rank']} · " if e.get("cur_rank") else ""  # 收入涨跌的排名参照系
         tail = f" · 厂商 {_md_name(ent)}" if ent else ""
         scored.append((_event_score("revenue_spike", e),
-                       f"💰 **{_md_name(e['name'])}** {rk}收入 **{e['pct']:+.0f}%**（{_fmt_money(e['prev_revenue'])} → {_fmt_money(e['cur_revenue'])}）{tail}"))
+                       f"💰 **{_md_name(e['name'])}** {rk}收入 **{e['pct']:+.0f}%**（{_fmt_money(e['prev_revenue'])} → {_fmt_money(e['cur_revenue'])}）{tail}" + _tag(e)))
     scored.sort(key=lambda x: x[0], reverse=True)   # 稳定排序：同分保持类内原序
     lines = [ln for _, ln in scored]
     return lines[:cap] if cap else lines
@@ -344,12 +392,14 @@ def build_newcomer_lines(market: dict, publisher: dict,
                          country: Optional[str] = None,
                          platform: Optional[str] = None,
                          summaries: Optional[dict] = None,
-                         lead_cta: bool = True) -> list[str]:
+                         lead_cta: bool = True,
+                         own_matches: Optional[dict] = None) -> list[str]:
     """两层新品检测 → 人读行。
     enrich: {app_id: {genre, price, release_date}}
     articles: {app_id: [WechatArticle]} 微信公众号文章
     entities: {app_id: 中文厂商主体} —— 市场新面孔补中文归属（厂商新品行自带 entity_name）
     summaries: {app_id: 一句话中文摘要} —— LLM 中文化，让领导一眼看懂「这是什么游戏」
+    own_matches: {app_id: 我方产品名} —— 命中则标题行尾打「⚔️ 对标《X》」。
     country/platform: 该 combo 的市场坐标，用于给「新厂商待识别」线索行内拼商店页直达
     （缺省 None = 不拼链接，向后兼容老调用 / 单测）。
     lead_cta: is_slg=false 线索行是否带「建议建档」尾标 + 商店页直达。默认 True（维护者卡）；
@@ -376,7 +426,7 @@ def build_newcomer_lines(market: dict, publisher: dict,
                             downloads=n.get("downloads"),
                             entity=entities.get(aid) or n.get("publisher"))
         lines.append(_block([
-            f"✨ **{_md_name(n['name'])}** 空降 **#{n['rank']}**{tag}",
+            f"✨ **{_md_name(n['name'])}** 空降 **#{n['rank']}**{tag}{_own_tag(aid, own_matches)}",
             f"> {inner}" if inner else "",
             f"📝 {summaries.get(aid)}" if summaries.get(aid) else "",   # LLM 一句话：领导秒懂
             _link_line(aid or "", "market", country=country, platform=platform,
@@ -388,7 +438,7 @@ def build_newcomer_lines(market: dict, publisher: dict,
         rank = f"#{n['rank']}" if n.get("rank") else "进榜"
         inner = _meta_inner(revenue=n.get("revenue"), downloads=n.get("downloads"))
         lines.append(_block([
-            f"🏢 **{_md_name(n['entity_name'])}** 新品 **{_md_name(n['name'])}** {rank}",
+            f"🏢 **{_md_name(n['entity_name'])}** 新品 **{_md_name(n['name'])}** {rank}{_own_tag(aid, own_matches)}",
             f"> {inner}" if inner else "",
             f"📝 {summaries.get(aid)}" if summaries.get(aid) else "",
             _link_line(aid or "", "publisher", articles=articles.get(aid)),
@@ -398,12 +448,14 @@ def build_newcomer_lines(market: dict, publisher: dict,
 
 def build_free_newcomer_lines(market: dict, publisher: dict,
                               articles: Optional[dict] = None,
-                              entities: Optional[dict] = None) -> list[str]:
+                              entities: Optional[dict] = None,
+                              own_matches: Optional[dict] = None) -> list[str]:
     """下载榜新品 → 人读行（ADR 0001 切片 2）。
 
     **钉钉只推 is_slg=True**（下载榜噪声大：休闲/工具类装机榜混入多）——非 SLG 的
     下载榜新品仍照常入库 + 看板可见，只是不进钉钉卡片（口径差异是刻意的，见 ADR）。
     回归同样过滤。⬇️ 前缀与收入榜区分。市场+主体两路按 app_id 去重。
+    own_matches: {app_id: 我方产品名} —— 命中则行尾打「⚔️ 对标《X》」。
     """
     from app.services.slg_publishers import is_slg
     articles = articles or {}
@@ -425,7 +477,7 @@ def build_free_newcomer_lines(market: dict, publisher: dict,
         inner = _meta_inner(downloads=n.get("downloads"),
                             entity=n.get("entity_name") or entities.get(aid) or n.get("publisher"))
         lines.append(_block([
-            f"⬇️ **{_md_name(n['name'])}** 下载榜 **{rank}**",
+            f"⬇️ **{_md_name(n['name'])}** 下载榜 **{rank}**{_own_tag(aid, own_matches)}",
             f"> {inner}" if inner else "",
             _link_line(aid or "", "market", articles=articles.get(aid)),
         ]))
@@ -502,9 +554,10 @@ def build_region_launch_lines(changes: list[dict], cap: int) -> list[str]:
 
 
 def _digest_tldr(per_combo: list[dict], version_changes, region_changes,
-                 video_items, lead_items) -> str:
+                 video_items, lead_items, own_match_count: int = 0) -> str:
     """开头一句话总览（TL;DR）：让领导打开卡片先有「今天整体什么情况」的锚点，不用读完
-    全卡才判断。新品按 app_id 去重跨榜/combo（市场+厂商+下载榜同一 app 只算一次）。"""
+    全卡才判断。新品按 app_id 去重跨榜/combo（市场+厂商+下载榜同一 app 只算一次）。
+    own_match_count：命中「对标我方哪款」的竞品数——正向锚点，放最前让领导先看威胁面。"""
     move = 0
     new_apps: set = set()
     for c in per_combo:
@@ -516,6 +569,8 @@ def _digest_tldr(per_combo: list[dict], version_changes, region_changes,
                 if not x.get("is_reentry") and x.get("app_id"):
                     new_apps.add(x["app_id"])
     bits = []
+    if own_match_count:
+        bits.append(f"⚔️ 对标 {own_match_count}")   # 直接威胁我方产品的竞品数，置顶
     if move:
         bits.append(f"📊 异动 {move}")
     if new_apps:
@@ -566,29 +621,31 @@ def _collect_scored_items(per_combo: list[dict]) -> list[tuple[float, dict]]:
     return out
 
 
-def _highlight_line(item: dict) -> str:
+def _highlight_line(item: dict, own_matches: Optional[dict] = None) -> str:
     """「今日要闻」的一行紧凑摘要：跨 combo 置顶，故**内联市场标签**、去富化子行/链接，
-    一眼看清「哪个市场、什么游戏、什么事」。"""
+    一眼看清「哪个市场、什么游戏、什么事」。命中对标则行尾打「⚔️ 对标《X》」。"""
     e = item["e"]
     mkt = _market_label(item["country"], item["platform"])
     kind = item["kind"]
+    own = _own_tag(e.get("app_id"), own_matches)
     if kind == "new_entrant":
-        return f"{mkt} 🆕 **{_md_name(e['name'])}** 空降 #{e['cur_rank']}"
+        return f"{mkt} 🆕 **{_md_name(e['name'])}** 空降 #{e['cur_rank']}{own}"
     if kind == "surge":
-        return f"{mkt} 📈 **{_md_name(e['name'])}** #{e['prev_rank']} → #{e['cur_rank']}"
+        return f"{mkt} 📈 **{_md_name(e['name'])}** #{e['prev_rank']} → #{e['cur_rank']}{own}"
     if kind == "drop":
         to = "榜外" if e.get("cur_rank") is None else f"#{e['cur_rank']}"
-        return f"{mkt} 📉 **{_md_name(e['name'])}** 跌出 Top（#{e['prev_rank']} → {to}）"
+        return f"{mkt} 📉 **{_md_name(e['name'])}** 跌出 Top（#{e['prev_rank']} → {to}）{own}"
     if kind == "revenue_spike":
         rk = f"#{e['cur_rank']} · " if e.get("cur_rank") else ""
-        return f"{mkt} 💰 **{_md_name(e['name'])}** {rk}收入 {e['pct']:+.0f}%"
+        return f"{mkt} 💰 **{_md_name(e['name'])}** {rk}收入 {e['pct']:+.0f}%{own}"
     # 三类新品（market / publisher / free）：厂商新品用 entity_name，其余用 name
     nm = e.get("name") or e.get("entity_name") or "—"
     rk = f" #{e['rank']}" if e.get("rank") else ""
-    return f"{mkt} ✨ **{_md_name(nm)}**{rk}"
+    return f"{mkt} ✨ **{_md_name(nm)}**{rk}{own}"
 
 
-def build_highlight_lines(per_combo: list[dict], topn: int) -> list[str]:
+def build_highlight_lines(per_combo: list[dict], topn: int,
+                          own_matches: Optional[dict] = None) -> list[str]:
     """跨 combo「今日要闻」Top N（重要度置顶）。topn<=0 或事件数 ≤ topn → 返回 []
     （小卡本身已短，置顶会和正文重复，没必要）。"""
     if topn <= 0:
@@ -596,7 +653,7 @@ def build_highlight_lines(per_combo: list[dict], topn: int) -> list[str]:
     scored = _collect_scored_items(per_combo)
     if len(scored) <= topn:
         return []
-    return [_highlight_line(item) for _, item in scored[:topn]]
+    return [_highlight_line(item, own_matches) for _, item in scored[:topn]]
 
 
 def _combo_sort_key(c: dict) -> tuple[float, float]:
@@ -647,12 +704,14 @@ def build_daily_digest(per_combo: list[dict], today: str,
                        region_changes: Optional[list[dict]] = None,
                        summaries: Optional[dict] = None,
                        lead_items: Optional[list[dict]] = None,
-                       audience: str = "maintainer") -> Optional[tuple[str, str, list[tuple[str, str]]]]:
+                       audience: str = "maintainer",
+                       own_matches: Optional[dict] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
     """全 combo 检测结果 → (title, markdown, btns)。全空 → None（不发）。
 
     per_combo: [{country, platform, movement: dict|None, market: dict|None, publisher: dict|None}]
     articles: {app_id: [WechatArticle]} 微信公众号文章（按 app_id 聚合）
     entities: {app_id: 中文厂商主体}（市场新面孔 / 异动行补中文归属）
+    own_matches: {app_id: 我方产品名}（对标我方哪款，命中给该竞品行打「⚔️ 对标《X》」+ TL;DR 计数）
     audience: "maintainer"（默认，全量卡）/ "leader"（领导卡）。领导卡剥离维护者杂讯：
     跳过「待建档新厂线索」整段、新品行不拼「建议建档」尾标、TL;DR 不计「待建档 N」。
     检测数据两个 audience 共用一份（send_daily_digest 渲染两遍），零额外 ST。
@@ -668,17 +727,19 @@ def build_daily_digest(per_combo: list[dict], today: str,
     # 被次市场长尾挤折叠。原列表不变（不 mutate 入参），按钮另走全局重要度排序。
     ordered = sorted(per_combo, key=_combo_sort_key, reverse=True)
     for c in ordered:
-        mv_all = build_movement_lines(c["movement"], entities=entities) if c.get("movement") else []
+        mv_all = (build_movement_lines(c["movement"], entities=entities, own_matches=own_matches)
+                  if c.get("movement") else [])
         nc_blocks = (build_newcomer_lines(c.get("market") or {}, c.get("publisher") or {},
                                           enrich=c.get("enrich"), articles=articles,
                                           entities=entities, summaries=summaries,
                                           country=c["country"], platform=c["platform"],
-                                          lead_cta=not is_leader)
+                                          lead_cta=not is_leader, own_matches=own_matches)
                      if (c.get("market") or c.get("publisher")) else [])
         # 下载榜新品（ADR 0001 切片 2）：只推 is_slg=True，⬇️ 段单列。
         free_blocks = (build_free_newcomer_lines(c.get("free_market") or {},
                                                  c.get("free_publisher") or {},
-                                                 articles=articles, entities=entities)
+                                                 articles=articles, entities=entities,
+                                                 own_matches=own_matches)
                        if (c.get("free_market") or c.get("free_publisher")) else [])
         if not mv_all and not nc_blocks and not free_blocks:
             continue
@@ -731,12 +792,13 @@ def build_daily_digest(per_combo: list[dict], today: str,
     if not sections:
         return None
     head = f"### 📡 SLG 每日情报 · {today}"
-    # 领导卡 TL;DR 不计「待建档 N」（那段已剥离）。
+    # 领导卡 TL;DR 不计「待建档 N」（那段已剥离）。对标命中数（⚔️）两卡都计，置顶提威胁面。
     tldr = _digest_tldr(per_combo, version_changes, region_changes, video_items,
-                        None if is_leader else lead_items)
+                        None if is_leader else lead_items,
+                        own_match_count=len(own_matches or {}))
     # 「今日要闻」跨 combo 置顶：全卡最高重要度的事件抽出来放最前，保证核心市场大事件
     # 不被次市场长尾折叠挤掉、领导一眼抓重点（事件数 ≤ TOPN 时不渲染，避免与正文重复）。
-    hi_lines = build_highlight_lines(per_combo, settings.DIGEST_HIGHLIGHTS_TOPN)
+    hi_lines = build_highlight_lines(per_combo, settings.DIGEST_HIGHLIGHTS_TOPN, own_matches)
     hi_section = ["【📌 今日要闻】\n\n" + "\n\n".join(hi_lines)] if hi_lines else []
     body = [head] + ([f"> {tldr}"] if tldr else []) + hi_section + sections
     # 按钮按全局重要度排序取头部新品（不再按 combo 地理顺序各取头条挤名额）。
@@ -968,6 +1030,31 @@ async def send_daily_digest() -> bool:
     except Exception:
         logger.exception("Lead newcomer candidates (digest) failed")
 
+    # 「对标我方哪款」：我方产品关键词 → 命中竞品 app_id。竞品文本=名字 + LLM 中文摘要
+    # （summary_cn，题材信号最浓）；movement 老竞品只有名字。纯本地小写子串匹配，零 ST/LLM。
+    # 无我方产品配关键词 → own_matches 空、整段静默不影响其它情报。
+    own_matches: dict[str, str] = {}
+    try:
+        own_products = await _load_own_products()
+        if own_products:
+            for c in per_combo:
+                for key in ("market", "publisher", "free_market", "free_publisher"):
+                    for n in ((c.get(key) or {}).get("newcomers") or []):
+                        aid = n.get("app_id")
+                        if aid and not n.get("is_reentry") and aid not in own_matches:
+                            text = " ".join(t for t in (n.get("name"), summaries_by_app.get(aid)) if t)
+                            if (m := _match_own_product(text, own_products)):
+                                own_matches[aid] = m[0]
+                mv = c.get("movement") or {}
+                for k in ("new_entrants", "surges", "drops", "revenue_spikes"):
+                    for e in (mv.get(k) or []):
+                        aid = e.get("app_id")
+                        if aid and aid not in own_matches:
+                            if (m := _match_own_product(e.get("name") or "", own_products)):
+                                own_matches[aid] = m[0]
+    except Exception:
+        logger.exception("Own-product match (digest) failed")
+
     # 同一份检测数据渲染两遍（零额外 ST/查询），分发两个群：
     # - maintainer 卡（全量，含待建档/视频/建档 CTA）→ 维护者群，永远发。
     # - leader 卡（剥离维护者杂讯）→ 领导群，**仅当独立配了 leader webhook** 才发
@@ -978,7 +1065,7 @@ async def send_daily_digest() -> bool:
                                   entities=entities_by_app, version_changes=version_changes,
                                   video_items=video_items, region_changes=region_changes,
                                   summaries=summaries_by_app, lead_items=lead_items,
-                                  audience=audience)
+                                  audience=audience, own_matches=own_matches)
 
     sent_any = False
     msg_m = _render("maintainer")

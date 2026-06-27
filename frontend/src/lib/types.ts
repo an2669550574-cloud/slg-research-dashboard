@@ -543,6 +543,7 @@ export interface OwnProduct {
   id: number
   name: string
   brief: string
+  match_keywords: string | null
   is_default: boolean
   created_at: string
   updated_at: string
@@ -551,6 +552,7 @@ export interface OwnProduct {
 export interface OwnProductCreate {
   name: string
   brief: string
+  match_keywords?: string | null
   is_default?: boolean
 }
 

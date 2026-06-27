@@ -726,3 +726,65 @@ def test_leader_target_falls_back_but_configured_flag_strict(monkeypatch):
     monkeypatch.setattr(settings, "DINGTALK_WEBHOOK_URL_LEADER", "https://l/hook", raising=False)
     assert dt.leader_target_configured() is True
     assert dt._target_fields("leader")[0] == "https://l/hook"   # 独立群
+
+
+# ── P1: 对标我方哪款（OwnProduct match_keywords → digest 标签）─────────────────
+
+def test_match_own_product_substring_and_priority():
+    """纯本地小写子串匹配：命中名字/摘要、大小写无关、第一个产品优先、空安全。"""
+    from app.services.release_alerts import _match_own_product
+    prods = [("极寒纪元", ["丧尸", "末日", "survival"]), ("三国志", ["三国"])]
+    assert _match_own_product("Last War: Survival", prods) == ("极寒纪元", "survival")  # 大小写无关
+    assert _match_own_product("一款丧尸末日生存策略", prods) == ("极寒纪元", "丧尸")
+    assert _match_own_product("三国名将传", prods) == ("三国志", "三国")
+    assert _match_own_product("Candy Match 3", prods) is None
+    assert _match_own_product("", prods) is None
+    assert _match_own_product("survival", []) is None
+
+
+def test_digest_own_product_tag_and_tldr():
+    """对标命中 → 竞品行尾「⚔️ 对标《X》」(movement + 新品两处) + TL;DR「⚔️ 对标 N」置顶。"""
+    from app.services.release_alerts import build_daily_digest
+    mv = {"new_entrants": [{"app_id": "1", "name": "Zombie War", "prev_rank": None, "cur_rank": 3}],
+          "surges": [], "drops": [], "revenue_spikes": []}
+    market = {"newcomers": [{"app_id": "2", "rank": 8, "name": "Apocalypse",
+                             "publisher": "P", "is_slg": True, "is_reentry": False}]}
+    per = [{"country": "US", "platform": "ios", "movement": mv, "market": market, "publisher": None}]
+    om = {"1": "极寒纪元", "2": "极寒纪元"}
+    _, text, _ = build_daily_digest(per, "2026-06-28", own_matches=om)
+    assert "🆕 **Zombie War** 空降 **#3**（榜外 →） ⚔️ 对标《极寒纪元》" in text   # movement 行
+    assert "✨ **Apocalypse** 空降 **#8** ⚔️ 对标《极寒纪元》" in text             # 新品行
+    assert "⚔️ 对标 2" in text                                                  # TL;DR 计数置顶
+    # 不传 own_matches → 完全无对标标签（向后兼容）
+    _, text2, _ = build_daily_digest(per, "2026-06-28")
+    assert "对标" not in text2
+
+
+def test_digest_own_match_shows_on_both_audiences():
+    """对标是纯决策信号，领导卡与维护者卡都显示（不像待建档那样剥离）。"""
+    from app.services.release_alerts import build_daily_digest
+    market = {"newcomers": [{"app_id": "2", "rank": 8, "name": "X",
+                             "publisher": "P", "is_slg": True, "is_reentry": False}]}
+    per = [{"country": "US", "platform": "ios", "movement": None, "market": market, "publisher": None}]
+    om = {"2": "极寒纪元"}
+    for aud in ("maintainer", "leader"):
+        _, text, _ = build_daily_digest(per, "2026-06-28", own_matches=om, audience=aud)
+        assert "⚔️ 对标《极寒纪元》" in text
+
+
+@pytest.mark.asyncio
+async def test_load_own_products_filters_splits_lowercases(client):
+    """_load_own_products: 跳过无/全空关键词的产品，逗号拆分 + trim + 小写。"""
+    from app.services.release_alerts import _load_own_products
+    from app.database import AsyncSessionLocal
+    from app.models.product import OwnProduct
+    async with AsyncSessionLocal() as db:
+        db.add(OwnProduct(name="极寒纪元对标测试", brief="b", match_keywords="丧尸, 末日 ,Survival"))
+        db.add(OwnProduct(name="无关键词对标测试", brief="b", match_keywords=None))
+        db.add(OwnProduct(name="空白词对标测试", brief="b", match_keywords="  ,  "))
+        await db.commit()
+    prods = await _load_own_products()
+    assert ("极寒纪元对标测试", ["丧尸", "末日", "survival"]) in prods   # trim + lowercase
+    assert all(kws for _, kws in prods)                                # 无空关键词列表
+    names = {n for n, _ in prods}
+    assert "无关键词对标测试" not in names and "空白词对标测试" not in names

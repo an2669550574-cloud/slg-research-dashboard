@@ -6,12 +6,15 @@ from pydantic import BaseModel, ConfigDict, Field
 class OwnProductCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     brief: str = Field(..., min_length=1, max_length=4000)
+    # 对标匹配关键词（逗号分隔题材词），用于 digest「对标我方哪款」。空 = 不参与匹配。
+    match_keywords: Optional[str] = Field(None, max_length=500)
     is_default: bool = False
 
 
 class OwnProductUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=200)
     brief: Optional[str] = Field(None, min_length=1, max_length=4000)
+    match_keywords: Optional[str] = Field(None, max_length=500)
     is_default: Optional[bool] = None
 
 
@@ -21,6 +24,7 @@ class OwnProductOut(BaseModel):
     id: int
     name: str
     brief: str
+    match_keywords: Optional[str] = None
     is_default: bool
     created_at: datetime
     updated_at: datetime
