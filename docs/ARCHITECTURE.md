@@ -151,6 +151,19 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 
 **app_id 粒度忽略**：新品卡「忽略」按钮在有发行商名时下拉两选项——「忽略整个发行商」（`kind=publisher`，corp_squash 归一覆盖全厂）/「仅忽略此 app」（`kind=app_id`，只滤这一款）；无名退回 app_id 粒度。复用既有 `POST /publishers/ignores`，零新接口、零迁移。
 
+### digest 渲染格式 + 手机端链接可达性（PR #133）
+
+**渲染格式（钉钉 markdown 坑）**：新品行的「meta 引用块 + 📝摘要 + 🔗/🎯链接 + 📰文章」若用单 `\n` 续行，钉钉**手机端**会把引用块后的续行 lazy-continuation 吸进同一引用块、并把换行折叠成空格 → 全黏成一坨（真机样卡验证）。故各「段」必须用 `\n\n` 空行分隔（`_block` helper），meta 用 `_meta_inner`（纯内容）拼独立 `> ` 引用段；movement 行无后续续行、仍用 `_meta_line` 行尾 `\n> ` 拼接（不黏）。链接合并成一行（`_link_line`：🎯看板 · 📰文章）减少续行。开头 `_digest_tldr` 一句话总览（异动/新品/版本/新区/视频/待建档计数），领导先有锚点。combo 标题用 `_market_label`（不带「畅销榜」后缀），避免与下属【下载榜新品】子段口径打架。国旗 / `---` / `> ` 引用块真机渲染正常，无需规避。
+
+**手机端链接可达性（关键约束）**：公司网络下钉钉**电脑端能开外网、手机端打不开**（App Store / Google Play / YouTube）。钉钉 ActionCard 是同一份 markdown、**无法按客户端区分链接**，故按可达性分类标注：
+
+- **外网链接（手机端死链）**：🔗 商店页（`_link_line`）/ 🎬 视频（`build_video_lines`）→ 加 `💻` 标识 + 卡片底部图例（`💻 = 需电脑端打开`，仅当卡里有 💻 时挂）。
+- **两端可达**：🎯 看板（`slg.*.nip.io` 自建·公网 HTTPS·手机端已验证可达）/ 📰 微信文章（`mp.weixin.qq.com` 国内）→ 不标。
+- **底部 ActionCard 按钮**：从商店直链改 **看板深链**（`_dashboard_focus_url`，两端可达、手机也能点），只取头条新品——movement 异动老游戏不在看板新品页、深链定位不到，不进按钮；商店直链在行内保留带 💻（不丢电脑端入口）。未配 `DASHBOARD_BASE_URL` 则无按钮，ActionCard 降级 markdown。
+- **连锁限制**：看板详情页里的国外资源（商店截图 mzstatic 图床 / YouTube 视频）手机端在看板内也可能加载不全；手机端保得住的是看板**自有文字情报**（中文摘要 / 收入 / 名次 / 版本 / 厂商归属），视频「播放」本质要客户端能访问 YouTube，无解、只能电脑端。
+
+代码集中在 `build_daily_digest` 拼装层 + `_block` / `_meta_inner` / `_link_line` / `_digest_tldr` helper（`services/release_alerts.py`）。**digest backlog（Workflow 6 维审查挖出、未做）**：⭐重要度排序（现 cap / `DIGEST_MOVEMENT_TOPN` / 按钮 / overflow 五处砍尾全按 `sync_combos_list` 地理顺序而非重要度 → 核心 US/iOS 可能被次市场长尾挤掉折叠；五处共用一个打分函数即可统一修 + 跨 combo「今日要闻 Top N」置顶）、⭐补「对标我方哪款」决策锚点（全链路只有 name/rank/revenue，无「该竞品对标我方哪款」=最大决策缺口）、全局段统一封顶预算、emoji 收敛、游戏名 markdown 转义。受众拆领导卡/维护者卡 + 推送时点前移 = 依赖推领导群场景（现仅测试群）。
+
 ### 新厂商线索 CTA（PR #104）
 
 digest 里 `is_slg=false` 的市场新面孔，经忽略名单过滤后多是**真·未识别厂商线索**而非噪声。`build_newcomer_lines` 给这类行升级文案（带「建议建档」行动指引）并**行内附商店页直达**（`_store_url` 拼不出则只留文案）——底部 ActionCard 按钮全局封顶 5、每 combo 仅 1 条，线索未必挤得进，行内链接保证每条都有「立即去看」入口。已归属主体的厂商新品行不打 CTA。
