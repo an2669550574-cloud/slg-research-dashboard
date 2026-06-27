@@ -460,8 +460,9 @@ async def test_send_daily_digest_lead_section_filters_by_genre(client, monkeypat
     assert len(sent) == 1
     _, text, _ = sent[0]
     assert "待建档新厂线索" in text
-    assert "warz_new" in text          # is_slg=false + Strategy → 浮现给维护者
-    assert "puzzle_new" not in text    # genre 初筛压掉休闲噪声
+    # 名字带 `_` 会被 _md_name 转义(warz\_new)，故断言走稳定的发行商串识别 warz 行
+    assert "Unknown SLG Studio" in text   # is_slg=false + Strategy → 浮现给维护者
+    assert "Casual Maker" not in text     # genre 初筛压掉休闲噪声(puzzle_new 整行被滤)
 
 
 # ── 重要度排序（统一打分喂 排序 / 全局封顶 / movement TopN / 按钮 / 今日要闻）──────
@@ -594,3 +595,31 @@ def test_digest_does_not_mutate_input_order():
     ]
     ra.build_daily_digest(per_combo, "2026-06-28")
     assert [c["country"] for c in per_combo] == ["KR", "US"]   # 入参顺序不变
+
+
+# ── P0-2: 游戏名/厂商名 markdown 转义 + 截断 ──────────────────────────────────
+
+def test_md_name_escapes_and_truncates():
+    """ST 原始名里的 markdown 格式字符被转义/替换，长名被截断——防卡片破版。"""
+    from app.services.release_alerts import _md_name
+    # 方括号 → 圆括号(防误拼链接)，* _ ` ~ \ 转义(防加粗错位/代码块)
+    assert _md_name("War [Beta] *X* _v2_") == r"War (Beta) \*X\* \_v2\_"
+    assert _md_name("a`b~c\\d") == r"a\`b\~c\\d"
+    # 折叠换行/多空白
+    assert _md_name("Last   War\nZ") == "Last War Z"
+    # 超长截断带省略号；maxlen=None 不截
+    assert _md_name("A" * 40).endswith("…") and len(_md_name("A" * 40)) == 32
+    assert _md_name("A" * 40, maxlen=None) == "A" * 40
+    # 空/None 安全
+    assert _md_name(None) == "" and _md_name("") == ""
+
+
+def test_digest_escapes_game_name_no_broken_markdown():
+    """端到端: 含 [Beta]/* 的脏名进 digest 不破版——加粗不错位、方括号不成死链。"""
+    from app.services.release_alerts import build_movement_lines
+    mv = {"new_entrants": [{"app_id": "1", "name": "Doom [Beta] *Z*",
+                            "prev_rank": None, "cur_rank": 3}],
+          "surges": [], "drops": [], "revenue_spikes": []}
+    line = build_movement_lines(mv)[0]
+    assert "**Doom (Beta) \\*Z\\***" in line   # 外层加粗完整、内部 * 已转义
+    assert "[Beta]" not in line                  # 方括号已替换，不会误成链接
