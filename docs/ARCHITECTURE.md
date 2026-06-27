@@ -164,7 +164,7 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 
 代码集中在 `build_daily_digest` 拼装层 + `_block` / `_meta_inner` / `_link_line` / `_digest_tldr` helper（`services/release_alerts.py`）。**digest backlog（Workflow 6 维审查挖出、未做）**：⭐补「对标我方哪款」决策锚点（全链路只有 name/rank/revenue，无「该竞品对标我方哪款」=最大决策缺口）、全局段统一封顶预算、emoji 收敛、游戏名 markdown 转义。受众拆领导卡/维护者卡 + 推送时点前移 = 依赖推领导群场景（现仅测试群）。（⭐重要度排序已落地，见下节。）
 
-### digest 重要度排序 + 今日要闻置顶（feat/digest-importance-ranking）
+### digest 重要度排序 + 今日要闻置顶（PR #136）
 
 **痛点**：此前 digest 的五处「砍尾」——combo 段排序 / 全局封顶 `DIGEST_MAX_ITEMS` / 单 combo movement 封顶 `DIGEST_MOVEMENT_TOPN` / 商店按钮取头条 / overflow 折叠——一律按 `sync_combos_list` 的**地理顺序**或 movement 的**固定类序**（空降→窜升→暴跌→收入异动）砍。后果：① 末类的大额收入异动会被前类的榜尾长尾空降挤出 movement TopN；② 次市场高名次新品永远排不进 5 个按钮名额；③ 跨 combo 没有「今天最该看的几件事」入口。
 
