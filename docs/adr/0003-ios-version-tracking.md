@@ -55,6 +55,6 @@
 | 方案 | 否决原因 |
 |---|---|
 | 新建独立 version_snapshot 表 | `GameHistory` 已预留 `event_type='version'`，复用零新表；当前值进 Game 即够 |
-| iTunes search by 游戏名兜底（非数字 app_id 时搜版本） | prod 实测同名歧义大 + 依赖 publisher 数据质量：`Warpath` 美区全是射击游戏、搜不到 Century 的 SLG Warpath（误匹配到 Lilith 的 `Warpath: Ace Shooter`）；`Lords Mobile`/`Vikings` 因 iOS 名带副标题漏。改走「人工补精确 `ios_track_id`」，零误匹配、缺的诚实留白 |
+| iTunes search by 游戏名兜底（非数字 app_id 时搜版本） | prod 实测同名歧义大 + 依赖 publisher 数据质量：泛词名（`Warpath`）混入大量同名射击游戏、`Lords Mobile`/`Vikings` 因 iOS 名带副标题漏。改走「人工补精确 `ios_track_id`」，零误匹配、缺的诚实留白。**〔2026-06-27 更正〕** Warpath 本身并非「搜不到」——它就是 Lilith 的 **`Warpath: Ace Shooter`（id `1529067679`，genre=Strategy，Raven 阵营 WW2 RTS）**，初稿被 Century(GP 包名 `com.century.games.warpath`)/Lilith(iOS 发行账号) 品牌混淆误判为「误匹配」，实为同一游戏；trackId 已人工补入 prod（8/8 全部就位）。决策不变：人工精确 trackId 仍优于按名搜（Lords Mobile/Vikings 副标题漏、泛词误匹配的风险真实存在） |
 | 追踪所有检出 app（含 newcomer_log） | 用户拍板只盯 tracked；新品版本刚上线变化不大，且请求量大 |
 | 独立 daily job（02:50 UTC）+ digest 读 GameHistory | 要查当天事件 + 从 title 反解析 old/new（脆弱）+ 处理「读哪天事件」（event_date≠检测日）；内联 check 直接拿结构化 changes，更简单，且 check 在 webhook 检查前跑、总落库。最初按独立 job 写、落码时改内联 |
