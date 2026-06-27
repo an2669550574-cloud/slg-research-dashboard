@@ -14,6 +14,7 @@ trackId）→ upsert game_region_release(app_id, country, release_date)。
 import logging
 
 from sqlalchemy import select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.config import settings
 from app.database import AsyncSessionLocal, utcnow_naive
@@ -50,23 +51,24 @@ async def sync_region_launches(storefronts: list[str] | None = None) -> dict:
             return out
         out["games"] = len(tid_to_app)
         out["storefronts"] = len(stores)
-        # 既有行索引 (app_id, country) → row，便于 upsert（刷新覆盖 release_date）。
-        existing = {(r.app_id, r.country): r for r in (await db.execute(
-            select(GameRegionRelease))).scalars().all()}
+        now = utcnow_naive()
         for country in stores:
             bulk = await fetch_apps_bulk(list(tid_to_app), country=country)
             for tid, app_id in tid_to_app.items():
                 rel_date = (bulk.get(tid) or {}).get("release_date")
-                key = (app_id, country)
-                row = existing.get(key)
-                if row is None:
-                    row = GameRegionRelease(app_id=app_id, country=country,
-                                            release_date=rel_date)
-                    db.add(row)
-                    existing[key] = row
-                else:
-                    row.release_date = rel_date
-                    row.checked_at = utcnow_naive()
+                # 原子 upsert（SQLite ON CONFLICT DO UPDATE）：避免周级 job 与手动
+                # POST /regions/sync 并发各自 INSERT 同 (app_id,country) 撞唯一约束 →
+                # 端点 500 + 全量回滚。冲突即覆盖 release_date（同源 iTunes 数据，
+                # last-writer-wins 无害）+ 刷新 checked_at。沿用 rank_backfill 的写法。
+                await db.execute(
+                    sqlite_insert(GameRegionRelease)
+                    .values(app_id=app_id, country=country,
+                            release_date=rel_date, checked_at=now)
+                    .on_conflict_do_update(
+                        index_elements=["app_id", "country"],
+                        set_={"release_date": rel_date, "checked_at": now},
+                    )
+                )
                 out["rows"] += 1
         await db.commit()
     logger.info("region launch sync: %d games × %d storefronts → %d rows",

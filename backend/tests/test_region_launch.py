@@ -73,6 +73,33 @@ async def test_sync_upsert_refresh_and_null(app, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_sync_atomic_upsert_survives_preexisting_row(app, monkeypatch):
+    """加固：(app_id,country) 已存在行（模拟并发 job / 手动 sync 已先 INSERT 该对）时，
+    走原子 upsert 覆盖、不撞 uq_game_region_release 崩溃。"""
+    from app.config import settings
+    from app.database import AsyncSessionLocal
+    from app.models.game import GameRegionRelease
+    from app.services import region_launch as rl
+    monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
+
+    async def fake_bulk(ids, country="us"):
+        return {"999": {"release_date": "2024-05-05"}}
+    monkeypatch.setattr(rl, "fetch_apps_bulk", fake_bulk)
+
+    await _add_game("app9", "并发游戏", ios_track_id="999")
+    async with AsyncSessionLocal() as db:   # 预置一行 = 模拟并发先落
+        db.add(GameRegionRelease(app_id="app9", country="us", release_date="2000-01-01"))
+        await db.commit()
+
+    out = await rl.sync_region_launches(storefronts=["us"])   # 不应抛 IntegrityError
+    assert out == {"games": 1, "storefronts": 1, "rows": 1}
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(select(GameRegionRelease))).scalars().all()
+    assert len(rows) == 1                        # 仍 1 行（upsert 覆盖、不新增）
+    assert rows[0].release_date == "2024-05-05"  # 覆盖成最新值
+
+
+@pytest.mark.asyncio
 async def test_sync_noop_mock_and_no_trackid(app, monkeypatch):
     """USE_MOCK_DATA → no-op；非 mock 但无可用 trackId（GP 包名）→ 直接返回、不打 iTunes。"""
     from app.config import settings
