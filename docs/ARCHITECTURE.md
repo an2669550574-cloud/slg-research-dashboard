@@ -176,6 +176,17 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 - **跨 combo「📌 今日要闻」置顶**（`build_highlight_lines` + `_highlight_line`）：`_collect_scored_items` 收全 combo 的 movement + 三类新品（下载榜只算 is_slg=True，与推送门控一致；回归项已滤）→ 取重要度 Top `DIGEST_HIGHLIGHTS_TOPN`（默认 5）→ 内联市场标签的紧凑行，放 TL;DR 之后、combo 段之前。**仅当全卡事件数 > TOPN 才渲染**（小卡本身已短、置顶会与正文重复）。覆盖面**仅 ranking 派生的 per-combo 竞品事件**——版本/新区/视频/待建档是各自独立的全局段（本就不受地理顺序挤压），不纳入要闻。
 - 入参 `per_combo` 不被 mutate（排序走副本，`test_digest_does_not_mutate_input_order`）；常态下排序与现地理顺序几乎一致（US→JP→KR、iOS→安卓），只有次市场冒大事件才上浮，低惊扰。
 
+### 领导群 / 维护者群双卡分发 + markdown 转义（PR #137）
+
+**命题**：digest 当前发「测试群」（仅维护者本人）；推到**有领导的群**前，得先把「受众 + 可信度」做扎实——否则待建档/微信重登等维护者杂讯会直接进领导群，且 ST 原始游戏名某天带 `[Beta]`/`*` 就破版。这是 44-agent 审查（见 git 历史的 `digest-leader-push-audit` workflow）判定的 P0 最小集。
+
+- **双 target 路由**（`services/dingtalk.py`）：`maintainer`（默认，= 测试群/运维群）+ `leader`（领导群）。`_target_fields(target)` 选 url/secret/label；leader 未独立配（`DINGTALK_WEBHOOK_URL_LEADER` 空）时**回退 maintainer**（任意调用方不报错），但 `leader_target_configured()` 严格判（只看 leader url 是否配），digest 双发据此决定是否真发领导卡——**未配就不发，不把领导版重发进维护者群**。`is_enabled` / `_signed_url` / `_post_payload` / `send_markdown` / `send_action_card` 全加 `target` 透传，默认 `maintainer` 向后兼容。
+- **受众剥离双渲染**（`build_daily_digest(audience=)`）：同一份检测数据渲染两遍（**零额外 ST/查询**，`send_daily_digest` 内 `_render('maintainer')` + `_render('leader')`）。leader 卡剥离维护者杂讯：跳过「待建档新厂线索」整段、新品行不拼「建议建档」尾标（`build_newcomer_lines(lead_cta=False)`）、TL;DR 不计「待建档 N」。领导卡只剩竞品/市场情报（异动 + 新品 + 下载榜 SLG + 版本 + 新区 + 视频 + 今日要闻）。
+- **维护者杂讯钉死 maintainer**：微信重登提醒（含 ssh 重扫码指令）+ 商店雷达 send 显式 `target="maintainer"`——运维/自检类永不进领导群。
+- **主卡失败升 Sentry**（`critical=True`）：digest 主卡是「每日必达」，终态失败（errcode 拒绝 / 网络异常）打 `logger.error` → Sentry，让维护者立刻补；旁路告警（微信/雷达）维持 `warning` 不刷屏。把「静默丢卡 = 信任无声流失」变成「被叫醒补」。
+- **markdown 转义**（`_md_name(s, maxlen=32)`）：折叠空白 + 超长截断 + 方括号→圆括号（防 `名](url` 误成链接）+ 转义 `* _ \\` `` ` `` `~`（防加粗错位/代码块），套到所有 markdown **正文文本**名字插值位（movement / 三类新品 / 待建档 / 版本 / 视频 / 新区 / 今日要闻 / 商店雷达 / `_meta_inner` 厂商）。ActionCard 按钮 title 是纯文本不过它；`[锚文本](url)` 文章标题另有 sanitize（只括号替换）。
+- **上线开关**：HK `backend/.env` 配 `DINGTALK_WEBHOOK_URL_LEADER`（+ `DINGTALK_SECRET_LEADER` / `DINGTALK_WEBHOOK_LABEL_LEADER`，**敏感不进 git**）→ `compose --env-file .env up -d backend` 重读即生效；不配 = 维持单卡单群（向后兼容）。
+
 ### 新厂商线索 CTA（PR #104）
 
 digest 里 `is_slg=false` 的市场新面孔，经忽略名单过滤后多是**真·未识别厂商线索**而非噪声。`build_newcomer_lines` 给这类行升级文案（带「建议建档」行动指引）并**行内附商店页直达**（`_store_url` 拼不出则只留文案）——底部 ActionCard 按钮全局封顶 5、每 combo 仅 1 条，线索未必挤得进，行内链接保证每条都有「立即去看」入口。已归属主体的厂商新品行不打 CTA。
