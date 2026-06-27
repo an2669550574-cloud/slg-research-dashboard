@@ -53,7 +53,8 @@ async def list_products(db: AsyncSession = Depends(get_db)):
 
 @router.post("/", response_model=OwnProductOut, status_code=201)
 async def create_product(data: OwnProductCreate, db: AsyncSession = Depends(get_db)):
-    p = OwnProduct(name=data.name, brief=data.brief, is_default=data.is_default)
+    p = OwnProduct(name=data.name, brief=data.brief,
+                   match_keywords=data.match_keywords, is_default=data.is_default)
     db.add(p)
     await db.flush()  # 拿到 p.id 再收敛其它默认
     if p.is_default:

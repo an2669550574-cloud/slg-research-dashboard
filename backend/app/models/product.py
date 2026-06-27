@@ -17,6 +17,10 @@ class OwnProduct(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
     brief: Mapped[str] = mapped_column(Text)
+    # 「对标我方哪款」匹配关键词：逗号分隔的题材/玩法词（如「丧尸,末日,survival,zombie」）。
+    # digest 用它对竞品名 + LLM 中文摘要做纯本地小写子串匹配，命中给该竞品行打「⚔️ 对标《本品》」。
+    # 空/None = 该产品不参与对标匹配。挑**区分度高**的词（避免「war」这类泛词全命中）。
+    match_keywords: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     # 创意迁移面板打开时默认带入这条。全表至多一条为 True（写入时互斥）。
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
