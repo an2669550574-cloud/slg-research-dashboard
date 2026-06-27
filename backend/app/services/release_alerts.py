@@ -343,7 +343,8 @@ def build_newcomer_lines(market: dict, publisher: dict,
                          entities: Optional[dict] = None,
                          country: Optional[str] = None,
                          platform: Optional[str] = None,
-                         summaries: Optional[dict] = None) -> list[str]:
+                         summaries: Optional[dict] = None,
+                         lead_cta: bool = True) -> list[str]:
     """两层新品检测 → 人读行。
     enrich: {app_id: {genre, price, release_date}}
     articles: {app_id: [WechatArticle]} 微信公众号文章
@@ -351,6 +352,8 @@ def build_newcomer_lines(market: dict, publisher: dict,
     summaries: {app_id: 一句话中文摘要} —— LLM 中文化，让领导一眼看懂「这是什么游戏」
     country/platform: 该 combo 的市场坐标，用于给「新厂商待识别」线索行内拼商店页直达
     （缺省 None = 不拼链接，向后兼容老调用 / 单测）。
+    lead_cta: is_slg=false 线索行是否带「建议建档」尾标 + 商店页直达。默认 True（维护者卡）；
+    领导卡传 False——「建档」是维护者动作、对领导是杂讯，剥掉后该行退回纯「新对手上架」。
 
     **回归过滤**：`is_reentry=True` 的项不进 digest（老游戏跌出 baseline 又回来，
     标"新品"是误导）。is_reentry 字段在 no_baseline combo 里缺省，缺省 = False
@@ -364,9 +367,9 @@ def build_newcomer_lines(market: dict, publisher: dict,
     market_real = [n for n in (market.get("newcomers") or []) if not n.get("is_reentry")]
     for n in market_real[:10]:
         aid = n.get("app_id")
-        is_lead = not n.get("is_slg")
-        # #99 忽略名单过滤后，is_slg=false 多是「真新厂商线索」而非噪声——升级文案带
-        # 行动指引（建议建档）+ 行内商店页直达（底部按钮封顶 5、每 combo 1 条，挤不进）。
+        # #99 忽略名单过滤后，is_slg=false 多是「真新厂商线索」而非噪声——维护者卡升级文案带
+        # 行动指引（建议建档）+ 行内商店页直达；领导卡 lead_cta=False 剥掉这套维护者动作。
+        is_lead = (not n.get("is_slg")) and lead_cta
         tag = "  ⚠️ 新厂商待识别 · 建议建档" if is_lead else ""
         en = enrich.get(aid) or {}
         inner = _meta_inner(genre=en.get("genre"), revenue=n.get("revenue"),
@@ -643,13 +646,18 @@ def build_daily_digest(per_combo: list[dict], today: str,
                        video_items: Optional[list[dict]] = None,
                        region_changes: Optional[list[dict]] = None,
                        summaries: Optional[dict] = None,
-                       lead_items: Optional[list[dict]] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
+                       lead_items: Optional[list[dict]] = None,
+                       audience: str = "maintainer") -> Optional[tuple[str, str, list[tuple[str, str]]]]:
     """全 combo 检测结果 → (title, markdown, btns)。全空 → None（不发）。
 
     per_combo: [{country, platform, movement: dict|None, market: dict|None, publisher: dict|None}]
     articles: {app_id: [WechatArticle]} 微信公众号文章（按 app_id 聚合）
     entities: {app_id: 中文厂商主体}（市场新面孔 / 异动行补中文归属）
+    audience: "maintainer"（默认，全量卡）/ "leader"（领导卡）。领导卡剥离维护者杂讯：
+    跳过「待建档新厂线索」整段、新品行不拼「建议建档」尾标、TL;DR 不计「待建档 N」。
+    检测数据两个 audience 共用一份（send_daily_digest 渲染两遍），零额外 ST。
     """
+    is_leader = audience == "leader"
     sections: list[str] = []
     cap = settings.DIGEST_MAX_ITEMS
     mv_cap = settings.DIGEST_MOVEMENT_TOPN
@@ -664,7 +672,8 @@ def build_daily_digest(per_combo: list[dict], today: str,
         nc_blocks = (build_newcomer_lines(c.get("market") or {}, c.get("publisher") or {},
                                           enrich=c.get("enrich"), articles=articles,
                                           entities=entities, summaries=summaries,
-                                          country=c["country"], platform=c["platform"])
+                                          country=c["country"], platform=c["platform"],
+                                          lead_cta=not is_leader)
                      if (c.get("market") or c.get("publisher")) else [])
         # 下载榜新品（ADR 0001 切片 2）：只推 is_slg=True，⬇️ 段单列。
         free_blocks = (build_free_newcomer_lines(c.get("free_market") or {},
@@ -709,9 +718,10 @@ def build_daily_digest(per_combo: list[dict], today: str,
             total += len(video_items)
             sections.append("【新品实机视频】\n\n" + "\n\n".join(vid_lines))
     # 全局「待建档新厂线索」段（方案①）：下载榜 is_slg=false（白名单未收录）但
-    # genre=Strategy 的新品，单列给维护者核查建档——补救白名单滞后导致的漏推（领导端
-    # 的「下载榜新品 · SLG」段仍只推已确认 SLG，这段标注清楚是「待核查线索」不混淆）。
-    if lead_items:
+    # genre=Strategy 的新品，单列给**维护者**核查建档——补救白名单滞后导致的漏推。
+    # **领导卡跳过整段**（建档是维护者动作、对领导是杂讯）；领导卡的「下载榜新品 · SLG」
+    # 段仍只推已确认 SLG，不混淆。
+    if lead_items and not is_leader:
         lead_lines = build_lead_newcomer_lines(lead_items)
         if lead_lines:
             total += len(lead_lines)
@@ -721,7 +731,9 @@ def build_daily_digest(per_combo: list[dict], today: str,
     if not sections:
         return None
     head = f"### 📡 SLG 每日情报 · {today}"
-    tldr = _digest_tldr(per_combo, version_changes, region_changes, video_items, lead_items)
+    # 领导卡 TL;DR 不计「待建档 N」（那段已剥离）。
+    tldr = _digest_tldr(per_combo, version_changes, region_changes, video_items,
+                        None if is_leader else lead_items)
     # 「今日要闻」跨 combo 置顶：全卡最高重要度的事件抽出来放最前，保证核心市场大事件
     # 不被次市场长尾折叠挤掉、领导一眼抓重点（事件数 ≤ TOPN 时不渲染，避免与正文重复）。
     hi_lines = build_highlight_lines(per_combo, settings.DIGEST_HIGHLIGHTS_TOPN)
@@ -771,7 +783,8 @@ async def send_daily_digest() -> bool:
         await translate_pending_newcomers()
     except Exception:
         logger.exception("Newcomer translate (in digest) crashed")
-    if not dingtalk.is_enabled():
+    # 维护者群或领导群任一配了 webhook 就跑（两群独立，不因没配 maintainer 就漏发领导卡）。
+    if not (dingtalk.is_enabled() or dingtalk.leader_target_configured()):
         return False
     from app.services.movement import detect_movement
     from app.services.newcomers import (
@@ -955,15 +968,31 @@ async def send_daily_digest() -> bool:
     except Exception:
         logger.exception("Lead newcomer candidates (digest) failed")
 
-    msg = build_daily_digest(per_combo, today, articles=articles_by_app,
-                             entities=entities_by_app, version_changes=version_changes,
-                             video_items=video_items, region_changes=region_changes,
-                             summaries=summaries_by_app, lead_items=lead_items)
-    if msg is None:
+    # 同一份检测数据渲染两遍（零额外 ST/查询），分发两个群：
+    # - maintainer 卡（全量，含待建档/视频/建档 CTA）→ 维护者群，永远发。
+    # - leader 卡（剥离维护者杂讯）→ 领导群，**仅当独立配了 leader webhook** 才发
+    #   （未配则只发 maintainer，维持今天的单卡行为，不把领导版卡重发进维护者群）。
+    # critical=True：主卡是「每日必达」，终态失败升 Sentry ERROR 让维护者立刻补。
+    def _render(audience):
+        return build_daily_digest(per_combo, today, articles=articles_by_app,
+                                  entities=entities_by_app, version_changes=version_changes,
+                                  video_items=video_items, region_changes=region_changes,
+                                  summaries=summaries_by_app, lead_items=lead_items,
+                                  audience=audience)
+
+    sent_any = False
+    msg_m = _render("maintainer")
+    if msg_m is None:
         logger.info("daily digest: nothing to report for %s", today)
-        return False
-    title, text, btns = msg
-    return await dingtalk.send_action_card(title, text, btns)
+    else:
+        sent_any = await dingtalk.send_action_card(*msg_m, target="maintainer",
+                                                   critical=True) or sent_any
+    if dingtalk.leader_target_configured():
+        msg_l = _render("leader")
+        if msg_l is not None:
+            sent_any = await dingtalk.send_action_card(*msg_l, target="leader",
+                                                       critical=True) or sent_any
+    return sent_any
 
 
 # ── 微信公众号登录过期提醒 ─────────────────────────────────────────────────
@@ -1003,7 +1032,8 @@ async def alert_wechat_login_if_needed() -> bool:
     built = build_wechat_expiry_alert(status, time.time(), settings.WECHAT_EXPIRY_WARN_DAYS)
     if not built:
         return False
-    return await dingtalk.send_markdown(*built)
+    # 维护者运维提醒（含 ssh 重扫码指令）——钉死 maintainer 群，永不进领导群。
+    return await dingtalk.send_markdown(*built, target="maintainer")
 
 
 # ── 应用商店雷达（iOS + GP 清单 diff，每轮检出即推） ────────────────────────
@@ -1096,4 +1126,5 @@ async def alert_appstore_releases(
     if msg is None:
         return False
     title, text, btns = msg
-    return await dingtalk.send_action_card(title, text, btns)
+    # 商店雷达是维护者向（厂商建档线索、软启动信号）——钉死 maintainer 群，不进领导群。
+    return await dingtalk.send_action_card(title, text, btns, target="maintainer")
