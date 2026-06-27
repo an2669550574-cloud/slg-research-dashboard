@@ -462,3 +462,135 @@ async def test_send_daily_digest_lead_section_filters_by_genre(client, monkeypat
     assert "待建档新厂线索" in text
     assert "warz_new" in text          # is_slg=false + Strategy → 浮现给维护者
     assert "puzzle_new" not in text    # genre 初筛压掉休闲噪声
+
+
+# ── 重要度排序（统一打分喂 排序 / 全局封顶 / movement TopN / 按钮 / 今日要闻）──────
+
+def test_digest_importance_event_score_ordering():
+    """打分相对序拍定：高名次收入异动 > 头部空降/市场新品 > 大幅窜升 > 榜尾长尾空降/跌出。"""
+    from app.services.release_alerts import _event_score
+    big_rev = _event_score("revenue_spike", {"cur_rank": 2, "pct": 200})
+    top_new = _event_score("new_entrant", {"cur_rank": 1, "prev_rank": None})
+    big_surge = _event_score("surge", {"prev_rank": 40, "cur_rank": 5})
+    tail_new = _event_score("new_entrant", {"cur_rank": 49, "prev_rank": None})
+    tail_drop = _event_score("drop", {"prev_rank": 48, "cur_rank": None})
+    assert big_rev > top_new > big_surge > tail_new > tail_drop
+
+
+def test_digest_importance_market_weight_is_gentle_tilt():
+    """市场权重只做轻微倾斜：同事件 US > KR，但**不能**把事件强度整个吃掉——KR 的 #1
+    空降必须仍压过 US 的 #45 长尾空降（否则今日要闻会被核心市场榜尾占满）。"""
+    from app.services.release_alerts import _event_score, _market_weight
+    us_tail = _event_score("new_entrant", {"cur_rank": 45, "prev_rank": None}) * _market_weight("US", "ios")
+    kr_top = _event_score("new_entrant", {"cur_rank": 1, "prev_rank": None}) * _market_weight("KR", "ios")
+    us_top = _event_score("new_entrant", {"cur_rank": 1, "prev_rank": None}) * _market_weight("US", "ios")
+    assert kr_top > us_tail          # 次市场大事件压过核心市场长尾
+    assert us_top > kr_top           # 同强度事件 US 仍微微领先
+
+
+def test_digest_movement_cap_keeps_high_importance(monkeypatch):
+    """movement TopN 砍尾按重要度而非类序：末类的大额收入异动不被前类的榜尾长尾挤掉。"""
+    from app.services.release_alerts import build_movement_lines
+    monkeypatch.setattr("app.config.settings.DIGEST_MOVEMENT_TOPN", 2, raising=False)
+    movement = {
+        "new_entrants": [{"app_id": str(i), "name": f"长尾{i}", "prev_rank": None, "cur_rank": 45 + i}
+                         for i in range(3)],
+        "surges": [], "drops": [],
+        "revenue_spikes": [{"app_id": "big", "name": "头部巨鳄", "cur_rank": 2,
+                            "prev_revenue": 1_000_000, "cur_revenue": 3_000_000, "pct": 200.0}],
+    }
+    lines = build_movement_lines(movement, cap=2)
+    text = "\n".join(lines)
+    assert "头部巨鳄" in text                      # 末类大额收入异动保住
+    assert lines[0].startswith("💰")               # 且排第一（重要度降序）
+    assert "长尾2" not in text                      # 最弱长尾被砍
+
+
+def test_digest_global_cap_never_drops_core_market(monkeypatch):
+    """全局封顶按 combo 重要度（市场权重为主）砍：核心 US/iOS 永远保留，被折叠的是次市场。
+    即便次市场 combo 在入参里排在 US 前面（地理顺序乱序），也不影响。"""
+    from app.services import release_alerts as ra
+    monkeypatch.setattr("app.config.settings.DIGEST_MAX_ITEMS", 1, raising=False)
+    def mk(aid, name, rank):
+        return {"newcomers": [{"app_id": aid, "rank": rank, "name": name,
+                               "publisher": "P", "is_slg": True, "is_reentry": False}]}
+    per_combo = [
+        {"country": "KR", "platform": "ios", "movement": None, "market": mk("k", "韩新品", 3), "publisher": None},
+        {"country": "US", "platform": "ios", "movement": None, "market": mk("u", "美新品", 3), "publisher": None},
+    ]
+    _, text, _ = ra.build_daily_digest(per_combo, "2026-06-28")
+    assert "美新品" in text                          # 核心市场保留
+    assert "韩新品" not in text                       # 次市场被全局封顶折叠
+    assert "另有 **1** 项未在此展示" in text
+
+
+def test_digest_highlights_section_pins_top_events_cross_combo():
+    """今日要闻：跨 combo 抽最高重要度事件置顶，事件数 > TOPN 时才渲染。"""
+    from app.services import release_alerts as ra
+    us_mv = {
+        "new_entrants": [{"app_id": str(i), "name": f"小新{i}", "prev_rank": None, "cur_rank": 45 + i}
+                         for i in range(5)],
+        "surges": [], "drops": [],
+        "revenue_spikes": [{"app_id": "big", "name": "头部巨鳄", "cur_rank": 2,
+                            "prev_revenue": 1_000_000, "cur_revenue": 3_000_000, "pct": 200.0}],
+    }
+    kr_mv = {"new_entrants": [{"app_id": "kr1", "name": "韩区爆款", "prev_rank": None, "cur_rank": 1}],
+             "surges": [], "drops": [], "revenue_spikes": []}
+    per_combo = [
+        {"country": "KR", "platform": "ios", "movement": kr_mv, "market": None, "publisher": None},
+        {"country": "US", "platform": "ios", "movement": us_mv, "market": None, "publisher": None},
+    ]
+    _, text, _ = ra.build_daily_digest(per_combo, "2026-06-28")
+    assert "【📌 今日要闻】" in text
+    hi = text.split("【📌 今日要闻】")[1].split("---")[0]
+    # 头部收入异动第一、韩区 #1 爆款第二（跨 combo），均压过 US 榜尾长尾
+    assert hi.index("头部巨鳄") < hi.index("韩区爆款") < hi.index("小新0")
+    assert "🇰🇷 韩国 · iOS 🆕 **韩区爆款**" in hi   # 要闻行内联市场标签
+
+
+def test_digest_highlights_skipped_when_few_items():
+    """事件数 ≤ TOPN（小卡）→ 不渲染今日要闻，避免与正文重复。"""
+    from app.services import release_alerts as ra
+    movement = {"new_entrants": [{"app_id": "1", "name": "唯一新进", "prev_rank": None, "cur_rank": 3}],
+                "surges": [], "drops": [], "revenue_spikes": []}
+    per_combo = [{"country": "US", "platform": "ios", "movement": movement,
+                  "market": None, "publisher": None}]
+    _, text, _ = ra.build_daily_digest(per_combo, "2026-06-28")
+    assert "今日要闻" not in text
+    assert "唯一新进" in text                         # 正文照常
+
+
+def test_digest_buttons_ranked_by_importance(monkeypatch):
+    """按钮全局按重要度取头部新品：次市场高名次新品能挤进 5 名额，不再被地理顺序锁死。
+    构造 6 个市场新品（5 个 US 低名次 + 1 个 KR 高名次），KR 高名次必入按钮。"""
+    from app.services import release_alerts as ra
+    monkeypatch.setattr("app.config.settings.DASHBOARD_BASE_URL",
+                        "https://board.example.com", raising=False)
+    def us_mk(i):
+        return {"newcomers": [{"app_id": f"us{i}", "rank": 40 + i, "name": f"美新{i}",
+                               "publisher": "P", "is_slg": True, "is_reentry": False}]}
+    kr = {"newcomers": [{"app_id": "kr_top", "rank": 1, "name": "韩区头部新品",
+                         "publisher": "P", "is_slg": True, "is_reentry": False}]}
+    per_combo = [{"country": "US", "platform": "ios", "movement": None,
+                  "market": us_mk(i), "publisher": None} for i in range(5)]
+    per_combo.append({"country": "KR", "platform": "ios", "movement": None,
+                      "market": kr, "publisher": None})
+    _, _, btns = ra.build_daily_digest(per_combo, "2026-06-28")
+    assert len(btns) == 5
+    labels = [b[0] for b in btns]
+    assert "韩区头部新品 →" in labels                # 高名次次市场新品挤进名额
+    assert btns[0][0] == "韩区头部新品 →"            # 且排第一（重要度最高）
+
+
+def test_digest_does_not_mutate_input_order():
+    """build_daily_digest 内部排序用副本，不 mutate 入参 per_combo 顺序。"""
+    from app.services import release_alerts as ra
+    def mk(aid, name):
+        return {"newcomers": [{"app_id": aid, "rank": 3, "name": name,
+                               "publisher": "P", "is_slg": True, "is_reentry": False}]}
+    per_combo = [
+        {"country": "KR", "platform": "ios", "movement": None, "market": mk("k", "韩"), "publisher": None},
+        {"country": "US", "platform": "ios", "movement": None, "market": mk("u", "美"), "publisher": None},
+    ]
+    ra.build_daily_digest(per_combo, "2026-06-28")
+    assert [c["country"] for c in per_combo] == ["KR", "US"]   # 入参顺序不变

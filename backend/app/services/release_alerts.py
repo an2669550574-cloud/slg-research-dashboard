@@ -151,36 +151,99 @@ def _link_line(app_id: str, view: str, *, country=None, platform=None,
     return line
 
 
+# ── 重要度打分（统一喂给 排序 / 全局封顶 / movement TopN / 按钮 / 今日要闻 五处）──
+# 此前这五处一律按 sync_combos_list 的**地理顺序**砍尾：次市场长尾能把核心市场的大
+# 事件（头部空降、高名次收入异动）挤出卡片或按钮折叠。改成统一打分「市场权重 × 事件
+# 强度」喂这五处——让最值得领导看的事件无论落在哪个 combo 都优先保留 + 置顶「今日要闻」。
+#
+# 权重是**产品判断**（无标注 ground truth）：美国是主市场（SLG 收入大盘）、iOS 收入盘子
+# 略大于安卓。常态下该排序与现有地理顺序几乎一致（US→JP→KR、iOS→安卓），只有次市场冒出
+# 真·大事件时才上浮——低惊扰。漏配市场/平台回退 1.0。
+#
+# 刻意**压窄区间**（1.0~1.5）：市场权重只做「轻微倾斜」，不能把事件强度（#1 空降 vs #45
+# 长尾、+200% 收入异动 vs 微动）整个吃掉——否则「今日要闻」会被核心市场的榜尾长尾占满、
+# 真·大事件反而沉底。而「核心 combo 永不被全局封顶挤掉」由 `_combo_sort_key` 的**主键**
+# （市场权重，只需 US>次市场、与量级无关）保证，与此处区间大小解耦。
+_MARKET_WEIGHT = {"us": 1.5, "cn": 1.2, "jp": 1.15, "kr": 1.1, "tw": 1.05, "de": 1.05, "gb": 1.05}
+_PLATFORM_WEIGHT = {"ios": 1.0, "android": 0.9}
+# movement 四类 → (kind, summary 字段名)，多处复用（行渲染排序 / 今日要闻收集）。
+_MOVEMENT_KINDS = (("new_entrant", "new_entrants"), ("surge", "surges"),
+                   ("drop", "drops"), ("revenue_spike", "revenue_spikes"))
+
+
+def _market_weight(country: str, platform: str) -> float:
+    return (_MARKET_WEIGHT.get((country or "").lower(), 1.0)
+            * _PLATFORM_WEIGHT.get((platform or "").lower(), 1.0))
+
+
+def _rank_height(rank, topn: int = 50) -> float:
+    """名次「高度」0..1：越靠榜首越大（#1→~1.0，#topn→~0，榜外/缺省→0）。给「事件落点
+    多靠前」一个连续权重——领导更关心头部异动，榜尾抖动次要。"""
+    if not rank or rank <= 0:
+        return 0.0
+    return max(0.0, (topn - rank + 1) / topn)
+
+
+def _event_score(kind: str, e: dict) -> float:
+    """单事件「强度」分（不含市场权重，故可直接用于 combo 内 movement 排序）。分档拍定
+    后用真实样例校准过相对序：高名次收入异动 > 头部空降/市场新品 > 大幅窜升 > 榜尾长尾
+    空降/跌出（见 test_digest_importance_*）。缺字段一律退化为低分、不抛。"""
+    if kind == "new_entrant":
+        return 6 + 6 * _rank_height(e.get("cur_rank"))
+    if kind == "surge":
+        jump = max(0, (e.get("prev_rank") or 0) - (e.get("cur_rank") or 0))
+        return 3 + 4 * _rank_height(e.get("cur_rank")) + min(jump, 40) * 0.15
+    if kind == "drop":
+        return 2 + 4 * _rank_height(e.get("prev_rank"))
+    if kind == "revenue_spike":
+        return 5 + 5 * _rank_height(e.get("cur_rank")) + min(abs(e.get("pct") or 0), 200) * 0.04
+    if kind == "market_newcomer":
+        return 6 + 6 * _rank_height(e.get("rank"))
+    if kind == "free_newcomer":
+        return 4 + 5 * _rank_height(e.get("rank"))
+    if kind == "publisher_newcomer":
+        return 4 + 4 * _rank_height(e.get("rank"), topn=settings.PUBLISHER_NEWCOMER_TOPN)
+    return 1.0
+
+
 # ── 每日情报汇总（竞品异动 + 两层新品，全 combo 一条） ─────────────────────
 
 def build_movement_lines(s: dict, entities: Optional[dict] = None,
                          cap: Optional[int] = None) -> list[str]:
-    """movement 摘要 → 人读行。与 Sentry 的 [NEW]/[UP] 机器码刻意分离。
+    """movement 摘要 → 人读行，**按重要度降序**（同分稳定保序）。与 Sentry 的
+    [NEW]/[UP] 机器码刻意分离。
     entities: {app_id: 中文厂商主体} —— 给每条补「日收入 · 下载 · 厂商归属」子行。
-    cap: 单 combo 展示行上限（按 空降/窜升/暴跌/收入异动 顺序保留前 cap 条，
-    砍掉重要性较低的尾部），None=不限。"""
+    cap: 单 combo 展示行上限（按 `_event_score` 砍掉重要性较低的尾部，不再按
+    空降/窜升/暴跌/收入异动 的固定类序砍——否则末类的大额收入异动会被前类长尾挤掉），
+    None=不限。combo 内市场权重恒定，故只按事件强度排序即与全卡口径一致。"""
     entities = entities or {}
 
     def _meta(e):
         return _meta_line(revenue=e.get("revenue"), downloads=e.get("downloads"),
                           entity=entities.get(e.get("app_id")) or e.get("publisher"))
 
-    lines = []
+    scored: list[tuple[float, str]] = []
     for e in s["new_entrants"]:
         frm = "榜外" if e["prev_rank"] is None else f"#{e['prev_rank']}"
-        lines.append(f"🆕 **{e['name']}** 空降 **#{e['cur_rank']}**（{frm} →）" + _meta(e))
+        scored.append((_event_score("new_entrant", e),
+                       f"🆕 **{e['name']}** 空降 **#{e['cur_rank']}**（{frm} →）" + _meta(e)))
     for e in s["surges"]:
-        lines.append(f"📈 **{e['name']}** #{e['prev_rank']} → **#{e['cur_rank']}**（↑{e['prev_rank'] - e['cur_rank']}）" + _meta(e))
+        scored.append((_event_score("surge", e),
+                       f"📈 **{e['name']}** #{e['prev_rank']} → **#{e['cur_rank']}**（↑{e['prev_rank'] - e['cur_rank']}）" + _meta(e)))
     for e in s["drops"]:
         to = "榜外" if e["cur_rank"] is None else f"#{e['cur_rank']}"
-        lines.append(f"📉 **{e['name']}** 跌出 Top 榜（#{e['prev_rank']} → {to}）" + _meta(e))
+        scored.append((_event_score("drop", e),
+                       f"📉 **{e['name']}** 跌出 Top 榜（#{e['prev_rank']} → {to}）" + _meta(e)))
     for e in s["revenue_spikes"]:
         # 收入异动主行已带前后金额，厂商归属**内联行尾**（不另起引用块——否则子行只剩
         # 孤零零一个厂商，跟在折行的主行后面很飘）。
         ent = entities.get(e.get("app_id")) or e.get("publisher")
         rk = f"现 #{e['cur_rank']} · " if e.get("cur_rank") else ""  # 收入涨跌的排名参照系
         tail = f" · 厂商 {ent}" if ent else ""
-        lines.append(f"💰 **{e['name']}** {rk}收入 **{e['pct']:+.0f}%**（{_fmt_money(e['prev_revenue'])} → {_fmt_money(e['cur_revenue'])}）{tail}")
+        scored.append((_event_score("revenue_spike", e),
+                       f"💰 **{e['name']}** {rk}收入 **{e['pct']:+.0f}%**（{_fmt_money(e['prev_revenue'])} → {_fmt_money(e['cur_revenue'])}）{tail}"))
+    scored.sort(key=lambda x: x[0], reverse=True)   # 稳定排序：同分保持类内原序
+    lines = [ln for _, ln in scored]
     return lines[:cap] if cap else lines
 
 
@@ -446,6 +509,114 @@ def _digest_tldr(per_combo: list[dict], version_changes, region_changes,
     return " · ".join(bits)
 
 
+def _collect_scored_items(per_combo: list[dict]) -> list[tuple[float, dict]]:
+    """全 combo 的可置顶事件 → [(score, item)] 按 score 降序。score = 事件强度 × 市场
+    权重；item = {kind, e, country, platform}，供「今日要闻」渲染与按钮排序复用。
+    回归项（is_reentry）已过滤；下载榜只算 is_slg=True（与 build_free_newcomer_lines
+    推送门控一致）。这是「五处共用一个打分函数」里跨 combo 的那份。"""
+    from app.services.slg_publishers import is_slg
+    out: list[tuple[float, dict]] = []
+
+    def add(kind, e, country, platform):
+        out.append((_event_score(kind, e) * _market_weight(country, platform),
+                    {"kind": kind, "e": e, "country": country, "platform": platform}))
+
+    for c in per_combo:
+        country, platform = c["country"], c["platform"]
+        mv = c.get("movement") or {}
+        for kind, key in _MOVEMENT_KINDS:
+            for e in mv.get(key) or []:
+                add(kind, e, country, platform)
+        for e in (c.get("market") or {}).get("newcomers") or []:
+            if not e.get("is_reentry"):
+                add("market_newcomer", e, country, platform)
+        for e in (c.get("publisher") or {}).get("newcomers") or []:
+            if not e.get("is_reentry"):
+                add("publisher_newcomer", e, country, platform)
+        for key in ("free_market", "free_publisher"):
+            for e in (c.get(key) or {}).get("newcomers") or []:
+                if e.get("is_reentry"):
+                    continue
+                slg = e.get("is_slg") if key == "free_market" else is_slg(e.get("app_id"), e.get("publisher"))
+                if slg:
+                    add("free_newcomer", e, country, platform)
+    out.sort(key=lambda x: x[0], reverse=True)
+    return out
+
+
+def _highlight_line(item: dict) -> str:
+    """「今日要闻」的一行紧凑摘要：跨 combo 置顶，故**内联市场标签**、去富化子行/链接，
+    一眼看清「哪个市场、什么游戏、什么事」。"""
+    e = item["e"]
+    mkt = _market_label(item["country"], item["platform"])
+    kind = item["kind"]
+    if kind == "new_entrant":
+        return f"{mkt} 🆕 **{e['name']}** 空降 #{e['cur_rank']}"
+    if kind == "surge":
+        return f"{mkt} 📈 **{e['name']}** #{e['prev_rank']} → #{e['cur_rank']}"
+    if kind == "drop":
+        to = "榜外" if e.get("cur_rank") is None else f"#{e['cur_rank']}"
+        return f"{mkt} 📉 **{e['name']}** 跌出 Top（#{e['prev_rank']} → {to}）"
+    if kind == "revenue_spike":
+        rk = f"#{e['cur_rank']} · " if e.get("cur_rank") else ""
+        return f"{mkt} 💰 **{e['name']}** {rk}收入 {e['pct']:+.0f}%"
+    # 三类新品（market / publisher / free）：厂商新品用 entity_name，其余用 name
+    nm = e.get("name") or e.get("entity_name") or "—"
+    rk = f" #{e['rank']}" if e.get("rank") else ""
+    return f"{mkt} ✨ **{nm}**{rk}"
+
+
+def build_highlight_lines(per_combo: list[dict], topn: int) -> list[str]:
+    """跨 combo「今日要闻」Top N（重要度置顶）。topn<=0 或事件数 ≤ topn → 返回 []
+    （小卡本身已短，置顶会和正文重复，没必要）。"""
+    if topn <= 0:
+        return []
+    scored = _collect_scored_items(per_combo)
+    if len(scored) <= topn:
+        return []
+    return [_highlight_line(item) for _, item in scored[:topn]]
+
+
+def _combo_sort_key(c: dict) -> tuple[float, float]:
+    """combo 排序键（降序）：市场权重为主、combo 内最高单项强度为辅。让核心市场（US/iOS）
+    稳居前列、永不被次市场长尾的全局封顶挤掉；同权重市场里有大事件的 combo 上浮。"""
+    mw = _market_weight(c.get("country", ""), c.get("platform", ""))
+    mv = c.get("movement") or {}
+    best = 0.0
+    for kind, key in _MOVEMENT_KINDS:
+        for e in mv.get(key) or []:
+            best = max(best, _event_score(kind, e))
+    for key in ("market", "publisher", "free_market", "free_publisher"):
+        for e in (c.get(key) or {}).get("newcomers") or []:
+            if e.get("is_reentry"):
+                continue
+            k = {"market": "market_newcomer", "publisher": "publisher_newcomer"}.get(key, "free_newcomer")
+            best = max(best, _event_score(k, e))
+    return (mw, best)
+
+
+def _ranked_newcomer_buttons(per_combo: list[dict]) -> list[tuple[str, str]]:
+    """商店按钮（最多 5）：全 combo 的市场/厂商新品按重要度排序取头部 → 看板深链。
+    此前按 combo 地理顺序各取头条，次市场的高价值新品永远排不进 5 个名额；改成全局
+    按 `_event_score × 市场权重` 排序。movement 不进按钮（异动老游戏看板新品页定位不到）。
+    未配 DASHBOARD_BASE_URL → 无深链 → 空列表（ActionCard 自动降级 markdown）。"""
+    cands: list[tuple[float, dict]] = []
+    for c in per_combo:
+        mw = _market_weight(c["country"], c["platform"])
+        for key, kind, view in (("market", "market_newcomer", "market"),
+                                 ("publisher", "publisher_newcomer", "publisher")):
+            for e in (c.get(key) or {}).get("newcomers") or []:
+                if not e.get("is_reentry") and e.get("app_id"):
+                    cands.append((_event_score(kind, e) * mw, {"e": e, "view": view}))
+    cands.sort(key=lambda x: x[0], reverse=True)
+    btns: list[tuple[str, str]] = []
+    for _, cand in cands:
+        url = _dashboard_focus_url(cand["e"].get("app_id", ""), cand["view"])
+        if url and len(btns) < 5 and all(b[1] != url for b in btns):
+            btns.append((f"{cand['e']['name']} →", url))
+    return btns
+
+
 def build_daily_digest(per_combo: list[dict], today: str,
                        articles: Optional[dict] = None,
                        entities: Optional[dict] = None,
@@ -461,13 +632,15 @@ def build_daily_digest(per_combo: list[dict], today: str,
     entities: {app_id: 中文厂商主体}（市场新面孔 / 异动行补中文归属）
     """
     sections: list[str] = []
-    btns: list[tuple[str, str]] = []
     cap = settings.DIGEST_MAX_ITEMS
     mv_cap = settings.DIGEST_MOVEMENT_TOPN
     total = 0      # 全部检出项（含未展示），进标题
     shown = 0      # 已渲染项，触发全局封顶
     overflow = 0   # 因封顶/movement 截断未展示的项，进折叠行（不静默丢）
-    for c in per_combo:
+    # combo 按重要度排序（市场权重为主）：全局封顶砍的是真·次要 combo，核心 US/iOS 永不
+    # 被次市场长尾挤折叠。原列表不变（不 mutate 入参），按钮另走全局重要度排序。
+    ordered = sorted(per_combo, key=_combo_sort_key, reverse=True)
+    for c in ordered:
         mv_all = build_movement_lines(c["movement"], entities=entities) if c.get("movement") else []
         nc_blocks = (build_newcomer_lines(c.get("market") or {}, c.get("publisher") or {},
                                           enrich=c.get("enrich"), articles=articles,
@@ -497,17 +670,6 @@ def build_daily_digest(per_combo: list[dict], today: str,
         if free_blocks:
             parts.append("【下载榜新品 · SLG】\n\n" + "\n\n".join(free_blocks))
         sections.append("\n\n".join(parts))
-        # 按钮：每 combo 取头条新品（市场 + 厂商各 1）→ **看板深链**（两端可达、手机也能点；
-        # 商店直链已在行内保留带 💻）。不取 movement——异动的老游戏不在看板新品页、深链定位
-        # 不到。未配 DASHBOARD_BASE_URL 则无按钮，ActionCard 自动降级 markdown。全局最多 5、去重。
-        for n, view in (
-                [(x, "market") for x in
-                 [m for m in ((c.get("market") or {}).get("newcomers") or []) if not m.get("is_reentry")][:1]]
-                + [(x, "publisher") for x in
-                   [m for m in ((c.get("publisher") or {}).get("newcomers") or []) if not m.get("is_reentry")][:1]]):
-            url = _dashboard_focus_url(n.get("app_id", ""), view)
-            if url and len(btns) < 5 and all(b[1] != url for b in btns):
-                btns.append((f"{n['name']} →", url))
     # 全局「版本更新」段（跨 combo，tracked iOS 竞品版本变更，ADR 0003 切片 B）。
     # 放 combo 段之后；纯版本更新日（无异动/新品）也能让 sections 非空、照常发卡。
     if version_changes:
@@ -541,7 +703,13 @@ def build_daily_digest(per_combo: list[dict], today: str,
         return None
     head = f"### 📡 SLG 每日情报 · {today}"
     tldr = _digest_tldr(per_combo, version_changes, region_changes, video_items, lead_items)
-    body = [head] + ([f"> {tldr}"] if tldr else []) + sections
+    # 「今日要闻」跨 combo 置顶：全卡最高重要度的事件抽出来放最前，保证核心市场大事件
+    # 不被次市场长尾折叠挤掉、领导一眼抓重点（事件数 ≤ TOPN 时不渲染，避免与正文重复）。
+    hi_lines = build_highlight_lines(per_combo, settings.DIGEST_HIGHLIGHTS_TOPN)
+    hi_section = ["【📌 今日要闻】\n\n" + "\n\n".join(hi_lines)] if hi_lines else []
+    body = [head] + ([f"> {tldr}"] if tldr else []) + hi_section + sections
+    # 按钮按全局重要度排序取头部新品（不再按 combo 地理顺序各取头条挤名额）。
+    btns = _ranked_newcomer_buttons(per_combo)
     if overflow:
         # 配了看板基址就把「看板查看全部」做成深链（落到新品页），否则纯文案。
         base = (settings.DASHBOARD_BASE_URL or "").rstrip("/")
