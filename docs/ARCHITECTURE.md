@@ -162,7 +162,7 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 - **底部 ActionCard 按钮**：从商店直链改 **看板深链**（`_dashboard_focus_url`，两端可达、手机也能点），只取头条新品——movement 异动老游戏不在看板新品页、深链定位不到，不进按钮；商店直链在行内保留带 💻（不丢电脑端入口）。未配 `DASHBOARD_BASE_URL` 则无按钮，ActionCard 降级 markdown。
 - **连锁限制**：看板详情页里的国外资源（商店截图 mzstatic 图床 / YouTube 视频）手机端在看板内也可能加载不全；手机端保得住的是看板**自有文字情报**（中文摘要 / 收入 / 名次 / 版本 / 厂商归属），视频「播放」本质要客户端能访问 YouTube，无解、只能电脑端。
 
-代码集中在 `build_daily_digest` 拼装层 + `_block` / `_meta_inner` / `_link_line` / `_digest_tldr` helper（`services/release_alerts.py`）。**digest backlog（Workflow 6 维审查挖出、未做）**：⭐补「对标我方哪款」决策锚点（全链路只有 name/rank/revenue，无「该竞品对标我方哪款」=最大决策缺口）、全局段统一封顶预算、emoji 收敛、游戏名 markdown 转义。受众拆领导卡/维护者卡 + 推送时点前移 = 依赖推领导群场景（现仅测试群）。（⭐重要度排序已落地，见下节。）
+代码集中在 `build_daily_digest` 拼装层 + `_block` / `_meta_inner` / `_link_line` / `_digest_tldr` helper（`services/release_alerts.py`）。**本轮（2026-06-28）已落地**：重要度排序 + 今日要闻（见下节）、领导群/维护者群双卡分发 + markdown 转义（见「双卡分发」节）、对标我方哪款（见末节）。**剩余 digest backlog**：全局段统一封顶预算、emoji 收敛（多个「新」语义重叠）、空卡/无数据日心跳兜底、跨 combo 新品按 app_id 去重、movement 空降补 is_reentry 门控、领导卡推送时点前移。
 
 ### digest 重要度排序 + 今日要闻置顶（PR #136）
 
