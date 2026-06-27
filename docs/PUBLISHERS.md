@@ -54,7 +54,7 @@
 7. **命名**：中国厂尽量用中文名（「中文 English」式，如「库卡游戏 Qookka」「游族 YOOZOO」）。
 8. **negative finding 戳记**：调研验证「无关系/无母体」也是结果。用 `【调研负面发现 YYYY-MM-DD】` 或 `【复查 negative YYYY-MM-DD】` 追加到 brief 锁死研究分支，下次别再回头查（抽屉里会折叠到「调研历史 N」）。
 
-## 当前资本集团速览（2026-06-22；103 实体 / 114 alias / 118 app_id / 240 source / 37 关系 / 21 资本方 / 30 忽略；tier_primary 100%）
+## 当前资本集团速览（2026-06-28；103 实体 / 115 alias / 119 app_id / 242 source / 37 关系 / 21 资本方 / 30 忽略；tier_primary 100%）
 
 - **途游游戏 Tuyoo** → EVISTA(SLG·新加坡)/Ark Game(HK)/Tuyoo Online HK/Tuyoo Games HK
 - **灵犀互娱（阿里）** → 库卡游戏 Qookka ｜ **益世界** → Just Game ｜ **新奇互娱（爱奇艺）** → Special Gamez
