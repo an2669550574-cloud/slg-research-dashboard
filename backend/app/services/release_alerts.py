@@ -66,6 +66,25 @@ def _genre_cn(g: Optional[str]) -> Optional[str]:
     return _GENRE_CN.get(g.strip().lower(), g)
 
 
+_MD_FMT_RE = re.compile(r"([\\`*_~])")  # 行内格式字符：反斜杠/代码/加粗斜体/删除线
+
+
+def _md_name(s, maxlen: Optional[int] = 32) -> str:
+    """**粗体/正文文本位**的名字净化——防 ST 原始游戏名/厂商名把卡片渲染破版：
+    ① 折叠换行/多余空白 ② 超长截断（maxlen，None=不截）③ 方括号 → 圆括号（否则
+    `名](url` 会误拼成链接）④ 转义 `* _ \\` `` ` `` `~`（否则触发加粗错位/代码块）。
+
+    只用于 markdown **正文文本**插值（`**{name}**` / 厂商名 / 版本号等）。ActionCard
+    按钮 title 是纯文本、不要过它；`[锚文本](url)` 里的文章标题另有 sanitize（只需括号
+    替换、不转义格式符，见 `_link_line` / `_articles_suffix`）。ST 原始名几乎必然某天带
+    `[Beta]` / `*` / 方括号，这一道是「推领导前最容易当面出丑」的防线。"""
+    s = " ".join(str(s if s is not None else "").split())
+    if maxlen and len(s) > maxlen:
+        s = s[:maxlen - 1].rstrip() + "…"
+    s = s.replace("[", "(").replace("]", ")")
+    return _MD_FMT_RE.sub(r"\\\1", s)
+
+
 def _market_label(country: str, platform: str) -> str:
     """市场+平台标识（不带榜种），如「🇺🇸 美国 · 安卓」。下载榜/跨段复用，避免
     `_combo_label` 的「畅销榜」后缀与下载榜语境打架。"""
@@ -90,7 +109,7 @@ def _meta_inner(*, genre=None, revenue=None, downloads=None, entity=None) -> str
     if downloads:
         parts.append(f"下载 {_fmt_num(downloads)}")
     if entity:
-        parts.append(f"厂商 {entity}")
+        parts.append(f"厂商 {_md_name(entity)}")
     return " · ".join(parts)
 
 
@@ -226,22 +245,22 @@ def build_movement_lines(s: dict, entities: Optional[dict] = None,
     for e in s["new_entrants"]:
         frm = "榜外" if e["prev_rank"] is None else f"#{e['prev_rank']}"
         scored.append((_event_score("new_entrant", e),
-                       f"🆕 **{e['name']}** 空降 **#{e['cur_rank']}**（{frm} →）" + _meta(e)))
+                       f"🆕 **{_md_name(e['name'])}** 空降 **#{e['cur_rank']}**（{frm} →）" + _meta(e)))
     for e in s["surges"]:
         scored.append((_event_score("surge", e),
-                       f"📈 **{e['name']}** #{e['prev_rank']} → **#{e['cur_rank']}**（↑{e['prev_rank'] - e['cur_rank']}）" + _meta(e)))
+                       f"📈 **{_md_name(e['name'])}** #{e['prev_rank']} → **#{e['cur_rank']}**（↑{e['prev_rank'] - e['cur_rank']}）" + _meta(e)))
     for e in s["drops"]:
         to = "榜外" if e["cur_rank"] is None else f"#{e['cur_rank']}"
         scored.append((_event_score("drop", e),
-                       f"📉 **{e['name']}** 跌出 Top 榜（#{e['prev_rank']} → {to}）" + _meta(e)))
+                       f"📉 **{_md_name(e['name'])}** 跌出 Top 榜（#{e['prev_rank']} → {to}）" + _meta(e)))
     for e in s["revenue_spikes"]:
         # 收入异动主行已带前后金额，厂商归属**内联行尾**（不另起引用块——否则子行只剩
         # 孤零零一个厂商，跟在折行的主行后面很飘）。
         ent = entities.get(e.get("app_id")) or e.get("publisher")
         rk = f"现 #{e['cur_rank']} · " if e.get("cur_rank") else ""  # 收入涨跌的排名参照系
-        tail = f" · 厂商 {ent}" if ent else ""
+        tail = f" · 厂商 {_md_name(ent)}" if ent else ""
         scored.append((_event_score("revenue_spike", e),
-                       f"💰 **{e['name']}** {rk}收入 **{e['pct']:+.0f}%**（{_fmt_money(e['prev_revenue'])} → {_fmt_money(e['cur_revenue'])}）{tail}"))
+                       f"💰 **{_md_name(e['name'])}** {rk}收入 **{e['pct']:+.0f}%**（{_fmt_money(e['prev_revenue'])} → {_fmt_money(e['cur_revenue'])}）{tail}"))
     scored.sort(key=lambda x: x[0], reverse=True)   # 稳定排序：同分保持类内原序
     lines = [ln for _, ln in scored]
     return lines[:cap] if cap else lines
@@ -354,7 +373,7 @@ def build_newcomer_lines(market: dict, publisher: dict,
                             downloads=n.get("downloads"),
                             entity=entities.get(aid) or n.get("publisher"))
         lines.append(_block([
-            f"✨ **{n['name']}** 空降 **#{n['rank']}**{tag}",
+            f"✨ **{_md_name(n['name'])}** 空降 **#{n['rank']}**{tag}",
             f"> {inner}" if inner else "",
             f"📝 {summaries.get(aid)}" if summaries.get(aid) else "",   # LLM 一句话：领导秒懂
             _link_line(aid or "", "market", country=country, platform=platform,
@@ -366,7 +385,7 @@ def build_newcomer_lines(market: dict, publisher: dict,
         rank = f"#{n['rank']}" if n.get("rank") else "进榜"
         inner = _meta_inner(revenue=n.get("revenue"), downloads=n.get("downloads"))
         lines.append(_block([
-            f"🏢 **{n['entity_name']}** 新品 **{n['name']}** {rank}",
+            f"🏢 **{_md_name(n['entity_name'])}** 新品 **{_md_name(n['name'])}** {rank}",
             f"> {inner}" if inner else "",
             f"📝 {summaries.get(aid)}" if summaries.get(aid) else "",
             _link_line(aid or "", "publisher", articles=articles.get(aid)),
@@ -403,7 +422,7 @@ def build_free_newcomer_lines(market: dict, publisher: dict,
         inner = _meta_inner(downloads=n.get("downloads"),
                             entity=n.get("entity_name") or entities.get(aid) or n.get("publisher"))
         lines.append(_block([
-            f"⬇️ **{n['name']}** 下载榜 **{rank}**",
+            f"⬇️ **{_md_name(n['name'])}** 下载榜 **{rank}**",
             f"> {inner}" if inner else "",
             _link_line(aid or "", "market", articles=articles.get(aid)),
         ]))
@@ -433,8 +452,8 @@ def build_lead_newcomer_lines(lead_items: list[dict]) -> list[str]:
         suffix = f" · {genre}" if genre else ""
         focus = _dashboard_focus_url(aid, "market")
         out.append(_block([
-            f"🔍 **{it.get('name') or aid}**（{mkt} 下载榜 {rank}{suffix}）",
-            f"> 发行商 {pub}",
+            f"🔍 **{_md_name(it.get('name') or aid)}**（{mkt} 下载榜 {rank}{suffix}）",
+            f"> 发行商 {_md_name(pub)}",
             f"🎯 [看板核查]({focus})" if focus else "",
         ]))
         if len(out) >= cap:
@@ -450,7 +469,7 @@ def build_version_lines(changes: list[dict], cap: int) -> list[str]:
     out: list[str] = []
     for c in changes[:cap]:
         date = f"（{c['date']}）" if c.get("date") else ""
-        out.append(f"🆙 **{c['name']}**：{c['old']} → {c['new']}{date}")
+        out.append(f"🆙 **{_md_name(c['name'])}**：{_md_name(c['old'], maxlen=None)} → {_md_name(c['new'], maxlen=None)}{date}")
     return out
 
 
@@ -463,7 +482,7 @@ def build_video_lines(items: list[dict], cap: int) -> list[str]:
     out: list[str] = []
     for it in items[:cap]:
         link = f" 💻 [看第一条]({it['url']})" if it.get("url") else ""   # YouTube=外网，手机打不开
-        out.append(f"🎬 **{it['name']}**：已搜集 {it['count']} 条实机玩法视频{link}")
+        out.append(f"🎬 **{_md_name(it['name'])}**：已搜集 {it['count']} 条实机玩法视频{link}")
     return out
 
 
@@ -475,7 +494,7 @@ def build_region_launch_lines(changes: list[dict], cap: int) -> list[str]:
     out: list[str] = []
     for c in changes[:cap]:
         date = f"（{c['date']}）" if c.get("date") else ""
-        out.append(f"🌍 **{c['name']}**：新进 {c['country']} 区{date}")
+        out.append(f"🌍 **{_md_name(c['name'])}**：新进 {c['country']} 区{date}")
     return out
 
 
@@ -551,19 +570,19 @@ def _highlight_line(item: dict) -> str:
     mkt = _market_label(item["country"], item["platform"])
     kind = item["kind"]
     if kind == "new_entrant":
-        return f"{mkt} 🆕 **{e['name']}** 空降 #{e['cur_rank']}"
+        return f"{mkt} 🆕 **{_md_name(e['name'])}** 空降 #{e['cur_rank']}"
     if kind == "surge":
-        return f"{mkt} 📈 **{e['name']}** #{e['prev_rank']} → #{e['cur_rank']}"
+        return f"{mkt} 📈 **{_md_name(e['name'])}** #{e['prev_rank']} → #{e['cur_rank']}"
     if kind == "drop":
         to = "榜外" if e.get("cur_rank") is None else f"#{e['cur_rank']}"
-        return f"{mkt} 📉 **{e['name']}** 跌出 Top（#{e['prev_rank']} → {to}）"
+        return f"{mkt} 📉 **{_md_name(e['name'])}** 跌出 Top（#{e['prev_rank']} → {to}）"
     if kind == "revenue_spike":
         rk = f"#{e['cur_rank']} · " if e.get("cur_rank") else ""
-        return f"{mkt} 💰 **{e['name']}** {rk}收入 {e['pct']:+.0f}%"
+        return f"{mkt} 💰 **{_md_name(e['name'])}** {rk}收入 {e['pct']:+.0f}%"
     # 三类新品（market / publisher / free）：厂商新品用 entity_name，其余用 name
     nm = e.get("name") or e.get("entity_name") or "—"
     rk = f" #{e['rank']}" if e.get("rank") else ""
-    return f"{mkt} ✨ **{nm}**{rk}"
+    return f"{mkt} ✨ **{_md_name(nm)}**{rk}"
 
 
 def build_highlight_lines(per_combo: list[dict], topn: int) -> list[str]:
@@ -1023,10 +1042,10 @@ def build_appstore_digest(
         for app, entity_name, _label in rows[:15]:
             released = f" · 上架 {app.release_date}" if app.release_date else ""
             genre = f" · {app.genre}" if app.genre else ""
-            lines.append(f"🆕 **{app.name}** — {entity_name}（{_platform_tag(app)}）"
+            lines.append(f"🆕 **{_md_name(app.name)}** — {_md_name(entity_name)}（{_platform_tag(app)}）"
                          f"{genre}{released}{_sf_text(app)}")
             if app.track_view_url and len(btns) < 5:
-                btns.append((f"{app.name} →", app.track_view_url))
+                btns.append((f"{app.name} →", app.track_view_url))   # 按钮 title 纯文本，不过 _md_name
         if len(rows) > 15:
             lines.append(f"…等共 {len(rows)} 款，看板查看全部")
     if expanded:
@@ -1034,7 +1053,7 @@ def build_appstore_digest(
         for app, entity_name, added in expanded[:15]:
             added_label = "/".join(s.upper() for s in added)
             now_label = "/".join(s.upper() for s in (app.storefronts or "").split(",") if s)
-            lines.append(f"🌍 **{app.name}** — {entity_name} 新增 **{added_label}**（现 {now_label}）")
+            lines.append(f"🌍 **{_md_name(app.name)}** — {_md_name(entity_name)} 新增 **{added_label}**（现 {now_label}）")
             if app.track_view_url and len(btns) < 5:
                 btns.append((f"{app.name} →", app.track_view_url))
         if len(expanded) > 15:
