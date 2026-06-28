@@ -633,20 +633,25 @@ def test_digest_leader_audience_strips_maintainer_noise():
     from app.services.release_alerts import build_daily_digest
     market = {"newcomers": [{"app_id": "999", "rank": 12, "name": "陌生新游",
                              "publisher": "无名工作室", "is_slg": False, "is_reentry": False}]}
+    publisher = {"newcomers": [{"app_id": "p1", "entity_name": "莉莉丝", "name": "已识别SLG新品",
+                                "rank": 8, "is_reentry": False}]}
     per_combo = [{"country": "US", "platform": "ios", "movement": None,
-                  "market": market, "publisher": None}]
+                  "market": market, "publisher": publisher}]
     lead = [{"app_id": "com.a.b", "name": "疑似新厂SLG", "publisher": "无名工作室",
              "rank": 7, "country": "US", "platform": "ios", "genre": "Strategy"}]
     _, m_text, _ = build_daily_digest(per_combo, "2026-06-28", lead_items=lead, audience="maintainer")
     _, l_text, _ = build_daily_digest(per_combo, "2026-06-28", lead_items=lead, audience="leader")
-    # maintainer：维护者杂讯齐全
+    # maintainer：维护者杂讯齐全（待建档段 + 待识别 market 新品 + 建议建档尾标）
     assert "待建档新厂线索" in m_text and "建议建档" in m_text and "🔍 待建档" in m_text
-    # leader：杂讯全剥离
+    assert "陌生新游" in m_text
+    # leader：维护者杂讯全剥离
     assert "待建档新厂线索" not in l_text
     assert "建议建档" not in l_text
     assert "🔍 待建档" not in l_text
-    # 但新对手情报保留（is_slg=false 仍是"新对手上架"，只是去掉建档动作）
-    assert "陌生新游" in l_text
+    # 竞品情报保留：已识别 SLG 厂 publisher 新品在；但 is_slg=false「待识别新厂」整段剥离
+    #（口径「领导只看 SLG 产品」——待识别含足球/塔防/恐怖等非 SLG 噪声，对领导无用）
+    assert "已识别SLG新品" in l_text
+    assert "陌生新游" not in l_text
 
 
 @pytest.mark.asyncio
@@ -824,3 +829,33 @@ def test_digest_market_lead_caps_and_folds():
     fold = [l for l in lines if "未识别新面孔" in l]
     assert len(fold) == 1 and "**3**" in fold[0]          # (topn+3) - topn = 3 折叠
     assert "已识别龙头" in text                             # 已识别不受限，照常显示
+
+
+def test_digest_leader_excludes_market_lead_newcomers():
+    """领导卡口径「只看 SLG 产品」：market 层 is_slg=false「待识别新厂」(足球/塔防/恐怖等
+    非 SLG + 未识别真新厂)整段剥离——正文 + TL;DR 计数都不含；已识别 SLG 厂的 publisher
+    新品 + is_slg=true market 保留。维护者卡不受影响、待识别照常（口径只作用领导卡）。"""
+    from app.services.release_alerts import build_daily_digest
+
+    market = {"newcomers": [
+        {"app_id": "slg1", "rank": 5, "name": "已识别SLG市场新品", "publisher": "P", "is_slg": True, "is_reentry": False},
+        {"app_id": "td1", "rank": 8, "name": "Tower Defense 塔防新品", "publisher": "Q", "is_slg": False, "is_reentry": False},
+        {"app_id": "ball", "rank": 9, "name": "足球竞技手游", "publisher": "R", "is_slg": False, "is_reentry": False},
+    ]}
+    publisher = {"newcomers": [
+        {"app_id": "pub1", "entity_name": "莉莉丝", "name": "已识别厂战争新品", "rank": 12, "is_reentry": False},
+    ]}
+    per_combo = [{"country": "US", "platform": "ios", "movement": None,
+                  "market": market, "publisher": publisher}]
+
+    # 领导卡：待识别(is_slg=false)整段剥离；is_slg=true market + publisher 保留
+    _, body_l, _ = build_daily_digest(per_combo, "2026-06-28", audience="leader")
+    assert "已识别SLG市场新品" in body_l and "已识别厂战争新品" in body_l
+    assert "塔防新品" not in body_l and "足球竞技手游" not in body_l
+    assert "新厂商待识别" not in body_l          # 领导卡无待识别标记/折叠行
+    assert "✨ 新品 2" in body_l                  # TL;DR 计数也只算 SLG（slg1 + pub1）
+
+    # 维护者卡：不过滤，待识别照常（口径只作用领导卡）
+    _, body_m, _ = build_daily_digest(per_combo, "2026-06-28", audience="maintainer")
+    assert "塔防新品" in body_m and "足球竞技手游" in body_m
+    assert "✨ 新品 4" in body_m                  # 全量计数（3 market + 1 publisher）

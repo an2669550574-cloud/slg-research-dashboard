@@ -738,6 +738,20 @@ def build_daily_digest(per_combo: list[dict], today: str,
     检测数据两个 audience 共用一份（send_daily_digest 渲染两遍），零额外 ST。
     """
     is_leader = audience == "leader"
+    # 领导卡口径「只看 SLG 产品」：剥离 market 层「待识别新厂」(is_slg=false——含足球/塔防/
+    # 恐怖等非 SLG 噪声 + 白名单未收录的真新厂线索)。is_slg 是厂商维度，已识别 SLG 厂的
+    # publisher 新品 + free(已 is_slg 门控) 保留。在此**一处**过滤，正文/TL;DR/今日要闻/按钮
+    # 所有出口统一从过滤后 per_combo 取，避免逐出口判漏。维护者卡(全量 + 建档线索)不过滤。
+    # 不 mutate 入参（浅拷副本：换掉 combo 的 market.newcomers，原入参不动）。
+    if is_leader:
+        _filtered = []
+        for _c in per_combo:
+            _mk = _c.get("market")
+            if _mk and _mk.get("newcomers"):
+                _c = {**_c, "market": {**_mk,
+                      "newcomers": [n for n in _mk["newcomers"] if n.get("is_slg")]}}
+            _filtered.append(_c)
+        per_combo = _filtered
     sections: list[str] = []
     cap = settings.DIGEST_MAX_ITEMS
     mv_cap = settings.DIGEST_MOVEMENT_TOPN
