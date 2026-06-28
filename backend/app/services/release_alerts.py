@@ -415,11 +415,22 @@ def build_newcomer_lines(market: dict, publisher: dict,
     summaries = summaries or {}
     lines = []
     market_real = [n for n in (market.get("newcomers") or []) if not n.get("is_reentry")]
+    # 「待识别新厂」(is_slg=false) 限量 + 折叠：次市场批量同步日会一次涌进几十个未识别新面孔
+    # （混足球/塔防/恐怖等非 SLG 噪声，genre 仅本地化大类无法精准门控）。只详列前
+    # DIGEST_MARKET_LEAD_TOPN 个（按榜排名），其余折叠成一行——建档线索仍可经折叠行→看板追溯，
+    # 不静默丢。已识别 SLG（is_slg=true）不受此限（数量少 + 是核心情报，且多被 publisher 层覆盖）。
+    lead_total = sum(1 for n in market_real if not n.get("is_slg"))
+    lead_shown = 0
     for n in market_real[:10]:
         aid = n.get("app_id")
+        is_lead_row = not n.get("is_slg")
+        if is_lead_row:
+            if lead_shown >= settings.DIGEST_MARKET_LEAD_TOPN:
+                continue   # 超额待识别新厂：不逐条列，循环后统一折叠（见下方 lead_hidden）
+            lead_shown += 1
         # #99 忽略名单过滤后，is_slg=false 多是「真新厂商线索」而非噪声——维护者卡升级文案带
         # 行动指引（建议建档）+ 行内商店页直达；领导卡 lead_cta=False 剥掉这套维护者动作。
-        is_lead = (not n.get("is_slg")) and lead_cta
+        is_lead = is_lead_row and lead_cta
         tag = "  ⚠️ 新厂商待识别 · 建议建档" if is_lead else ""
         en = enrich.get(aid) or {}
         inner = _meta_inner(genre=en.get("genre"), revenue=n.get("revenue"),
@@ -432,6 +443,11 @@ def build_newcomer_lines(market: dict, publisher: dict,
             _link_line(aid or "", "market", country=country, platform=platform,
                        with_store=is_lead, articles=articles.get(aid)),
         ]))
+    lead_hidden = lead_total - lead_shown
+    if lead_hidden > 0:
+        base = (settings.DASHBOARD_BASE_URL or "").rstrip("/")
+        tail = f"，[看板核查]({base}/newcomers)" if base else ""   # 看板深链手机可达，不标 💻
+        lines.append(f"> …另有 **{lead_hidden}** 个未识别新面孔上榜{tail}")
     publisher_real = [n for n in (publisher.get("newcomers") or []) if not n.get("is_reentry")]
     for n in publisher_real[:10]:
         aid = n.get("app_id")
@@ -532,12 +548,17 @@ def build_video_lines(items: list[dict], cap: int) -> list[str]:
     """新品实机视频 → 人读行（需求① / ADR 0002）。items: [{name, count, url}]。
 
     让领导在钉钉就看到「系统给新竞品自动搜了实机视频」，免开网站。url = 头条视频。
-    封顶 cap 防刷屏。
+    只详列前 cap 条，其余折叠成一行汇总（新品多的日子能搜出几十条，逐条列会刷屏）。
     """
     out: list[str] = []
     for it in items[:cap]:
         link = f" 💻 [看第一条]({it['url']})" if it.get("url") else ""   # YouTube=外网，手机打不开
         out.append(f"🎬 **{_md_name(it['name'])}**：已搜集 {it['count']} 条实机玩法视频{link}")
+    extra = len(items) - cap
+    if extra > 0:
+        base = (settings.DASHBOARD_BASE_URL or "").rstrip("/")
+        tail = f"，[看板查看全部]({base}/newcomers)" if base else ""   # 看板深链手机可达，不标 💻
+        out.append(f"> …另有 **{extra}** 个新品也已搜集实机视频{tail}")
     return out
 
 
@@ -774,7 +795,7 @@ def build_daily_digest(per_combo: list[dict], today: str,
             sections.append("【竞品新区上线 · iOS】\n\n" + "\n\n".join(rlines))
     # 全局「新品实机视频」段（需求① / ADR 0002）：今日新品已自动搜集的实机视频。
     if video_items:
-        vid_lines = build_video_lines(video_items, cap)
+        vid_lines = build_video_lines(video_items, settings.DIGEST_VIDEO_TOPN)
         if vid_lines:
             total += len(video_items)
             sections.append("【新品实机视频】\n\n" + "\n\n".join(vid_lines))

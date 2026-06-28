@@ -170,6 +170,14 @@ class Settings(BaseSettings):
     # 事件强度，见 release_alerts._event_score）抽出来置顶，保证核心市场大事件不被
     # 次市场长尾折叠挤掉。仅当全卡事件数 > 该值才渲染（小卡本身已短、不重复）。0=关。
     DIGEST_HIGHLIGHTS_TOPN: int = 5
+    # 全局「新品实机视频」段每日展示上限：新品多的日子能一次搜出几十条视频，逐条列会把
+    # 卡刷长。只详列前 N 条，其余折叠成「另有 M 个新品也已搜集视频，看板查看」一行。
+    DIGEST_VIDEO_TOPN: int = 5
+    # 单 combo「市场新面孔 · 待识别新厂」(is_slg=false) 展示上限：次市场（RU/DE）批量同步日
+    # 会一次涌进几十个未识别新面孔（混足球/塔防/恐怖等非 SLG 噪声，且 genre 仅本地化大类
+    # 「Игры/Spiele」无法精准门控），逐条列会刷屏。只详列前 N 个（按榜排名），其余折叠成
+    # 「另有 M 个未识别新面孔上榜，看板核查」一行——建档线索仍可经折叠行→看板追溯，不静默丢。
+    DIGEST_MARKET_LEAD_TOPN: int = 3
 
     # ── App Store 清单雷达（免费 iTunes lookup，零 ST 配额）──────────────
     # 每轮对每个开发者账号扫这些 storefront（逗号小写）。SLG 几乎都先软启动：
