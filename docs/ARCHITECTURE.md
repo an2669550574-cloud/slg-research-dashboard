@@ -162,7 +162,7 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 - **底部 ActionCard 按钮**：从商店直链改 **看板深链**（`_dashboard_focus_url`，两端可达、手机也能点），只取头条新品——movement 异动老游戏不在看板新品页、深链定位不到，不进按钮；商店直链在行内保留带 💻（不丢电脑端入口）。未配 `DASHBOARD_BASE_URL` 则无按钮，ActionCard 降级 markdown。
 - **连锁限制**：看板详情页里的国外资源（商店截图 mzstatic 图床 / YouTube 视频）手机端在看板内也可能加载不全；手机端保得住的是看板**自有文字情报**（中文摘要 / 收入 / 名次 / 版本 / 厂商归属），视频「播放」本质要客户端能访问 YouTube，无解、只能电脑端。
 
-代码集中在 `build_daily_digest` 拼装层 + `_block` / `_meta_inner` / `_link_line` / `_digest_tldr` helper（`services/release_alerts.py`）。**本轮（2026-06-28）已落地**：重要度排序 + 今日要闻（见下节）、领导群/维护者群双卡分发 + markdown 转义（见「双卡分发」节）、对标我方哪款（见末节）。**剩余 digest backlog**：全局段统一封顶预算、emoji 收敛（多个「新」语义重叠）、空卡/无数据日心跳兜底、跨 combo 新品按 app_id 去重、movement 空降补 is_reentry 门控、领导卡推送时点前移。
+代码集中在 `build_daily_digest` 拼装层 + `_block` / `_meta_inner` / `_link_line` / `_digest_tldr` helper（`services/release_alerts.py`）。**本轮（2026-06-28）已落地**：重要度排序 + 今日要闻（见下节）、领导群/维护者群双卡分发 + markdown 转义（见「双卡分发」节）、对标我方哪款（见末节）、实机视频/市场待识别折叠减负（#141，见「封顶」节）、领导卡只看 SLG 产品（#143，见「双卡分发」节）。**剩余 digest backlog**：全局段统一封顶预算、emoji 收敛（多个「新」语义重叠）、空卡/无数据日心跳兜底、跨 combo 新品按 app_id 去重、movement 空降补 is_reentry 门控、领导卡推送时点前移。
 
 ### digest 重要度排序 + 今日要闻置顶（PR #136）
 
@@ -182,6 +182,7 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 
 - **双 target 路由**（`services/dingtalk.py`）：`maintainer`（默认，= 测试群/运维群）+ `leader`（领导群）。`_target_fields(target)` 选 url/secret/label；leader 未独立配（`DINGTALK_WEBHOOK_URL_LEADER` 空）时**回退 maintainer**（任意调用方不报错），但 `leader_target_configured()` 严格判（只看 leader url 是否配），digest 双发据此决定是否真发领导卡——**未配就不发，不把领导版重发进维护者群**。`is_enabled` / `_signed_url` / `_post_payload` / `send_markdown` / `send_action_card` 全加 `target` 透传，默认 `maintainer` 向后兼容。
 - **受众剥离双渲染**（`build_daily_digest(audience=)`）：同一份检测数据渲染两遍（**零额外 ST/查询**，`send_daily_digest` 内 `_render('maintainer')` + `_render('leader')`）。leader 卡剥离维护者杂讯：跳过「待建档新厂线索」整段、新品行不拼「建议建档」尾标（`build_newcomer_lines(lead_cta=False)`）、TL;DR 不计「待建档 N」。领导卡只剩竞品/市场情报（异动 + 新品 + 下载榜 SLG + 版本 + 新区 + 视频 + 今日要闻）。
+- **领导卡只看 SLG 产品（PR #143）**：领导反馈非 SLG 新品太多。`is_slg` 是**厂商维度**（发行商在不在 SLG 白名单）≠ 产品品类。leader 卡在 `build_daily_digest` **入口一处**过滤 `per_combo`，剥离 market 层 `is_slg=false`「待识别新厂」（含足球/恐怖/塔防等非 SLG + 白名单未收录的真新厂）→ 正文 / TL;DR 计数 / 今日要闻 / 按钮**所有出口统一不含**（一处过滤避免逐出口判漏；不 mutate 入参、浅拷副本）。已识别 SLG 厂的 publisher 新品 + free（已 is_slg 门控）保留；维护者卡（全量 + 建档线索）不过滤。**已知残留**：SLG 厂出的塔防 TD / 消除（is_slg=true 厂商维度去不掉）——口径 B（LLM 中文摘要 `summary_cn` 品类词门控）按需再加，2026-06-28 决议**先口径 A 观察**。
 - **维护者杂讯钉死 maintainer**：微信重登提醒（含 ssh 重扫码指令）+ 商店雷达 send 显式 `target="maintainer"`——运维/自检类永不进领导群。
 - **主卡失败升 Sentry**（`critical=True`）：digest 主卡是「每日必达」，终态失败（errcode 拒绝 / 网络异常）打 `logger.error` → Sentry，让维护者立刻补；旁路告警（微信/雷达）维持 `warning` 不刷屏。把「静默丢卡 = 信任无声流失」变成「被叫醒补」。
 - **markdown 转义**（`_md_name(s, maxlen=32)`）：折叠空白 + 超长截断 + 方括号→圆括号（防 `名](url` 误成链接）+ 转义 `* _ \\` `` ` `` `~`（防加粗错位/代码块），套到所有 markdown **正文文本**名字插值位（movement / 三类新品 / 待建档 / 版本 / 视频 / 新区 / 今日要闻 / 商店雷达 / `_meta_inner` 厂商）。ActionCard 按钮 title 是纯文本不过它；`[锚文本](url)` 文章标题另有 sanitize（只括号替换）。
