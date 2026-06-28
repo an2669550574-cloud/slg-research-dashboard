@@ -140,7 +140,7 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 
 ### 每日 digest 群推送封顶（PR #101）
 
-`build_daily_digest` 原本无长度上限——波动大的日子（movement 完全无 cap）会刷出一张超长卡。两层封顶：单 combo movement 行封 `DIGEST_MOVEMENT_TOPN`（按 空降/窜升/暴跌/收入异动 重要性保留），全卡按 combo 粒度封 `DIGEST_MAX_ITEMS`，超额折叠成「…另有 N 项，看板查看全部」（不静默丢、标题 total 仍计全部）。商店按钮也纳入新品（市场/厂商各取头条、去重封顶 5），安卓包名拼 Google Play 链接（`_store_url`），纯新品日不再无可点项。
+`build_daily_digest` 原本无长度上限——波动大的日子（movement 完全无 cap）会刷出一张超长卡。两层封顶：单 combo movement 行封 `DIGEST_MOVEMENT_TOPN`（按 空降/窜升/暴跌/收入异动 重要性保留），全卡按 combo 粒度封 `DIGEST_MAX_ITEMS`，超额折叠成「…另有 N 项，看板查看全部」（不静默丢、标题 total 仍计全部）。商店按钮也纳入新品（市场/厂商各取头条、去重封顶 5），安卓包名拼 Google Play 链接（`_store_url`），纯新品日不再无可点项。**全局段同款封顶（#141）**：实机视频段封 `DIGEST_VIDEO_TOPN`(5)、单 combo 市场「待识别新厂」(is_slg=false) 行封 `DIGEST_MARKET_LEAD_TOPN`(3)，超额各折叠成「…另有 N 个…」一行（次市场周级同步日一次涌进几十个未识别新面孔/几十条视频，逐条列会刷长卡；实测峰值卡 10772→7509 字符 −30%，榜单异动原样保留）。
 
 ### digest 看板深链 + app_id 粒度忽略（PR #109）
 
@@ -199,7 +199,7 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 
 ### 新厂商线索 CTA（PR #104）
 
-digest 里 `is_slg=false` 的市场新面孔，经忽略名单过滤后多是**真·未识别厂商线索**而非噪声。`build_newcomer_lines` 给这类行升级文案（带「建议建档」行动指引）并**行内附商店页直达**（`_store_url` 拼不出则只留文案）——底部 ActionCard 按钮全局封顶 5、每 combo 仅 1 条，线索未必挤得进，行内链接保证每条都有「立即去看」入口。已归属主体的厂商新品行不打 CTA。
+digest 里 `is_slg=false` 的市场新面孔，经忽略名单过滤后多是**真·未识别厂商线索**而非噪声。`build_newcomer_lines` 给这类行升级文案（带「建议建档」行动指引）并**行内附商店页直达**（`_store_url` 拼不出则只留文案）——底部 ActionCard 按钮全局封顶 5、每 combo 仅 1 条，线索未必挤得进，行内链接保证每条都有「立即去看」入口。已归属主体的厂商新品行不打 CTA。**次市场同步日洪峰治理（#141）**：RU/DE 周级批量同步日一次涌进几十个待识别新面孔（混足球/塔防/恐怖等非 SLG），而 genre 仅本地化大类（`Игры`/`Spiele`，无 Strategy 细分）→ **无法按 genre 精准门控**，故退「限量 `DIGEST_MARKET_LEAD_TOPN`(3) + 折叠剩余」（折叠行带看板核查深链、线索不静默丢）；已识别 SLG（is_slg=true）不受限、多被 publisher 层覆盖。
 
 ### 待建档新厂线索段（下载榜，PR #131）
 
