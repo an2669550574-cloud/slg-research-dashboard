@@ -788,3 +788,39 @@ async def test_load_own_products_filters_splits_lowercases(client):
     assert all(kws for _, kws in prods)                                # 无空关键词列表
     names = {n for n, _ in prods}
     assert "无关键词对标测试" not in names and "空白词对标测试" not in names
+
+
+def test_digest_video_lines_caps_and_folds():
+    """① 实机视频段：超过 cap 条只详列前 N，其余折叠成一行汇总（不静默丢）。"""
+    from app.services.release_alerts import build_video_lines
+
+    items = [{"name": f"新品{i}", "count": 5, "url": f"https://y/{i}"} for i in range(8)]
+    lines = build_video_lines(items, 5)
+    detailed = [l for l in lines if l.startswith("🎬")]
+    assert len(detailed) == 5                       # 只详列前 5
+    fold = [l for l in lines if "另有" in l]
+    assert len(fold) == 1 and "**3**" in fold[0]    # 8 - 5 = 3 折叠
+    # 不超 cap：不折叠、全列
+    lines2 = build_video_lines(items[:4], 5)
+    assert len(lines2) == 4 and all("另有" not in l for l in lines2)
+
+
+def test_digest_market_lead_caps_and_folds():
+    """② 市场「待识别新厂」(is_slg=false) 超过 DIGEST_MARKET_LEAD_TOPN 个 → 前 N 详列 + 折叠行；
+    已识别 SLG（is_slg=true）不受限量（次市场批量同步日防刷屏，建档线索仍可经折叠行追溯）。"""
+    from app.services.release_alerts import build_newcomer_lines
+    from app.config import settings
+
+    topn = settings.DIGEST_MARKET_LEAD_TOPN
+    leads = [{"app_id": str(i), "rank": i, "name": f"待识别{i}", "publisher": f"厂{i}",
+              "is_slg": False, "is_reentry": False} for i in range(1, topn + 4)]   # topn+3 个待识别
+    known = {"app_id": "k", "rank": 99, "name": "已识别龙头", "publisher": "大厂",
+             "is_slg": True, "is_reentry": False}
+    market = {"newcomers": leads + [known]}
+    lines = build_newcomer_lines(market, {"newcomers": []}, country="US", platform="ios")
+    text = "\n".join(lines)
+    shown_leads = [l for l in lines if "新厂商待识别" in l]
+    assert len(shown_leads) == topn                       # 待识别只详列前 topn
+    fold = [l for l in lines if "未识别新面孔" in l]
+    assert len(fold) == 1 and "**3**" in fold[0]          # (topn+3) - topn = 3 折叠
+    assert "已识别龙头" in text                             # 已识别不受限，照常显示
