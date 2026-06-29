@@ -766,22 +766,43 @@ def test_leader_target_falls_back_but_configured_flag_strict(monkeypatch):
     assert dt._target_fields("leader")[0] == "https://l/hook"   # 独立群
 
 
-# ── P1: 对标我方哪款（OwnProduct match_keywords → digest 标签）─────────────────
+# ── 同赛道：竞品和我方哪款同赛道（子品类精确 / 关键词回退 → digest 标签）──────────
 
 def test_match_own_product_substring_and_priority():
-    """纯本地小写子串匹配：命中名字/摘要、大小写无关、第一个产品优先、空安全。"""
+    """未配子品类的产品走关键词回退：小写子串、命中名字/摘要、第一个产品优先、空安全。"""
     from app.services.release_alerts import _match_own_product
-    prods = [("极寒纪元", ["丧尸", "末日", "survival"]), ("三国志", ["三国"])]
-    assert _match_own_product("Last War: Survival", prods) == ("极寒纪元", "survival")  # 大小写无关
-    assert _match_own_product("一款丧尸末日生存策略", prods) == ("极寒纪元", "丧尸")
-    assert _match_own_product("三国名将传", prods) == ("三国志", "三国")
-    assert _match_own_product("Candy Match 3", prods) is None
-    assert _match_own_product("", prods) is None
-    assert _match_own_product("survival", []) is None
+    prods = [("极寒纪元", ["丧尸", "末日", "survival"], set()), ("三国志", ["三国"], set())]
+    assert _match_own_product("Last War: Survival", None, prods) == ("极寒纪元", "survival")  # 大小写无关
+    assert _match_own_product("一款丧尸末日生存策略", None, prods) == ("极寒纪元", "丧尸")
+    assert _match_own_product("三国名将传", None, prods) == ("三国志", "三国")
+    assert _match_own_product("Candy Match 3", None, prods) is None
+    assert _match_own_product("", None, prods) is None
+    assert _match_own_product("survival", None, []) is None
+
+
+def test_match_own_product_subgenre_authoritative():
+    """配了 match_subgenre → 只按子品类相等匹配（忽略关键词，治题材太宽泛）；竞品无/异子品类不命中。"""
+    from app.services.release_alerts import _match_own_product
+    # 无尽火线只认「数字门SLG」（即便关键词留着也被忽略）
+    prods = [("无尽火线", ["丧尸", "末日", "survival"], {"数字门SLG"})]
+    # 真数字门竞品（子品类命中）→ 命中，即使文本不含任何题材词
+    assert _match_own_product("Some Game", "数字门SLG", prods) == ("无尽火线", "数字门SLG")
+    # 基地建设竞品（同末日题材、文本含 survival/末日）→ 子品类不符 → **不命中**（正是要去掉的假阳）
+    assert _match_own_product("Last Shelter survival 末日丧尸", "基地建设SLG", prods) is None
+    # 竞品未分类（subgenre=None）+ 文本含题材词 → 仍不命中（子品类权威、不回退关键词）
+    assert _match_own_product("丧尸末日 survival", None, prods) is None
+
+
+def test_match_own_product_keyword_fallback_when_no_subgenre():
+    """产品未配子品类 → 回退题材关键词（兼容老配置，竞品有无子品类都走关键词）。"""
+    from app.services.release_alerts import _match_own_product
+    prods = [("三国志", ["三国"], set())]
+    assert _match_own_product("三国名将传", None, prods) == ("三国志", "三国")
+    assert _match_own_product("三国名将传", "国战SLG", prods) == ("三国志", "三国")
 
 
 def test_digest_own_product_tag_and_tldr():
-    """对标命中 → 竞品行尾「⚔️ 对标《X》」(movement + 新品两处) + TL;DR「⚔️ 对标 N」置顶。"""
+    """对标命中 → 竞品行尾「⚔️《X》同赛道」(movement + 新品两处) + TL;DR「⚔️ 同赛道 N」置顶。"""
     from app.services.release_alerts import build_daily_digest
     mv = {"new_entrants": [{"app_id": "1", "name": "Zombie War", "prev_rank": None, "cur_rank": 3}],
           "surges": [], "drops": [], "revenue_spikes": []}
@@ -790,12 +811,12 @@ def test_digest_own_product_tag_and_tldr():
     per = [{"country": "US", "platform": "ios", "movement": mv, "market": market, "publisher": None}]
     om = {"1": "极寒纪元", "2": "极寒纪元"}
     _, text, _ = build_daily_digest(per, "2026-06-28", own_matches=om)
-    assert "🆕 **Zombie War** 空降 **#3**（榜外 →） ⚔️ 对标《极寒纪元》" in text   # movement 行
-    assert "✨ **Apocalypse** 空降 **#8** ⚔️ 对标《极寒纪元》" in text             # 新品行
-    assert "⚔️ 对标 2" in text                                                  # TL;DR 计数置顶
+    assert "🆕 **Zombie War** 空降 **#3**（榜外 →） ⚔️《极寒纪元》同赛道" in text   # movement 行
+    assert "✨ **Apocalypse** 空降 **#8** ⚔️《极寒纪元》同赛道" in text             # 新品行
+    assert "⚔️ 同赛道 2" in text                                                  # TL;DR 计数置顶
     # 不传 own_matches → 完全无对标标签（向后兼容）
     _, text2, _ = build_daily_digest(per, "2026-06-28")
-    assert "对标" not in text2
+    assert "同赛道" not in text2 and "⚔️" not in text2
 
 
 def test_digest_own_match_shows_on_both_audiences():
@@ -807,24 +828,26 @@ def test_digest_own_match_shows_on_both_audiences():
     om = {"2": "极寒纪元"}
     for aud in ("maintainer", "leader"):
         _, text, _ = build_daily_digest(per, "2026-06-28", own_matches=om, audience=aud)
-        assert "⚔️ 对标《极寒纪元》" in text
+        assert "⚔️《极寒纪元》同赛道" in text
 
 
 @pytest.mark.asyncio
 async def test_load_own_products_filters_splits_lowercases(client):
-    """_load_own_products: 跳过无/全空关键词的产品，逗号拆分 + trim + 小写。"""
+    """_load_own_products: 关键词 trim+小写拆分、子品类拆分(保留原样)；关键词与子品类**都空**才跳过。"""
     from app.services.release_alerts import _load_own_products
     from app.database import AsyncSessionLocal
     from app.models.product import OwnProduct
     async with AsyncSessionLocal() as db:
         db.add(OwnProduct(name="极寒纪元对标测试", brief="b", match_keywords="丧尸, 末日 ,Survival"))
+        db.add(OwnProduct(name="数字门产品测试", brief="b", match_subgenre="数字门SLG"))   # 只配子品类
         db.add(OwnProduct(name="无关键词对标测试", brief="b", match_keywords=None))
         db.add(OwnProduct(name="空白词对标测试", brief="b", match_keywords="  ,  "))
         await db.commit()
     prods = await _load_own_products()
-    assert ("极寒纪元对标测试", ["丧尸", "末日", "survival"]) in prods   # trim + lowercase
-    assert all(kws for _, kws in prods)                                # 无空关键词列表
-    names = {n for n, _ in prods}
+    assert ("极寒纪元对标测试", ["丧尸", "末日", "survival"], set()) in prods   # trim + lowercase
+    assert any(n == "数字门产品测试" and subs == {"数字门SLG"} for n, _, subs in prods)  # 只配子品类也收
+    assert all(kws or subs for _, kws, subs in prods)                  # 关键词/子品类至少一个非空
+    names = {n for n, _, _ in prods}
     assert "无关键词对标测试" not in names and "空白词对标测试" not in names
 
 

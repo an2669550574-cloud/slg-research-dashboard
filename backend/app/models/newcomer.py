@@ -61,6 +61,10 @@ class MarketNewcomerLog(Base):
     # 游戏」（进 digest + 抽屉副标题）；description_cn = 商店描述全文中译（抽屉，可切原文）。
     summary_cn: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     description_cn: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # 玩法子品类（受控词表，LLM 同一次调用按核心机制分类，非题材）：数字门SLG / 基地建设SLG /
+    # 塔防 / 三消合成 / 城建模拟 / … 。给「对标我方哪款」做精确匹配——题材关键词分不出
+    # 「数字门 SLG」vs「基地建设 SLG」（同末日题材），靠这个机制维度区分。见 newcomer_i18n。
+    subgenre_cn: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
 
 
 class NewcomerVideo(Base):

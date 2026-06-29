@@ -9,9 +9,11 @@ import { QueryError } from '../components/QueryError'
 import { ProductMaterials } from '../components/ProductMaterials'
 import type { OwnProduct } from '../lib/types'
 
-type FormState = { name: string; brief: string; match_keywords: string; is_default: boolean }
-const EMPTY_FORM: FormState = { name: '', brief: '', match_keywords: '', is_default: false }
+type FormState = { name: string; brief: string; match_keywords: string; match_subgenre: string; is_default: boolean }
+const EMPTY_FORM: FormState = { name: '', brief: '', match_keywords: '', match_subgenre: '', is_default: false }
 type Mode = { kind: 'closed' } | { kind: 'create' } | { kind: 'edit'; id: number }
+// 玩法子品类受控词表（与后端 newcomer_i18n.SUBGENRE_VOCAB 同步）：digest 按机制精确匹配同赛道竞品。
+const SUBGENRE_OPTIONS = ['数字门SLG', '基地建设SLG', '国战SLG', '塔防', '三消合成', '城建模拟', '放置养成', '卡牌RPG', '休闲益智', '其他']
 
 export default function ProductsManage() {
   const t = useT()
@@ -37,7 +39,7 @@ export default function ProductsManage() {
       toast.success(tp.added)
       // 保存后留在该产品的编辑态，直接露出素材上传/AI 解析区，无需再回列表点编辑
       setMode({ kind: 'edit', id: created.id })
-      setForm({ name: created.name, brief: created.brief, match_keywords: created.match_keywords ?? '', is_default: created.is_default })
+      setForm({ name: created.name, brief: created.brief, match_keywords: created.match_keywords ?? '', match_subgenre: created.match_subgenre ?? '', is_default: created.is_default })
     },
   })
   const updateMut = useMutation({
@@ -53,7 +55,7 @@ export default function ProductsManage() {
   function openCreate() { setMode({ kind: 'create' }); setForm(EMPTY_FORM) }
   function openEdit(p: OwnProduct) {
     setMode({ kind: 'edit', id: p.id })
-    setForm({ name: p.name, brief: p.brief, match_keywords: p.match_keywords ?? '', is_default: p.is_default })
+    setForm({ name: p.name, brief: p.brief, match_keywords: p.match_keywords ?? '', match_subgenre: p.match_subgenre ?? '', is_default: p.is_default })
   }
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -107,6 +109,18 @@ export default function ProductsManage() {
               placeholder={tp.briefPlaceholder}
               className={`w-full resize-y ${inputClass}`}
             />
+          </div>
+          <div>
+            <label className="block text-xs text-secondary mb-1">{tp.matchSubgenreLabel}</label>
+            <select
+              value={form.match_subgenre}
+              onChange={e => setForm(f => ({ ...f, match_subgenre: e.target.value }))}
+              className={`w-full ${inputClass}`}
+            >
+              <option value="">{tp.matchSubgenreNone}</option>
+              {SUBGENRE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <p className="mt-1 text-[11px] text-muted leading-relaxed">{tp.matchSubgenreHint}</p>
           </div>
           <div>
             <label className="block text-xs text-secondary mb-1">{tp.matchKeywordsLabel}</label>
@@ -175,7 +189,12 @@ export default function ProductsManage() {
                 </div>
               </div>
               <p className="text-xs text-secondary whitespace-pre-wrap leading-relaxed line-clamp-4">{p.brief}</p>
-              {p.match_keywords && (
+              {p.match_subgenre && (
+                <p className="text-[11px] text-muted truncate" title={p.match_subgenre}>
+                  <span className="text-secondary">⚔️ {tp.matchSubgenreBadge}</span> {p.match_subgenre}
+                </p>
+              )}
+              {p.match_keywords && !p.match_subgenre && (
                 <p className="text-[11px] text-muted truncate" title={p.match_keywords}>
                   <span className="text-secondary">⚔️ {tp.matchKeywordsBadge}</span> {p.match_keywords}
                 </p>

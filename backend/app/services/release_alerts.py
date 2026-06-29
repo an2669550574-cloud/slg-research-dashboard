@@ -230,52 +230,60 @@ def _event_score(kind: str, e: dict) -> float:
     return 1.0
 
 
-# ── 对标我方哪款（决策锚点，纯本地零 ST/零 LLM）─────────────────────────────
-# digest 现只有竞品 name/rank/revenue，不告诉领导「这竞品对标我方哪款」=最大决策缺口。
-# 给我方产品（own_products.match_keywords）配题材关键词，对竞品名 + LLM 中文摘要做小写
-# 子串匹配，命中给该行打「⚔️ 对标《本品》」+ TL;DR 计数，让领导一眼看出「要不要管」。
+# ── 同赛道：这竞品和我方哪款产品同赛道（决策锚点，纯本地零 ST/零 LLM）──────────
+# digest 现只有竞品 name/rank/revenue，不告诉领导「这竞品和我方哪款同赛道」=最大决策缺口。
+# **优先按玩法子品类精确匹配**（own_products.match_subgenre vs 竞品 LLM 分类 subgenre_cn）——
+# 题材关键词（末日/丧尸）横跨数字门/基地建设/塔防多品类，先天分不出真同赛道；子品类按核心机制
+# 分类才区分得开。未配子品类的产品回退题材关键词子串匹配。命中给行尾打「⚔️《本品》同赛道」+
+# TL;DR 计数，让领导一眼看出「要不要管」。
 
-# 命中对标的竞品在「今日要闻」里的重要度乘数：竞品打进我方赛道 = 对领导的第一决策轴，
+# 命中「同赛道」的竞品在「今日要闻」里的重要度乘数：竞品打进我方赛道 = 对领导的第一决策轴，
 # 比随机高名次次市场新品更要紧。强度分 × 市场权重 × 本系数后参与跨 combo 排序，确保
-# 「对标」竞品不被长尾挤出今日要闻。仅影响今日要闻排序（标签 ⚔️ 仍照常打）。
+# 同赛道竞品不被长尾挤出今日要闻。仅影响今日要闻排序（标签 ⚔️ 仍照常打）。
 _OWN_MATCH_BOOST = 2.5
 
 
-def _match_own_product(text: str, products: list[tuple[str, list[str]]]) -> Optional[tuple[str, str]]:
-    """竞品文本 → 命中的我方产品 (产品名, 命中关键词)，第一个命中即返回（标签要短）。
-    纯小写子串匹配；关键词质量（区分度）由录入方把关，泛词会全命中。"""
+def _match_own_product(text: str, subgenre: Optional[str],
+                       products: list[tuple[str, list[str], set[str]]]) -> Optional[tuple[str, str]]:
+    """竞品 (文本, 玩法子品类 subgenre_cn) → 命中的我方产品 (产品名, 命中依据)，第一个命中即返回。
+    **子品类优先**：产品配了 match_subgenre 就**只**按子品类相等匹配（精确，忽略关键词，治题材
+    关键词太宽泛）；没配子品类才回退题材关键词小写子串匹配。竞品无子品类（未分类/老行）+ 产品
+    只认子品类 → 不命中（宁缺毋滥，正是要去掉的假阳）。"""
     t = (text or "").lower()
-    if not t:
-        return None
-    for name, kws in products:
-        for kw in kws:
-            if kw and kw in t:
+    sg = (subgenre or "").strip()
+    for name, kws, subs in products:
+        if subs:  # 配了子品类 → 子品类相等权威匹配
+            if sg and sg in subs:
+                return (name, sg)
+            continue   # 该产品只认子品类，不回退关键词（避免题材泛匹配漏回来）
+        for kw in kws:  # 未配子品类 → 回退题材关键词
+            if kw and t and kw in t:
                 return (name, kw)
     return None
 
 
 def _own_tag(app_id, own_matches: Optional[dict]) -> str:
-    """竞品行尾「对标我方哪款」标签：命中 → ` ⚔️ 对标《X》`，否则 ``。⚔️ 刻意避开已表
+    """竞品行尾「同赛道」标签：命中 → ` ⚔️《X》同赛道`，否则 ``。⚔️ 刻意避开已表
     「看板」的 🎯。产品名过 _md_name 防破版。"""
     name = (own_matches or {}).get(app_id)
-    return f" ⚔️ 对标《{_md_name(name, maxlen=20)}》" if name else ""
+    return f" ⚔️《{_md_name(name, maxlen=20)}》同赛道" if name else ""
 
 
-async def _load_own_products() -> list[tuple[str, list[str]]]:
-    """我方产品 (name, [小写关键词]) ——「对标我方哪款」匹配用。无 match_keywords 的跳过。
-    按 is_default 优先、id 次之排序，命中多款时标签优先取默认/先建那款（确定性）。"""
+async def _load_own_products() -> list[tuple[str, list[str], set[str]]]:
+    """我方产品 (name, [小写关键词], {玩法子品类}) ——「同赛道」匹配用。match_keywords 与
+    match_subgenre **都空**的产品跳过。按 is_default 优先、id 次之排序，命中多款时取确定性首个。"""
     from app.models.product import OwnProduct
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(
-            select(OwnProduct.name, OwnProduct.match_keywords)
-            .where(OwnProduct.match_keywords.is_not(None))
+            select(OwnProduct.name, OwnProduct.match_keywords, OwnProduct.match_subgenre)
             .order_by(OwnProduct.is_default.desc(), OwnProduct.id)
         )).all()
-    out: list[tuple[str, list[str]]] = []
-    for name, kw in rows:
+    out: list[tuple[str, list[str], set[str]]] = []
+    for name, kw, sg in rows:
         kws = [k.strip().lower() for k in (kw or "").split(",") if k.strip()]
-        if kws:
-            out.append((name, kws))
+        subs = {s.strip() for s in (sg or "").split(",") if s.strip()}
+        if kws or subs:
+            out.append((name, kws, subs))
     return out
 
 
@@ -287,7 +295,7 @@ def build_movement_lines(s: dict, entities: Optional[dict] = None,
     """movement 摘要 → 人读行，**按重要度降序**（同分稳定保序）。与 Sentry 的
     [NEW]/[UP] 机器码刻意分离。
     entities: {app_id: 中文厂商主体} —— 给每条补「日收入 · 下载 · 厂商归属」子行。
-    own_matches: {app_id: 我方产品名} —— 命中则行尾打「⚔️ 对标《X》」（对标我方哪款）。
+    own_matches: {app_id: 我方产品名} —— 命中则行尾打「⚔️《X》同赛道」（对标我方哪款）。
     cap: 单 combo 展示行上限（按 `_event_score` 砍掉重要性较低的尾部，不再按
     空降/窜升/暴跌/收入异动 的固定类序砍——否则末类的大额收入异动会被前类长尾挤掉），
     None=不限。combo 内市场权重恒定，故只按事件强度排序即与全卡口径一致。"""
@@ -412,7 +420,7 @@ def build_newcomer_lines(market: dict, publisher: dict,
     articles: {app_id: [WechatArticle]} 微信公众号文章
     entities: {app_id: 中文厂商主体} —— 市场新面孔补中文归属（厂商新品行自带 entity_name）
     summaries: {app_id: 一句话中文摘要} —— LLM 中文化，让领导一眼看懂「这是什么游戏」
-    own_matches: {app_id: 我方产品名} —— 命中则标题行尾打「⚔️ 对标《X》」。
+    own_matches: {app_id: 我方产品名} —— 命中则标题行尾打「⚔️《X》同赛道」。
     country/platform: 该 combo 的市场坐标，用于给「新厂商待识别」线索行内拼商店页直达
     （缺省 None = 不拼链接，向后兼容老调用 / 单测）。
     lead_cta: is_slg=false 线索行是否带「建议建档」尾标 + 商店页直达。默认 True（维护者卡）；
@@ -484,7 +492,7 @@ def build_free_newcomer_lines(market: dict, publisher: dict,
     **钉钉只推 is_slg=True**（下载榜噪声大：休闲/工具类装机榜混入多）——非 SLG 的
     下载榜新品仍照常入库 + 看板可见，只是不进钉钉卡片（口径差异是刻意的，见 ADR）。
     回归同样过滤。⬇️ 前缀与收入榜区分。市场+主体两路按 app_id 去重。
-    own_matches: {app_id: 我方产品名} —— 命中则行尾打「⚔️ 对标《X》」。
+    own_matches: {app_id: 我方产品名} —— 命中则行尾打「⚔️《X》同赛道」。
     """
     from app.services.slg_publishers import is_slg
     articles = articles or {}
@@ -611,7 +619,7 @@ def _digest_tldr(per_combo: list[dict], version_changes, region_changes,
                     new_apps.add(x["app_id"])
     bits = []
     if own_match_count:
-        bits.append(f"⚔️ 对标 {own_match_count}")   # 直接威胁我方产品的竞品数，置顶
+        bits.append(f"⚔️ 同赛道 {own_match_count}")   # 直接威胁我方产品的竞品数，置顶
     if move:
         bits.append(f"📊 异动 {move}")
     if new_apps:
@@ -668,7 +676,7 @@ def _collect_scored_items(per_combo: list[dict],
 
 def _highlight_line(item: dict, own_matches: Optional[dict] = None) -> str:
     """「今日要闻」的一行紧凑摘要：跨 combo 置顶，故**内联市场标签**、去富化子行/链接，
-    一眼看清「哪个市场、什么游戏、什么事」。命中对标则行尾打「⚔️ 对标《X》」。"""
+    一眼看清「哪个市场、什么游戏、什么事」。命中对标则行尾打「⚔️《X》同赛道」。"""
     e = item["e"]
     mkt = _market_label(item["country"], item["platform"])
     kind = item["kind"]
@@ -758,7 +766,7 @@ def build_daily_digest(per_combo: list[dict], today: str,
     per_combo: [{country, platform, movement: dict|None, market: dict|None, publisher: dict|None}]
     articles: {app_id: [WechatArticle]} 微信公众号文章（按 app_id 聚合）
     entities: {app_id: 中文厂商主体}（市场新面孔 / 异动行补中文归属）
-    own_matches: {app_id: 我方产品名}（对标我方哪款，命中给该竞品行打「⚔️ 对标《X》」+ TL;DR 计数）
+    own_matches: {app_id: 我方产品名}（对标我方哪款，命中给该竞品行打「⚔️《X》同赛道」+ TL;DR 计数）
     audience: "maintainer"（默认，全量卡）/ "leader"（领导卡）。领导卡剥离维护者杂讯：
     跳过「待建档新厂线索」整段、新品行不拼「建议建档」尾标、TL;DR 不计「待建档 N」。
     检测数据两个 audience 共用一份（send_daily_digest 渲染两遍），零额外 ST。
@@ -1111,27 +1119,51 @@ async def send_daily_digest() -> bool:
     except Exception:
         logger.exception("Lead newcomer candidates (digest) failed")
 
-    # 「对标我方哪款」：我方产品关键词 → 命中竞品 app_id。竞品文本=名字 + LLM 中文摘要
-    # （summary_cn，题材信号最浓）；movement 老竞品只有名字。纯本地小写子串匹配，零 ST/LLM。
-    # 无我方产品配关键词 → own_matches 空、整段静默不影响其它情报。
+    # 「同赛道」：我方产品 → 命中竞品 app_id。**优先按玩法子品类精确匹配**（竞品 subgenre_cn
+    # vs 产品 match_subgenre，治题材关键词太宽泛分不出数字门 vs 基地建设）；未配子品类的产品回退
+    # 题材关键词（文本=名字 + LLM 中文摘要 summary_cn）。竞品子品类查 market_newcomer_log（前进式：
+    # 新品/曾建档竞品有；未分类老竞品=NULL，子品类产品对其不命中=正是要去掉的假阳）。零 ST/LLM。
     own_matches: dict[str, str] = {}
     try:
         own_products = await _load_own_products()
         if own_products:
+            # 一次查全部候选竞品（新品三段 + movement）的玩法子品类。
+            cand_ids: set[str] = set()
+            for c in per_combo:
+                for key in ("market", "publisher", "free_market", "free_publisher"):
+                    for n in ((c.get(key) or {}).get("newcomers") or []):
+                        if n.get("app_id"):
+                            cand_ids.add(n["app_id"])
+                mv = c.get("movement") or {}
+                for k in ("new_entrants", "surges", "drops", "revenue_spikes"):
+                    for e in (mv.get(k) or []):
+                        if e.get("app_id"):
+                            cand_ids.add(e["app_id"])
+            subgenre_by_app: dict[str, str] = {}
+            if cand_ids:
+                from app.models.newcomer import MarketNewcomerLog
+                async with AsyncSessionLocal() as db:
+                    sgrows = (await db.execute(
+                        select(MarketNewcomerLog.app_id, MarketNewcomerLog.subgenre_cn)
+                        .where(MarketNewcomerLog.app_id.in_(list(cand_ids)),
+                               MarketNewcomerLog.subgenre_cn.is_not(None))
+                    )).all()
+                for aid, sg in sgrows:
+                    subgenre_by_app.setdefault(aid, sg)
             for c in per_combo:
                 for key in ("market", "publisher", "free_market", "free_publisher"):
                     for n in ((c.get(key) or {}).get("newcomers") or []):
                         aid = n.get("app_id")
                         if aid and not n.get("is_reentry") and aid not in own_matches:
                             text = " ".join(t for t in (n.get("name"), summaries_by_app.get(aid)) if t)
-                            if (m := _match_own_product(text, own_products)):
+                            if (m := _match_own_product(text, subgenre_by_app.get(aid), own_products)):
                                 own_matches[aid] = m[0]
                 mv = c.get("movement") or {}
                 for k in ("new_entrants", "surges", "drops", "revenue_spikes"):
                     for e in (mv.get(k) or []):
                         aid = e.get("app_id")
                         if aid and aid not in own_matches:
-                            if (m := _match_own_product(e.get("name") or "", own_products)):
+                            if (m := _match_own_product(e.get("name") or "", subgenre_by_app.get(aid), own_products)):
                                 own_matches[aid] = m[0]
     except Exception:
         logger.exception("Own-product match (digest) failed")

@@ -155,6 +155,35 @@ async def test_translate_salvages_summary_on_truncation(app, monkeypatch):
     assert await ni.translate_pending_newcomers() == 0 and len(calls) == 1
 
 
+@pytest.mark.asyncio
+async def test_translate_writes_valid_subgenre_only(app, monkeypatch):
+    """玩法子品类：词表内的值写入 subgenre_cn；LLM 编的非词表值 → None（不脏库、精确匹配不误命中）。"""
+    from app.config import settings
+    from app.database import AsyncSessionLocal
+    from app.models.newcomer import MarketNewcomerLog
+    from app.services import newcomer_i18n as ni
+    monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
+    monkeypatch.setattr(settings, "TAISHI_API_KEY", "k")
+
+    valid = '{"summary": "末日数字门 SLG", "subgenre": "数字门SLG", "translation": "中文。"}'
+    monkeypatch.setattr(ni.llm_gateway, "get_client", lambda: _Client(valid, []))
+    await _add_log("ssg", "末日先锋", "US")
+    assert await ni.translate_pending_newcomers() == 1
+    async with AsyncSessionLocal() as db:
+        r = (await db.execute(select(MarketNewcomerLog).where(
+            MarketNewcomerLog.app_id == "ssg"))).scalar_one()
+    assert r.subgenre_cn == "数字门SLG"
+
+    bad = '{"summary": "某策略游戏", "subgenre": "我自己编的子品类", "translation": "中文。"}'
+    monkeypatch.setattr(ni.llm_gateway, "get_client", lambda: _Client(bad, []))
+    await _add_log("bsg", "怪词游戏", "US")
+    assert await ni.translate_pending_newcomers() == 1
+    async with AsyncSessionLocal() as db:
+        r2 = (await db.execute(select(MarketNewcomerLog).where(
+            MarketNewcomerLog.app_id == "bsg"))).scalar_one()
+    assert r2.subgenre_cn is None and "某策略游戏" in (r2.summary_cn or "")
+
+
 def test_digest_newcomer_line_carries_summary():
     """build_newcomer_lines 把一句话中文摘要拼进新品行（📝）。"""
     from app.services.release_alerts import build_newcomer_lines
