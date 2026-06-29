@@ -146,6 +146,19 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 - **前端**（`NewReleases.tsx`）：信号 chip「真首发(默认)/回归/全部」，`/history?signal=` 服务端筛；回归卡片打 cyan badge。
 - **向后兼容**：0022 迁移前的历史行 `is_reentry=NULL`，`signal=true_new` 把 NULL 当真首发（老卡片照旧显示）。
 
+### movement「空降」回归门控（is_reentry，P1.4）
+
+上面是 **newcomers**（全榜首次出现）的回归判定；**movement**（`detect_movement`，收入榜 Top `COMPETITOR_ALERT_TOPN`=20 进退）另有同名异源的回归问题：它只比 today vs **上一可用日**两快照，老 SLG 短暂跌出 Top20 又回来会被错标「🆕 空降」并打高分顶上今日要闻（prod 实测 US/iOS top 榜 ~32% app 有出榜又回缺口；某日 2 个 new_entrant **全是**回归）。
+
+`detect_movement` 加一道历史窗：上一可用日**之前** `COMPETITOR_REENTRY_WINDOW_DAYS`(默认 30) 天内曾在 Top20 的 app_id → new_entrant 打 `is_reentry=True`（每 combo 多一条本地查询，零 ST；窗口取 `[cutoff, prev_date)` 避开当期对比日；`=0` 关此判定；只看 `rank<=topn` 的历史，仅榜尾出现过不算回归）。渲染层（`release_alerts.py`）：文案「🆕 空降」→「🔄 重回」（`build_movement_lines` + `_highlight_line` 两处），重要度 ×`_REENTRY_PENALTY`(0.4) **降权**——高名次回归仍可冒头、不硬排除，但不再压过真首发污染今日要闻。surge/drop/revenue_spike 无回归概念、不受影响。
+
+### 空卡分支：平淡日心跳 vs 数据未就位告警（P1.1）
+
+`send_daily_digest` 原本 maintainer 卡为空时只 `logger.info` 静默——掩盖了「同步烧穿/失败导致全卡空」与「真平淡日」的本质区别。现以**硬锚核心 US/iOS**（`_core_synced`：该 combo `movement` 非 None 或 `market.as_of==today` = 今日有新快照）二分：
+
+- **数据未就位**（核心 US/iOS 今日无快照）：`logger.error`→Sentry + 发克制维护者兜底卡（`build_data_not_ready_card`）。**不受开关控制**——这是管道故障告警。次市场双周非同步日不会误触发（US/iOS 每日有数据 → 卡非空 → 根本不进此分支）；仅「全卡空 + US/iOS 今日无快照」= 真故障时触发。
+- **真平淡日**（核心已同步、确无事）：默认静默；`DIGEST_HEARTBEAT_ENABLED`(默认 False) 开才发「今日平静」心跳卡（`build_heartbeat_card`，两群同发）。**推领导群后再开**——领导看不到卡会误读「是不是坏了」；测试群只有本人、天天收无聊心跳没意义。
+
 ### 缺口忽略名单过滤（2026-06-22）
 
 全市场新品（`detect_newcomers`）+ 检出沉淀 + digest 复用 `publisher_ignores`（与 [`/gaps`](PUBLISHERS.md) **同一名单同一口径** `_tokens`+`corp_squash`），剔除**人工逐条确认的非 SLG 噪声**——误挂 App Store「strategy」标签的麻将 / 扑克 / 塔防 / 宝可梦对战等。
@@ -179,7 +192,7 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 - **连锁限制**：看板详情页里的国外资源（商店截图 mzstatic 图床 / YouTube 视频）手机端在看板内也可能加载不全；视频「播放」本质要客户端能访问 YouTube，无解、只能电脑端。
 - **⚠️ 看板深链「两端可达」是乐观假设（2026-06-28 排障证伪）**：HK 境外 IP → 国内手机（移动数据/无代理）跨境拉前端 JS bundle（主包 ~373KB）链路不稳，钉钉 webview 传输中途 `client disconnected` → React 挂载不了 → **整页白屏，连自有文字情报都看不到**；**间歇性**（链路好时能开、差时白屏）。诊断法：`docker logs slg_caddy` 查手机 UA(`AliApp(DingTalk)`) 的 `aborting with incomplete response`。备选治理（均未做，2026-06-28 决议**先观察暂不修**）：① 看板链接也标 💻 ② 后端轻量服务端分享页（绕开重型 SPA，最对症）③ Cloudflare 免备案 CDN ④ 腾讯云跨境加速。**约束**：服务器必须境外（ST API）→ 不能搬国内；nip.io 裸 IP → 国内 CDN 备案走不通。
 
-代码集中在 `build_daily_digest` 拼装层 + `_block` / `_meta_inner` / `_link_line` / `_digest_tldr` helper（`services/release_alerts.py`）。**本轮（2026-06-28）已落地**：重要度排序 + 今日要闻（见下节）、领导群/维护者群双卡分发 + markdown 转义（见「双卡分发」节）、对标我方哪款（见末节）、实机视频/市场待识别折叠减负（#141，见「封顶」节）、领导卡只看 SLG 产品（#143，见「双卡分发」节）。**剩余 digest backlog**：全局段统一封顶预算、emoji 收敛（多个「新」语义重叠）、空卡/无数据日心跳兜底、跨 combo 新品按 app_id 去重、movement 空降补 is_reentry 门控、领导卡推送时点前移。
+代码集中在 `build_daily_digest` 拼装层 + `_block` / `_meta_inner` / `_link_line` / `_digest_tldr` helper（`services/release_alerts.py`）。**本轮（2026-06-28）已落地**：重要度排序 + 今日要闻（见下节）、领导群/维护者群双卡分发 + markdown 转义（见「双卡分发」节）、对标我方哪款（见末节）、实机视频/市场待识别折叠减负（#141，见「封顶」节）、领导卡只看 SLG 产品（#143，见「双卡分发」节）。**剩余 digest backlog**：全局段统一封顶预算、emoji 收敛（多个「新」语义重叠）、跨 combo 新品按 app_id 去重、领导卡推送时点前移。（**已落地**：空卡心跳/数据未就位告警 P1.1、movement 空降补 is_reentry 门控 P1.4——见「is_reentry」「空卡分支」节。）
 
 ### digest 重要度排序 + 今日要闻置顶（PR #136）
 

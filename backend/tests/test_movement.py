@@ -171,3 +171,65 @@ async def test_disabled_flag_short_circuits(client, caplog, monkeypatch):
 
     assert s["prev_date"] is None and s["new_entrants"] == []
     assert _errors(caplog) == []
+
+
+# ── 回归门控（is_reentry，P1.4）：老 SLG 短暂跌出 TopN 又回来 ≠ 真「空降」 ──
+
+@pytest.mark.asyncio
+async def test_reentry_within_window_flagged(client):
+    """窗口内曾在 TopN、上一可用日跌出、今日回来 → new_entrant 标 is_reentry=True。"""
+    from app.services.movement import detect_movement
+    await _seed("2026-05-10", [("a", 1, None, SLG_PUB), ("r", 5, None, SLG_PUB)])   # r 曾在 TopN
+    await _seed("2026-05-15", [("a", 1, None, SLG_PUB)])                            # r 跌出
+    await _seed("2026-05-16", [("a", 1, None, SLG_PUB), ("r", 8, None, SLG_PUB)])   # r 回来
+    s = await detect_movement("US", "ios", "2026-05-16")
+    ne = {e["name"]: e for e in s["new_entrants"]}
+    assert "r" in ne and ne["r"]["is_reentry"] is True
+
+
+@pytest.mark.asyncio
+async def test_true_first_entrant_not_reentry(client):
+    """从未在 TopN 出现过的真首发 → is_reentry=False（空降照旧）。"""
+    from app.services.movement import detect_movement
+    await _seed("2026-05-15", [("a", 1, None, SLG_PUB)])
+    await _seed("2026-05-16", [("a", 1, None, SLG_PUB), ("fresh", 4, None, SLG_PUB)])
+    s = await detect_movement("US", "ios", "2026-05-16")
+    ne = {e["name"]: e for e in s["new_entrants"]}
+    assert ne["fresh"]["is_reentry"] is False
+
+
+@pytest.mark.asyncio
+async def test_reentry_outside_window_not_flagged(client):
+    """曾上 TopN 但在回看窗(默认 30 天)之外 → 不算回归，当真首发处理（旧事件重新计新闻性）。"""
+    from app.services.movement import detect_movement
+    await _seed("2026-03-01", [("a", 1, None, SLG_PUB), ("old", 5, None, SLG_PUB)])  # 远早于窗
+    await _seed("2026-05-15", [("a", 1, None, SLG_PUB)])
+    await _seed("2026-05-16", [("a", 1, None, SLG_PUB), ("old", 8, None, SLG_PUB)])
+    s = await detect_movement("US", "ios", "2026-05-16")
+    ne = {e["name"]: e for e in s["new_entrants"]}
+    assert ne["old"]["is_reentry"] is False
+
+
+@pytest.mark.asyncio
+async def test_reentry_window_zero_disables(client, monkeypatch):
+    """COMPETITOR_REENTRY_WINDOW_DAYS=0 关回归判定 → 真回归也按 is_reentry=False。"""
+    from app.services import movement
+    monkeypatch.setattr(movement.settings, "COMPETITOR_REENTRY_WINDOW_DAYS", 0)
+    await _seed("2026-05-10", [("a", 1, None, SLG_PUB), ("r", 5, None, SLG_PUB)])
+    await _seed("2026-05-15", [("a", 1, None, SLG_PUB)])
+    await _seed("2026-05-16", [("a", 1, None, SLG_PUB), ("r", 8, None, SLG_PUB)])
+    s = await movement.detect_movement("US", "ios", "2026-05-16")
+    ne = {e["name"]: e for e in s["new_entrants"]}
+    assert ne["r"]["is_reentry"] is False
+
+
+@pytest.mark.asyncio
+async def test_reentry_only_counts_topn_history(client):
+    """窗口内只在榜尾(>TopN)出现过、从未进 TopN → 仍是真首发，不误标回归。"""
+    from app.services.movement import detect_movement
+    await _seed("2026-05-10", [("a", 1, None, SLG_PUB), ("climber", 35, None, SLG_PUB)])  # 35>topn(20)
+    await _seed("2026-05-15", [("a", 1, None, SLG_PUB)])
+    await _seed("2026-05-16", [("a", 1, None, SLG_PUB), ("climber", 6, None, SLG_PUB)])   # 首进 TopN
+    s = await detect_movement("US", "ios", "2026-05-16")
+    ne = {e["name"]: e for e in s["new_entrants"]}
+    assert ne["climber"]["is_reentry"] is False

@@ -892,3 +892,138 @@ def test_digest_leader_excludes_market_lead_newcomers():
     _, body_m, _ = build_daily_digest(per_combo, "2026-06-28", audience="maintainer")
     assert "塔防新品" in body_m and "足球竞技手游" in body_m
     assert "✨ 新品 4" in body_m                  # 全量计数（3 market + 1 publisher）
+
+
+# ── 回归门控 P1.4：movement 渲染 + 重要度降权 ────────────────────────────────
+
+def test_movement_reentry_renders_distinct_verb():
+    """is_reentry=True → 「🔄 重回」；False/缺字段 → 「🆕 空降」（兼容老结构）。"""
+    from app.services.release_alerts import build_movement_lines
+    s = {"new_entrants": [
+            {"app_id": "r", "name": "老兵回归", "prev_rank": None, "cur_rank": 6, "is_reentry": True},
+            {"app_id": "n", "name": "真首发", "prev_rank": None, "cur_rank": 7, "is_reentry": False}],
+         "surges": [], "drops": [], "revenue_spikes": []}
+    text = "\n".join(build_movement_lines(s))
+    assert "🔄 **老兵回归** 重回 **#6**" in text
+    assert "🆕 **真首发** 空降 **#7**" in text
+
+
+def test_movement_reentry_highlight_verb():
+    """今日要闻一行同样区分重回/空降。"""
+    from app.services.release_alerts import _highlight_line
+    e = {"app_id": "r", "name": "老兵", "cur_rank": 2, "is_reentry": True}
+    line = _highlight_line({"e": e, "country": "US", "platform": "ios", "kind": "new_entrant"})
+    assert "🔄 **老兵** 重回 #2" in line and "空降" not in line
+
+
+def test_movement_reentry_scored_below_true_entrant():
+    """回归降权：同名次 is_reentry 强度分 < 真首发；但仍 >0（高名次回归不硬排除）。"""
+    from app.services.release_alerts import _event_score
+    true_new = _event_score("new_entrant", {"cur_rank": 3})
+    reentry = _event_score("new_entrant", {"cur_rank": 3, "is_reentry": True})
+    assert 0 < reentry < true_new
+    # #1 回归仍应低于真·头部空降，避免占据今日要闻头部
+    top_reentry = _event_score("new_entrant", {"cur_rank": 1, "is_reentry": True})
+    top_true = _event_score("new_entrant", {"cur_rank": 1})
+    assert top_reentry < top_true
+
+
+# ── 心跳 / 数据未就位卡 P1.1：纯构造函数 ─────────────────────────────────────
+
+def test_heartbeat_and_data_not_ready_cards():
+    from app.services.release_alerts import build_heartbeat_card, build_data_not_ready_card
+    h_title, h_text = build_heartbeat_card("2026-06-29")
+    assert "2026-06-29" in h_title and "平静" in h_text
+    d_title, d_text = build_data_not_ready_card("2026-06-29")
+    assert "数据未就位" in d_title
+    assert "未同步" in d_text and "美国 · iOS" in d_text
+
+
+# ── 心跳 / 数据未就位 dispatch P1.1：send_daily_digest 三分支 ─────────────────
+
+async def _seed_us_ios(rows):
+    """rows: [(app_id, date, rank, publisher)]，US/ios grossing。"""
+    from app.database import AsyncSessionLocal
+    from app.models.game import GameRanking
+    async with AsyncSessionLocal() as db:
+        for app_id, date, rank, pub in rows:
+            db.add(GameRanking(app_id=app_id, date=date, rank=rank, downloads=None,
+                               revenue=None, country="US", platform="ios",
+                               name=app_id, publisher=pub, icon_url=None))
+        await db.commit()
+
+
+def _quiet_day_rows():
+    """同一 app 在最近 5 个连续快照(含今日)同名次 → 无异动、无新品(已进基线) = 平淡日。"""
+    from datetime import timedelta
+    from app.database import utcnow_naive
+    SLG = "Century Games Pte. Ltd."
+    days = [(utcnow_naive() - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(5)]
+    return [("steady", d, 1, SLG) for d in days], days[0]
+
+
+@pytest.mark.asyncio
+async def test_send_daily_digest_quiet_day_silent_when_heartbeat_off(client, monkeypatch):
+    """真平淡日(核心已同步、无事) + 心跳关 → 静默不发任何卡（保持默认行为）。"""
+    import importlib
+    ra = importlib.import_module("app.services.release_alerts")
+    dt = importlib.import_module("app.services.dingtalk")
+    from app.config import settings
+    rows, _ = _quiet_day_rows()
+    await _seed_us_ios(rows)
+    monkeypatch.setattr(settings, "DINGTALK_WEBHOOK_URL", "https://example.com/hook")
+    monkeypatch.setattr(settings, "SYNC_RANKING_COMBOS", "US:ios")
+    monkeypatch.setattr(settings, "DIGEST_HEARTBEAT_ENABLED", False)
+    sent = []
+    async def fake_card(*a, **k): sent.append(("card", a)); return True
+    async def fake_md(*a, **k): sent.append(("md", a)); return True
+    monkeypatch.setattr(dt, "send_action_card", fake_card)
+    monkeypatch.setattr(dt, "send_markdown", fake_md)
+    assert await ra.send_daily_digest() is False
+    assert sent == []          # 平淡日 + 心跳关 = 完全静默
+
+
+@pytest.mark.asyncio
+async def test_send_daily_digest_heartbeat_when_enabled(client, monkeypatch):
+    """平淡日 + DIGEST_HEARTBEAT_ENABLED 开 → 发一张「平静」心跳卡（markdown）。"""
+    import importlib
+    ra = importlib.import_module("app.services.release_alerts")
+    dt = importlib.import_module("app.services.dingtalk")
+    from app.config import settings
+    rows, _ = _quiet_day_rows()
+    await _seed_us_ios(rows)
+    monkeypatch.setattr(settings, "DINGTALK_WEBHOOK_URL", "https://example.com/hook")
+    monkeypatch.setattr(settings, "SYNC_RANKING_COMBOS", "US:ios")
+    monkeypatch.setattr(settings, "DIGEST_HEARTBEAT_ENABLED", True)
+    md_sent = []
+    async def fake_md(title, text, *a, **k): md_sent.append((title, text)); return True
+    async def fake_card(*a, **k): raise AssertionError("平淡日不应发 ActionCard")
+    monkeypatch.setattr(dt, "send_markdown", fake_md)
+    monkeypatch.setattr(dt, "send_action_card", fake_card)
+    assert await ra.send_daily_digest() is True
+    assert any("平静" in text for _, text in md_sent)
+
+
+@pytest.mark.asyncio
+async def test_send_daily_digest_data_not_ready_alarms(client, monkeypatch, caplog):
+    """核心 US/iOS 今日无快照(只有历史) → 升 logger.error(Sentry) + 发数据未就位兜底卡。"""
+    import importlib, logging
+    from datetime import timedelta
+    from app.database import utcnow_naive
+    ra = importlib.import_module("app.services.release_alerts")
+    dt = importlib.import_module("app.services.dingtalk")
+    from app.config import settings
+    SLG = "Century Games Pte. Ltd."
+    # 只种昨天的数据，不种今天 → today_missing，核心未就位
+    prev = (utcnow_naive() - timedelta(days=1)).strftime("%Y-%m-%d")
+    await _seed_us_ios([("steady", prev, 1, SLG)])
+    monkeypatch.setattr(settings, "DINGTALK_WEBHOOK_URL", "https://example.com/hook")
+    monkeypatch.setattr(settings, "SYNC_RANKING_COMBOS", "US:ios")
+    md_sent = []
+    async def fake_md(title, text, *a, **k): md_sent.append((title, text)); return True
+    monkeypatch.setattr(dt, "send_markdown", fake_md)
+    with caplog.at_level(logging.ERROR, logger="app.services.release_alerts"):
+        assert await ra.send_daily_digest() is True
+    assert any("数据未就位" in title for title, _ in md_sent)
+    assert any("core US/iOS snapshot missing" in r.getMessage()
+               for r in caplog.records if r.levelno == logging.ERROR)
