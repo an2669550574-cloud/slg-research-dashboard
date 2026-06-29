@@ -246,6 +246,10 @@ class PublisherGapOut(BaseModel):
     downloads: int           # 窗口内累计下载
     app_count: int           # 该 publisher 名下涉及多少 app_id
     top_app: PublisherTopProductOut  # 收入最高的代表 app（icon + 名）
+    # 置信信号（让缺口从「展示」升级成「带优先度的建档候选」）：
+    days_on_chart: int = 0   # 旗舰 app 窗口内上榜的不同天数——持续上榜=真发行商，一日闪现=噪声
+    genre: Optional[str] = None      # 代表 app 的玩法品类（来自 newcomer_log，gaps→log 数据回流）
+    summary_cn: Optional[str] = None # 代表 app 的一句话中文摘要（有则秒懂这是什么游戏）
 
 
 class PublisherDownloadLeadOut(BaseModel):

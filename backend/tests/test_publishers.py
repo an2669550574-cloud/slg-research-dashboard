@@ -319,6 +319,35 @@ async def test_gaps_us_first_for_cjk_multimarket_collision(client):
 
 
 @pytest.mark.asyncio
+async def test_gaps_confidence_signals_days_and_newcomer_join(client):
+    """缺口置信信号：days_on_chart=旗舰窗口内上榜的不同天数（持续上榜 vs 一日闪现）；
+    genre/summary_cn 由 gaps→newcomer_log 回流（同 app_id join 出玩法品类+一句话）。"""
+    from datetime import date, timedelta as td
+    from app.database import AsyncSessionLocal
+    from app.models.newcomer import MarketNewcomerLog
+    d0 = date.fromisoformat(_today())
+    days3 = [(d0 - td(days=i)).isoformat() for i in range(3)]
+    rows = [("gapconf.1", dt, 5, 100, 60.0, "US", "ios", "Conf Game", "ConfCorp Studios")
+            for dt in days3]  # 同 app 连上 3 天
+    rows.append(("gapconf.2", days3[0], 8, 50, 20.0, "US", "ios", "Blip Game", "BlipCo"))  # 仅 1 天
+    await _seed_rankings(rows)
+    async with AsyncSessionLocal() as db:  # 仅给 gapconf.1 配 newcomer_log（回流来源）
+        db.add(MarketNewcomerLog(
+            country="US", platform="ios", app_id="gapconf.1", as_of=days3[0],
+            chart_type="grossing", is_slg=False, name="Conf Game",
+            publisher="ConfCorp Studios", genre="Strategy", summary_cn="末日策略测试摘要"))
+        await db.commit()
+
+    gaps = (await client.get("/api/publishers/gaps?days=30")).json()
+    by_pub = {g["publisher"]: g for g in gaps}
+    assert by_pub["ConfCorp Studios"]["days_on_chart"] == 3
+    assert by_pub["ConfCorp Studios"]["genre"] == "Strategy"
+    assert by_pub["ConfCorp Studios"]["summary_cn"] == "末日策略测试摘要"
+    assert by_pub["BlipCo"]["days_on_chart"] == 1     # 一日闪现
+    assert by_pub["BlipCo"]["genre"] is None          # 无 newcomer_log 回流 → None
+
+
+@pytest.mark.asyncio
 async def test_add_alias_and_app_id_reject_duplicates(client):
     """同主体下重复 alias / app_id 返回 409（对齐 itunes-artist / relation 的去重约定），
     避免人工建档时抽屉出现重复马甲行。跨主体钉同一 app_id 仍允许（另一层语义）。"""

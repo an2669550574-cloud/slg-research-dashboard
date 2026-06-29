@@ -826,6 +826,7 @@ export const en: Translations = {
     gapsExpand: 'Show research gaps',
     gapsCollapse: 'Hide research gaps',
     gapsAppCount: (n: number) => n > 1 ? `${n} apps` : '1 app',
+    gapsDays: (n: number) => n > 1 ? `${n}d on chart` : '1d only',
     gapsCreate: 'Create',
     gapsCreateHint: 'Prefill the new-publisher form with this publisher name + initial alias',
     gapsIgnore: 'Ignore',
