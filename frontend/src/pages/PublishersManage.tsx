@@ -641,7 +641,9 @@ export default function PublishersManage() {
                         <div className="font-display text-sm text-primary truncate">{g.publisher}</div>
                         <div className="text-[11px] text-muted truncate">
                           {g.top_app.name ?? g.top_app.app_id} · {tt.gapsAppCount(g.app_count)}
+                          {g.genre ? ` · ${g.genre}` : ''}{g.days_on_chart > 0 ? ` · ${tt.gapsDays(g.days_on_chart)}` : ''}
                         </div>
+                        {g.summary_cn && <div className="text-[11px] text-secondary truncate mt-0.5">📝 {g.summary_cn}</div>}
                       </div>
                       <div className="hidden sm:flex flex-col items-end shrink-0 font-data text-[11px] text-secondary">
                         <span>{fmtMoney(g.revenue)}</span>

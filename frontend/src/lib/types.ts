@@ -895,6 +895,9 @@ export interface PublisherGap {
   downloads: number
   app_count: number
   top_app: PublisherTopProduct
+  days_on_chart: number          // 旗舰窗口内上榜天数（持续=真发行商，1 天=噪声）
+  genre: string | null           // 代表 app 玩法品类（newcomer_log 回流）
+  summary_cn: string | null      // 代表 app 一句话中文摘要
 }
 
 /** 雷达覆盖建议：未接 iOS 雷达的 is_slg 主体，从已钉 iOS app_id 反解出的开发者账号候选。 */

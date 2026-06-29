@@ -861,6 +861,7 @@ export const zh = {
     gapsExpand: '展开调研缺口',
     gapsCollapse: '收起调研缺口',
     gapsAppCount: (n: number) => n > 1 ? `${n} 款` : '1 款',
+    gapsDays: (n: number) => n > 1 ? `连续上榜 ${n} 天` : '仅 1 天',
     gapsCreate: '建主体',
     gapsCreateHint: '用此 publisher 名预填新建主体表单 + 初始 alias',
     // 忽略名单：把已知非 SLG 巨头剔出缺口

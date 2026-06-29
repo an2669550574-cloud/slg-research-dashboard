@@ -732,6 +732,7 @@ async def list_publisher_gaps(
             func.coalesce(func.max(us_icon), func.max(GameRanking.icon_url)).label("icon"),
             func.sum(GameRanking.revenue).label("rev"),
             func.sum(GameRanking.downloads).label("dl"),
+            func.count(func.distinct(GameRanking.date)).label("days"),
         ).where(
             GameRanking.chart_type == CHART_GROSSING,
             GameRanking.date >= start.isoformat(),
@@ -744,7 +745,7 @@ async def list_publisher_gaps(
     # publisher 归一键（去标点/大小写）→ 桶；同名 publisher 跨 app 合算。
     # 用 normalize 后的 token 序列做键，让 "Kabam Games Ltd." 和 "Kabam Games" 合并。
     by_pub: dict[str, dict] = {}
-    for app_id, pub, name, icon, rev, dl in res.all():
+    for app_id, pub, name, icon, rev, dl, days in res.all():
         revv = float(rev or 0)
         if revv <= 0:
             continue
@@ -760,18 +761,39 @@ async def list_publisher_gaps(
         key = " ".join(pub_tokens) if pub_tokens else (pub or "").lower()
         if not key:
             continue
-        bucket = by_pub.setdefault(key, {"display": pub, "revenue": 0.0, "downloads": 0, "apps": []})
+        bucket = by_pub.setdefault(
+            key, {"display": pub, "revenue": 0.0, "downloads": 0, "apps": [], "days": 0})
         bucket["revenue"] += revv
         bucket["downloads"] += int(dl or 0)
+        # 该发行商名下「最持久 app」的上榜天数（桶内取最大，可能不是收入最高那款）——
+        # 任一 app 持续上榜即「真发行商」信号，全是一日闪现=噪声。
+        bucket["days"] = max(bucket["days"], int(days or 0))
         bucket["apps"].append((revv, app_id, name, icon))
+
+    # gaps→newcomer_log 数据回流：拿各桶代表 app 的玩法品类 + 一句话中文摘要，让缺口行从
+    # 「一串发行商名」升级成「带品类/摘要的建档候选」，judge「要不要建档」更快。零额外 ST。
+    for b in by_pub.values():
+        b["apps"].sort(key=lambda x: -x[0])
+    top_aids = [b["apps"][0][1] for b in by_pub.values() if b["apps"]]
+    genre_by_app: dict[str, tuple] = {}
+    if top_aids:
+        nrows = (await db.execute(
+            select(MarketNewcomerLog.app_id, MarketNewcomerLog.genre, MarketNewcomerLog.summary_cn)
+            .where(MarketNewcomerLog.app_id.in_(top_aids))
+        )).all()
+        for aid, genre, summary in nrows:
+            cur = genre_by_app.get(aid, (None, None))
+            genre_by_app[aid] = (cur[0] or genre, cur[1] or summary)  # 同 app 多行补全任意非空
 
     items: list[PublisherGapOut] = []
     for b in by_pub.values():
-        b["apps"].sort(key=lambda x: -x[0])
+        if not b["apps"]:
+            continue
         rev, aid, nm, ic = b["apps"][0]
+        genre, summary = genre_by_app.get(aid, (None, None))
         items.append(PublisherGapOut(
             publisher=b["display"], revenue=b["revenue"], downloads=b["downloads"],
-            app_count=len(b["apps"]),
+            app_count=len(b["apps"]), days_on_chart=b["days"], genre=genre, summary_cn=summary,
             top_app=PublisherTopProductOut(app_id=aid, name=nm, icon_url=ic),
         ))
     items.sort(key=lambda x: -x.revenue)
