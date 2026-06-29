@@ -169,7 +169,7 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 
 ### 每日 digest 群推送封顶（PR #101）
 
-`build_daily_digest` 原本无长度上限——波动大的日子（movement 完全无 cap）会刷出一张超长卡。两层封顶：单 combo movement 行封 `DIGEST_MOVEMENT_TOPN`（按 空降/窜升/暴跌/收入异动 重要性保留），全卡按 combo 粒度封 `DIGEST_MAX_ITEMS`，超额折叠成「…另有 N 项，看板查看全部」（不静默丢、标题 total 仍计全部）。商店按钮也纳入新品（市场/厂商各取头条、去重封顶 5），安卓包名拼 Google Play 链接（`_store_url`），纯新品日不再无可点项。**全局段同款封顶（#141）**：实机视频段封 `DIGEST_VIDEO_TOPN`(5)、单 combo 市场「待识别新厂」(is_slg=false) 行封 `DIGEST_MARKET_LEAD_TOPN`(3)，超额各折叠成「…另有 N 个…」一行（次市场周级同步日一次涌进几十个未识别新面孔/几十条视频，逐条列会刷长卡；实测峰值卡 10772→7509 字符 −30%，榜单异动原样保留）。
+`build_daily_digest` 原本无长度上限——波动大的日子（movement 完全无 cap）会刷出一张超长卡。两层封顶：单 combo movement 行封 `DIGEST_MOVEMENT_TOPN`（按 空降/窜升/暴跌/收入异动 重要性保留），全卡按 combo 粒度封 `DIGEST_MAX_ITEMS`，超额折叠成「…另有 N 项，看板查看全部」（不静默丢、标题 total 仍计全部）。商店按钮也纳入新品（市场/厂商各取头条、去重封顶 5），安卓包名拼 Google Play 链接（`_store_url`），纯新品日不再无可点项。**全局段同款封顶（#141）**：单 combo 市场「待识别新厂」(is_slg=false) 行封 `DIGEST_MARKET_LEAD_TOPN`(3)，超额折叠成「…另有 N 个…」一行（次市场周级同步日一次涌进几十个未识别新面孔，逐条列会刷长卡；实测峰值卡 10772→7509 字符 −30%，榜单异动原样保留）。（**实机视频段 #162 起已删**——视频改内联进各新品行的动作行，原 `DIGEST_VIDEO_TOPN` 随之移除，见下「digest 渲染格式」。）
 
 ### digest 看板深链 + app_id 粒度忽略（PR #109）
 
@@ -186,7 +186,7 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 
 **手机端链接可达性（关键约束）**：公司网络下钉钉**电脑端能开外网、手机端打不开**（App Store / Google Play / YouTube）。钉钉 ActionCard 是同一份 markdown、**无法按客户端区分链接**，故按可达性分类标注：
 
-- **外网链接（手机端死链）**：🔗 商店页（`_link_line`）/ 🎬 视频（`build_video_lines`）→ 加 `💻` 标识 + 卡片底部图例（`💻 = 需电脑端打开`，仅当卡里有 💻 时挂）。
+- **外网链接（手机端死链）**：🔗 商店页（`_link_line`）/ 🎬 视频（`_video_seg`，#162 起内联进新品行动作行）→ 加 `💻` 标识 + 卡片底部图例（`💻 = 需电脑端打开`，仅当卡里有 💻 时挂）。
 - **两端可达（看板实为间歇）**：🎯 看板（`slg.*.nip.io` 自建·公网 HTTPS）/ 📰 微信文章（`mp.weixin.qq.com` 国内）→ 不标。⚠️ 看板深链对国内手机实为**间歇可达**非稳定（见下「连锁限制」末条）。
 - **底部 ActionCard 按钮**：从商店直链改 **看板深链**（`_dashboard_focus_url`，两端可达、手机也能点），只取头条新品——movement 异动老游戏不在看板新品页、深链定位不到，不进按钮；商店直链在行内保留带 💻（不丢电脑端入口）。未配 `DASHBOARD_BASE_URL` 则无按钮，ActionCard 降级 markdown。
 - **连锁限制**：看板详情页里的国外资源（商店截图 mzstatic 图床 / YouTube 视频）手机端在看板内也可能加载不全；视频「播放」本质要客户端能访问 YouTube，无解、只能电脑端。
@@ -203,7 +203,8 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 - `_event_score(kind, e)`：单事件「强度」分（不含市场权重）。`_rank_height(rank)`（名次越靠前权重越大，0..1）做主轴，叠收入异动 `|pct|` / 窜升跳数。相对序拍定：高名次收入异动 > 头部空降/市场新品 > 大幅窜升 > 榜尾长尾空降/跌出（`test_digest_importance_event_score_ordering` 锁死）。
 - `_market_weight(country, platform)`：市场权重 US 1.5 / JP 1.15 / KR 1.1…× 平台 iOS 1.0 / 安卓 0.9。**刻意压窄到 1.0~1.5**——只做轻微倾斜，不能把事件强度整个吃掉（否则今日要闻被核心市场榜尾占满）；KR 的 #1 空降仍压过 US 的 #45 长尾（`test_digest_importance_market_weight_is_gentle_tilt`）。
 - **五处的修法**：① combo 段按 `_combo_sort_key`（市场权重为**主键**、combo 内最高单项为辅）排序——核心 US/iOS 永居前列、全局封顶砍的必是次市场；② `build_movement_lines` 内按 `_event_score` 降序再切 `DIGEST_MOVEMENT_TOPN`（combo 内市场权重恒定，故只按事件强度）；③ 按钮 `_ranked_newcomer_buttons` 全局按 `_event_score × 市场权重` 排序取头部新品；④ overflow 计数不变，但砍的已是真·次要项。「核心 combo 永不被封顶挤掉」由排序主键保证，与市场权重量级解耦。
-- **跨 combo「📌 今日要闻」置顶**（`build_highlight_lines` + `_highlight_line`）：`_collect_scored_items` 收全 combo 的 movement + 三类新品（下载榜只算 is_slg=True，与推送门控一致；回归项已滤）→ 取重要度 Top `DIGEST_HIGHLIGHTS_TOPN`（默认 5）→ 内联市场标签的紧凑行，放 TL;DR 之后、combo 段之前。**仅当全卡事件数 > TOPN 才渲染**（小卡本身已短、置顶会与正文重复）。覆盖面**仅 ranking 派生的 per-combo 竞品事件**——版本/新区/视频/待建档是各自独立的全局段（本就不受地理顺序挤压），不纳入要闻。
+- **跨 combo「📌 今日要闻」置顶**（`build_highlight_lines` + `_highlight_line`）：`_collect_scored_items` 收全 combo 的 movement + 三类新品（下载榜只算 is_slg=True，与推送门控一致；回归项已滤）→ 取重要度 Top `DIGEST_HIGHLIGHTS_TOPN`（默认 5）→ 内联市场标签的紧凑行，放 TL;DR 之后、combo 段之前。覆盖面**仅 ranking 派生的 per-combo 竞品事件**——版本/新区/视频/待建档是各自独立的全局段（本就不受地理顺序挤压），不纳入要闻。
+  - **#162 去重（领导反馈「重复内容太多」）**：排除「正文首位 combo」（`_combo_sort_key` 最高，通常核心 US/iOS——本就排正文最前）的事件，**再**判「（排除后）事件数 > TOPN 才渲染」。**无损去重**（正文一字不动）：单/少 combo 日今日要闻自然消失，多 combo 日只上浮「排在后面、可能被折叠的次要市场」大事件。选此方向而非「从正文删抽顶事件」——后者会丢新品的摘要/链接。
 - **同赛道加权（PR #148）**：`_collect_scored_items` 对命中 `own_matches`（同赛道竞品）的 ×`_OWN_MATCH_BOOST`(2.5) 上浮——竞品打进我方赛道是领导第一决策轴，#139 此前只加 ⚔️ 标签不参与排序（榜尾同赛道竞品会被次市场高名次长尾挤出今日要闻）。仅影响今日要闻排序，⚔️ 标签照常。
 - 入参 `per_combo` 不被 mutate（排序走副本，`test_digest_does_not_mutate_input_order`）；常态下排序与现地理顺序几乎一致（US→JP→KR、iOS→安卓），只有次市场冒大事件才上浮，低惊扰。
 
@@ -276,7 +277,7 @@ digest 给新品行附行业公众号文章（`_match_articles_to_apps`）。匹
 
 ### 竞品新品实机玩法视频自动搜集（ADR 0002，alembic 0029+0032）
 
-新品检出后定时搜 YouTube 实机玩法视频候选落库，前端新品抽屉展示 + 人工去噪。独立 daily job（**02:45 UTC**，排在核心同步 02:30~02:38 之后、digest 03:00 之前，让当天新品视频赶上当天卡）`services/newcomer_video.py::sync_newcomer_videos` 调 **YouTube Data API**（独立配额、零 ST，`YOUTUBE_API_KEY` 在 `backend/.env`）。query **游戏名加引号精确匹配**防通用/短名拆词噪声（prod 实测 `탑 로드` 裸搜全是 Million Lords/赛马娘）。两表 `newcomer_video`（候选）+ `newcomer_video_search`（搜索台账=去重锚点 + 当日上限 80）。**人工去噪走软删**（`newcomer_video.hidden_at`，alembic 0032）：删的不物删而置 `hidden_at`，列表默认 `hidden_at IS NULL`（前端 UX 不变），**保留噪声样本供回溯统计召回率 + 设计停用词**；`GET /newcomers/videos?include_hidden=true` 可取回。digest【新品实机视频】段只取非隐藏候选（数据源固有同名噪声靠前端「删」收）。详见 [ADR 0002](adr/0002-newcomer-gameplay-video-autosearch.md)。
+新品检出后定时搜 YouTube 实机玩法视频候选落库，前端新品抽屉展示 + 人工去噪。独立 daily job（**02:45 UTC**，排在核心同步 02:30~02:38 之后、digest 03:00 之前，让当天新品视频赶上当天卡）`services/newcomer_video.py::sync_newcomer_videos` 调 **YouTube Data API**（独立配额、零 ST，`YOUTUBE_API_KEY` 在 `backend/.env`）。query **游戏名加引号精确匹配**防通用/短名拆词噪声（prod 实测 `탑 로드` 裸搜全是 Million Lords/赛马娘）。两表 `newcomer_video`（候选）+ `newcomer_video_search`（搜索台账=去重锚点 + 当日上限 80）。**人工去噪走软删**（`newcomer_video.hidden_at`，alembic 0032）：删的不物删而置 `hidden_at`，列表默认 `hidden_at IS NULL`（前端 UX 不变），**保留噪声样本供回溯统计召回率 + 设计停用词**；`GET /newcomers/videos?include_hidden=true` 可取回。digest 把非隐藏视频候选**内联进各新品行的动作行**（🎬 `_video_seg`，#162 起；原独立【新品实机视频】段已删——领导反馈同一批新品名在【新品上架】和【实机视频】两段重列，视频项又全来自当日新品必然重名）。详见 [ADR 0002](adr/0002-newcomer-gameplay-video-autosearch.md)。
 
 ### tracked iOS 竞品版本变更追踪（ADR 0003，alembic 0030+0031）
 
