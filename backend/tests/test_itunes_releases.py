@@ -279,3 +279,48 @@ async def test_storefront_expansion_detected(client):
     resp = await client.get("/api/newcomers/appstore")
     item = next(i for i in resp.json()["items"] if i["track_id"] == "701")
     assert item["storefronts"] == ["us", "ph", "ca"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_artist_multi_storefront_fallback(monkeypatch):
+    """反解逐区兜底：app 区域限定（只在 jp 区可见）→ us 查空、回退 jp 命中开发者账号。
+    治「日韩限定 SLG 的 iOS app 在美区失明 → 雷达覆盖建议反解不出」（实测 gumi/星辉/英雄互娱）。"""
+    import app.services.itunes_releases as svc
+
+    class _Resp:
+        def __init__(self, results):
+            self._results = results
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"results": self._results}
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, params=None):
+            if (params or {}).get("country") == "jp":  # 只有 jp 区能看到该 app
+                return _Resp([{"wrapperType": "software", "artistId": 532518920,
+                               "artistName": "gumi Inc.", "trackName": "クリスタル オブ リユニオン"}])
+            return _Resp([])  # us 等其它区 resultCount=0
+
+    monkeypatch.setattr(svc.httpx, "AsyncClient", lambda *a, **k: _Client())
+    monkeypatch.setattr(svc, "_ARTIST_RESOLVE_DELAY_S", 0)  # 测试不真 sleep
+
+    got = await svc.resolve_artist_for_app("993529737")
+    assert got == {"artist_id": "532518920", "artist_name": "gumi Inc.",
+                   "app_name": "クリスタル オブ リユニオン"}
+
+    # 全区都查不到 → None（不误造账号）
+    class _Empty(_Client):
+        async def get(self, url, params=None):
+            return _Resp([])
+
+    monkeypatch.setattr(svc.httpx, "AsyncClient", lambda *a, **k: _Empty())
+    assert await svc.resolve_artist_for_app("993529737") is None
