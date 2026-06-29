@@ -129,11 +129,14 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 | `NEWCOMER_WINDOW` | 4 | 回看几个快照作 baseline。US daily ≈ 4 天，JP/KR/DE/RU weekly ≈ 4 周 |
 | `NEWCOMER_TOPN` | 50 | 全市场新面孔：名次 ≤ 此值才算「新进榜」 |
 | `PUBLISHER_NEWCOMER_TOPN` | 200 | 厂商主体新品：名次 ≤ 此值（比 50 宽——主体可信，名次较深也值得看，但砍 #201+ 长尾） |
+| `PUBLISHER_NEWCOMER_MIN_BASELINE` | 3 | 厂商新品 baseline 充分性门控（#161）：本地快照 < 此值视为 no_baseline 不报 |
 | `NEWCOMER_HISTORY_TOPN` | 100 | 检出沉淀的**市场口径**（`market_newcomer_log`），比日报宽，页面可筛 Top50/100 |
 
 > **检出沉淀取两路并集**（`record_market_newcomers`，按 app_id 去重）：市场口径 `detect_newcomers`（Top100）+ 已建档主体 `detect_publisher_newcomers`（Top200）。后者专门接住「冷启动名次深于 100、慢爬进榜时已被基线吞掉」的漏报（如 Century Games《Top General》首见 rank 144 > 100，旧逻辑永不入库）。日报推送口径（Top50）不受影响。
 
 `no_baseline`（冷库/首次同步、无历史快照）一律返回空——绝不把首图全员当新品。
+
+> **厂商新品老产品门控（#161，A+B 双门控）**：「新」用「首次出现在本地 `game_rankings`」判定，是真实上线日的**零配额代理**——但对快照稀疏的次市场（DE/RU 双周同步）失真：combo 只采了 1~2 个快照时，"首次进本地榜" ≈ "首次被采到"，整批 2013–2017 老 SLG 被误报（prod 实测 45 项中 41 项是老产品，`is_reentry` 只滤掉 4 个）。两道门控：**B baseline 充分性**（`detect_publisher_newcomers`，快照 < `PUBLISHER_NEWCOMER_MIN_BASELINE`=3 → no_baseline，纯本地、三消费方[页面/digest/落库]都受益）；**A 真实上架日门控**（`gate_publisher_newcomers_by_release_date`，剔除早于 `ITUNES_RELEASES_OLD_RELEASE_DAYS`=180d 上架的，缓存优先 `MarketNewcomerLog`→`PublisherItunesApp`、miss 才打免费 lookup、缺失保留，端点+digest 各调用，落库不调以保留底）。prod 实测 45→8 全真新品。
 
 ### is_reentry：真首发 vs 回归（PR #93/#94）
 
