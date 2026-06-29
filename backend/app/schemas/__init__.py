@@ -26,6 +26,7 @@ from app.schemas.publisher import (
     PublisherRelationCreate, PublisherRelationLinkOut,
     PublisherProductOut, PublisherTopProductOut, PublisherGapOut,
     PublisherHealthOut, PublisherIgnoreOut, PublisherIgnoreCreate,
+    PublisherArtistSuggestionOut,
 )
 
 __all__ = [
@@ -89,4 +90,5 @@ __all__ = [
     "PublisherHealthOut",
     "PublisherIgnoreOut",
     "PublisherIgnoreCreate",
+    "PublisherArtistSuggestionOut",
 ]

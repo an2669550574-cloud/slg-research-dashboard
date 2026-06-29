@@ -7,6 +7,7 @@
 「旗下产品」是查询态聚合——用主体的马甲 keyword 对 game_rankings.publisher 做 token
 子序列匹配 + app_ids 精确匹配，跨已监测市场窗口合计下载/收入，零 ST 配额、纯本地库。
 """
+import asyncio
 import re
 import time
 from datetime import timedelta
@@ -14,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func, or_, and_, case, delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db, utcnow_naive
 from app.models.publisher import (
     PublisherEntity, PublisherAlias, PublisherAppId, PublisherSource, PublisherRelation,
@@ -28,7 +30,7 @@ from app.schemas import (
     PublisherItunesArtistOut, PublisherItunesArtistCreate,
     PublisherRelationCreate, PublisherRelationLinkOut, PublisherProductOut,
     PublisherTopProductOut, PublisherGapOut, PublisherHealthOut,
-    PublisherIgnoreOut, PublisherIgnoreCreate,
+    PublisherIgnoreOut, PublisherIgnoreCreate, PublisherArtistSuggestionOut,
 )
 from app.services.slg_publishers import load_index_from_db
 from app.services.provenance import is_primary, provenance_tier
@@ -772,6 +774,71 @@ async def list_publisher_gaps(
         ))
     items.sort(key=lambda x: -x.revenue)
     return items[:limit]
+
+
+# iTunes 反解礼貌限速：按 app id 查是单请求（非多区），比账号同步轻；扫描是显式用户动作。
+_SUGGEST_LOOKUP_DELAY_S = 1.0
+
+
+@router.get("/itunes-artist-suggestions", response_model=list[PublisherArtistSuggestionOut])
+async def list_itunes_artist_suggestions(
+    limit: int = Query(25, ge=1, le=60),
+    db: AsyncSession = Depends(get_db),
+):
+    """雷达覆盖建议：对「未接 iOS 雷达的 is_slg 主体」，从其**已钉 iOS 数字 app_id** 免费
+    反解出开发者账号 artistId，给出可一键接入的候选（接入复用 POST /{id}/itunes-artists）。
+
+    省 toil：把「找开发者页 → 抄 artistId → 粘进抽屉」自动化成「核对 entity→artistName → 接入」。
+    只解析 pinned iOS app_id（人工钉=高置信归属）；解析出的 artist 已被任意主体接入则跳过
+    （artist_id 全局唯一）。每主体只取第一个能解析的 app，礼貌限速、按 limit 截断。零 ST 配额。
+    mock 模式不出外网 → 空（本地/测试经 monkeypatch 验证）。
+
+    必须先于 GET /{entity_id} 声明，否则字面量 'itunes-artist-suggestions' 会被 int 路径捕获。
+    """
+    if settings.USE_MOCK_DATA:
+        return []
+    from app.services.itunes_releases import resolve_artist_for_app
+
+    entities = (await db.execute(select(PublisherEntity))).scalars().all()
+    ios_artists = (await db.execute(
+        select(PublisherItunesArtist).where(PublisherItunesArtist.platform == "ios")
+    )).scalars().all()
+    app_ids = (await db.execute(select(PublisherAppId))).scalars().all()
+
+    covered = {a.entity_id for a in ios_artists}
+    seen_artist = {a.artist_id for a in ios_artists}  # 已接入的全局占用 → 不再建议
+    pinned_by_eid: dict[int, list[str]] = {}
+    for a in app_ids:
+        if a.app_id.isdigit():  # iOS 数字 id 才能 iTunes 反解（Android 包名不行）
+            pinned_by_eid.setdefault(a.entity_id, []).append(a.app_id)
+
+    # 雷达目标 = is_slg、未接 iOS 雷达、且有可反解的 iOS app_id；资本方/纯控股母体不算。
+    targets = [e for e in entities
+               if e.is_slg and e.id not in covered and pinned_by_eid.get(e.id)]
+    targets.sort(key=lambda e: (e.sort_order, e.id))
+
+    out: list[PublisherArtistSuggestionOut] = []
+    lookups = 0
+    for e in targets:
+        if len(out) >= limit:
+            break
+        for app_id in pinned_by_eid[e.id]:
+            if lookups > 0:
+                await asyncio.sleep(_SUGGEST_LOOKUP_DELAY_S)
+            lookups += 1
+            cand = await resolve_artist_for_app(app_id)
+            if not cand:
+                continue
+            if cand["artist_id"] in seen_artist:
+                break  # 该主体的开发者账号已被接入（可能挂在别处）→ 跳过该主体
+            seen_artist.add(cand["artist_id"])  # 防同一 artist 在本轮被多个主体重复建议
+            out.append(PublisherArtistSuggestionOut(
+                entity_id=e.id, entity_name=e.name,
+                source_app_id=app_id, source_app_name=cand.get("app_name"),
+                artist_id=cand["artist_id"], artist_name=cand.get("artist_name"),
+            ))
+            break  # 每主体只给一条建议
+    return out
 
 
 # ── 缺口忽略名单：把已知非 SLG 巨头从 /gaps 里剔掉，让缺口收敛到可操作信号 ──
