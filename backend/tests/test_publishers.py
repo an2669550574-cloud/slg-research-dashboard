@@ -337,6 +337,14 @@ async def test_add_alias_and_app_id_reject_duplicates(client):
     body = (await client.get(f"/api/publishers/{eid}")).json()
     assert len(body["aliases"]) == 1
     assert len(body["app_ids"]) == 1
+    # 内联建主体路径同样去重（payload 自带重复 keyword/app_id 只写一条），与端点口径一致
+    inline = (await client.post("/api/publishers/", json={
+        "name": "内联去重",
+        "aliases": [{"keyword": "kabam"}, {"keyword": "kabam"}, {"keyword": " kabam "}],
+        "app_ids": [{"app_id": "com.k.g"}, {"app_id": "com.k.g"}],
+    })).json()
+    assert len(inline["aliases"]) == 1
+    assert len(inline["app_ids"]) == 1
 
 
 @pytest.mark.asyncio

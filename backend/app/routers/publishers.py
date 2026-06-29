@@ -553,10 +553,22 @@ async def create_publisher(data: PublisherEntityCreate, db: AsyncSession = Depen
     )
     db.add(e)
     await db.flush()
+    # payload 内去重，与 add_alias / add_app_id 端点的幂等口径对齐：新主体下不写重复马甲行。
+    # 内联只需防本次 payload 自带重复（实体刚建、DB 里还没有它的子行），故 strip 后按 seen 集去重。
+    seen_kw: set[str] = set()
     for a in data.aliases:
-        db.add(PublisherAlias(entity_id=e.id, keyword=a.keyword.strip(), label=a.label))
+        kw = a.keyword.strip()
+        if kw in seen_kw:
+            continue
+        seen_kw.add(kw)
+        db.add(PublisherAlias(entity_id=e.id, keyword=kw, label=a.label))
+    seen_aid: set[str] = set()
     for ap in data.app_ids:
-        db.add(PublisherAppId(entity_id=e.id, app_id=ap.app_id.strip(), note=ap.note))
+        aid = ap.app_id.strip()
+        if aid in seen_aid:
+            continue
+        seen_aid.add(aid)
+        db.add(PublisherAppId(entity_id=e.id, app_id=aid, note=ap.note))
     await db.commit()
     await db.refresh(e)
     await load_index_from_db()
