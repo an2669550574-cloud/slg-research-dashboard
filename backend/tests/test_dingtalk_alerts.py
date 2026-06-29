@@ -374,7 +374,7 @@ def test_dashboard_focus_link_omitted_when_unset(monkeypatch):
 # ── 方案①：下载榜 is_slg=false 真新厂「待建档线索」段 ─────────────────────────
 
 def test_lead_newcomer_lines_render_and_dedup(monkeypatch):
-    """待建档线索行：含名次/genre/发行商/看板核查链接，按 app_id 去重；
+    """待建档线索行：含名次/中文genre/发行商/看板核查链接 + 中文摘要(#147)，按 app_id 去重；
     市场标签用下载榜语境（不带「畅销榜」后缀，与 _combo_label 区分）。"""
     monkeypatch.setattr("app.config.settings.DASHBOARD_BASE_URL",
                         "https://board.example.com", raising=False)
@@ -382,7 +382,8 @@ def test_lead_newcomer_lines_render_and_dedup(monkeypatch):
     items = [
         {"app_id": "com.x.warz", "name": "Last Shelter: War Z",
          "publisher": "LAST ORIGIN STUDIO LIMITED", "rank": 12,
-         "country": "US", "platform": "android", "genre": "Strategy"},
+         "country": "US", "platform": "android", "genre": "Strategy",
+         "summary_cn": "末日丧尸生存 SLG，主打基地建造"},
         {"app_id": "com.x.warz", "name": "dup", "publisher": "p", "rank": 99,
          "country": "US", "platform": "android", "genre": "Strategy"},  # 同 app_id → 去重
     ]
@@ -390,11 +391,22 @@ def test_lead_newcomer_lines_render_and_dedup(monkeypatch):
     assert len(lines) == 1
     assert "Last Shelter: War Z" in lines[0]
     assert "LAST ORIGIN STUDIO LIMITED" in lines[0]
-    assert "Strategy" in lines[0]
+    assert "策略" in lines[0] and "Strategy" not in lines[0]   # genre 中文化（_genre_cn）
+    assert "📝 末日丧尸生存 SLG，主打基地建造" in lines[0]      # 中文摘要接入（A / #147）
     assert "看板核查" in lines[0]
     assert "#12" in lines[0]
     assert "畅销榜" not in lines[0]          # 下载榜段不能误用收入榜标签
     assert "下载榜" in lines[0]
+
+
+def test_lead_newcomer_lines_degrade_without_summary():
+    """译文未就位（summary_cn 缺省）→ 优雅降级，不显 📝，其余照常。"""
+    from app.services.release_alerts import build_lead_newcomer_lines
+    lines = build_lead_newcomer_lines([
+        {"app_id": "com.y.z", "name": "Untranslated", "publisher": "p", "rank": 5,
+         "country": "JP", "platform": "ios", "genre": "Strategy"},  # 无 summary_cn
+    ])
+    assert len(lines) == 1 and "📝" not in lines[0] and "策略" in lines[0]
 
 
 def test_daily_digest_lead_section_alone_still_sends():
@@ -548,6 +560,27 @@ def test_digest_highlights_section_pins_top_events_cross_combo():
     # 头部收入异动第一、韩区 #1 爆款第二（跨 combo），均压过 US 榜尾长尾
     assert hi.index("头部巨鳄") < hi.index("韩区爆款") < hi.index("小新0")
     assert "🇰🇷 韩国 · iOS 🆕 **韩区爆款**" in hi   # 要闻行内联市场标签
+
+
+def test_digest_own_match_boosts_highlight_ranking():
+    """B：命中「对标我方」的竞品在今日要闻里上浮——榜尾低强度也排到非对标头部强度之上。"""
+    from app.services import release_alerts as ra
+    mv = {
+        "new_entrants": [
+            {"app_id": "rival", "name": "丧尸末日战", "prev_rank": None, "cur_rank": 48},  # 低强度
+            {"app_id": "plain", "name": "三国新作", "prev_rank": None, "cur_rank": 3},     # 高强度
+        ],
+        "surges": [], "drops": [], "revenue_spikes": [],
+    }
+    per_combo = [{"country": "US", "platform": "ios", "movement": mv,
+                  "market": None, "publisher": None}]
+    # 不加权：头部 #3 排在榜尾 #48 之前
+    base = [it["e"]["app_id"] for _, it in ra._collect_scored_items(per_combo)]
+    assert base.index("plain") < base.index("rival")
+    # 加权：rival 命中对标 → 上浮到 plain 之前（×_OWN_MATCH_BOOST）
+    boosted = [it["e"]["app_id"] for _, it in
+               ra._collect_scored_items(per_combo, {"rival": "无尽火线"})]
+    assert boosted.index("rival") < boosted.index("plain")
 
 
 def test_digest_highlights_skipped_when_few_items():

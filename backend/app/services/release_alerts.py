@@ -230,6 +230,12 @@ def _event_score(kind: str, e: dict) -> float:
 # 给我方产品（own_products.match_keywords）配题材关键词，对竞品名 + LLM 中文摘要做小写
 # 子串匹配，命中给该行打「⚔️ 对标《本品》」+ TL;DR 计数，让领导一眼看出「要不要管」。
 
+# 命中对标的竞品在「今日要闻」里的重要度乘数：竞品打进我方赛道 = 对领导的第一决策轴，
+# 比随机高名次次市场新品更要紧。强度分 × 市场权重 × 本系数后参与跨 combo 排序，确保
+# 「对标」竞品不被长尾挤出今日要闻。仅影响今日要闻排序（标签 ⚔️ 仍照常打）。
+_OWN_MATCH_BOOST = 2.5
+
+
 def _match_own_product(text: str, products: list[tuple[str, list[str]]]) -> Optional[tuple[str, str]]:
     """竞品文本 → 命中的我方产品 (产品名, 命中关键词)，第一个命中即返回（标签要短）。
     纯小写子串匹配；关键词质量（区分度）由录入方把关，泛词会全命中。"""
@@ -507,7 +513,12 @@ def build_lead_newcomer_lines(lead_items: list[dict]) -> list[str]:
     Last Shelter: War Z）挡在下载榜 SLG 推送门控（build_free_newcomer_lines）之外 →
     漏推给领导。这段把这类线索单列给维护者：人工核查后建档进白名单 → 该厂后续新品
     自动进 SLG 推送，形成「提醒 → 建档 → 不再漏」闭环。忽略名单已在 detect_newcomers
-    滤过确认非 SLG，调用方再用 genre 初筛压掉休闲噪声（Puzzle/工具等）。封顶防刷屏。"""
+    滤过确认非 SLG，调用方再用 genre 初筛压掉休闲噪声（Puzzle/工具等）。封顶防刷屏。
+
+    **可读性（接 #147）**：genre 走 `_genre_cn` 转中文；`summary_cn`（#147 已把中文化
+    扩到 is_slg=false 待识别新厂）有则补 📝 一句话——这段是 #147 把待识别在 UI 默认收起
+    后维护者唯一的建档触点（钉钉日推），最该一眼看懂「这是什么游戏、要不要建档」。
+    译文未就位（当日 cap 未轮到）时优雅降级、不显 📝。"""
     out: list[str] = []
     cap = settings.DIGEST_MAX_ITEMS
     seen: set[str] = set()
@@ -519,12 +530,14 @@ def build_lead_newcomer_lines(lead_items: list[dict]) -> list[str]:
         rank = f"#{it['rank']}" if it.get("rank") else "上榜"
         mkt = _market_label(it.get("country", ""), it.get("platform", ""))
         pub = it.get("publisher") or "未知发行商"
-        genre = it.get("genre") or ""
+        genre = _genre_cn(it.get("genre")) or ""   # 英文 genre → 中文
         suffix = f" · {genre}" if genre else ""
+        summary = it.get("summary_cn")             # #147 待识别新厂中文化，这里接上
         focus = _dashboard_focus_url(aid, "market")
         out.append(_block([
             f"🔍 **{_md_name(it.get('name') or aid)}**（{mkt} 下载榜 {rank}{suffix}）",
             f"> 发行商 {_md_name(pub)}",
+            f"📝 {summary}" if summary else "",
             f"🎯 [看板核查]({focus})" if focus else "",
         ]))
         if len(out) >= cap:
@@ -607,17 +620,21 @@ def _digest_tldr(per_combo: list[dict], version_changes, region_changes,
     return " · ".join(bits)
 
 
-def _collect_scored_items(per_combo: list[dict]) -> list[tuple[float, dict]]:
+def _collect_scored_items(per_combo: list[dict],
+                          own_matches: Optional[dict] = None) -> list[tuple[float, dict]]:
     """全 combo 的可置顶事件 → [(score, item)] 按 score 降序。score = 事件强度 × 市场
-    权重；item = {kind, e, country, platform}，供「今日要闻」渲染与按钮排序复用。
+    权重（× 对标加权）；item = {kind, e, country, platform}，供「今日要闻」渲染与按钮排序复用。
     回归项（is_reentry）已过滤；下载榜只算 is_slg=True（与 build_free_newcomer_lines
-    推送门控一致）。这是「五处共用一个打分函数」里跨 combo 的那份。"""
+    推送门控一致）。命中 own_matches（对标我方）的竞品 × `_OWN_MATCH_BOOST` 上浮。
+    这是「五处共用一个打分函数」里跨 combo 的那份。"""
     from app.services.slg_publishers import is_slg
     out: list[tuple[float, dict]] = []
 
     def add(kind, e, country, platform):
-        out.append((_event_score(kind, e) * _market_weight(country, platform),
-                    {"kind": kind, "e": e, "country": country, "platform": platform}))
+        score = _event_score(kind, e) * _market_weight(country, platform)
+        if own_matches and e.get("app_id") in own_matches:
+            score *= _OWN_MATCH_BOOST   # 对标我方的竞品上浮——打进我方赛道是领导第一决策轴
+        out.append((score, {"kind": kind, "e": e, "country": country, "platform": platform}))
 
     for c in per_combo:
         country, platform = c["country"], c["platform"]
@@ -668,10 +685,11 @@ def _highlight_line(item: dict, own_matches: Optional[dict] = None) -> str:
 def build_highlight_lines(per_combo: list[dict], topn: int,
                           own_matches: Optional[dict] = None) -> list[str]:
     """跨 combo「今日要闻」Top N（重要度置顶）。topn<=0 或事件数 ≤ topn → 返回 []
-    （小卡本身已短，置顶会和正文重复，没必要）。"""
+    （小卡本身已短，置顶会和正文重复，没必要）。own_matches 既参与打分（对标竞品上浮）
+    又用于渲染 ⚔️ 标签。"""
     if topn <= 0:
         return []
-    scored = _collect_scored_items(per_combo)
+    scored = _collect_scored_items(per_combo, own_matches)
     if len(scored) <= topn:
         return []
     return [_highlight_line(item, own_matches) for _, item in scored[:topn]]
@@ -1061,7 +1079,10 @@ async def send_daily_digest() -> bool:
             genre_by_app = {aid: (g or "") for aid, g in grows}
             for aid, info in cand.items():
                 if "strateg" in genre_by_app.get(aid, "").lower():
-                    lead_items.append({**info, "genre": genre_by_app.get(aid, "")})
+                    # summary_cn 复用上方 summaries_by_app（lead app ⊆ newcomer_apps，零额外查询）；
+                    # #147 已把中文化扩到 is_slg=false 待识别新厂，故这批多数已有中文摘要。
+                    lead_items.append({**info, "genre": genre_by_app.get(aid, ""),
+                                       "summary_cn": summaries_by_app.get(aid)})
     except Exception:
         logger.exception("Lead newcomer candidates (digest) failed")
 
