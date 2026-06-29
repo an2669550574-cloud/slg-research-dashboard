@@ -71,6 +71,7 @@ import type {
   PublisherHealth,
   PublisherGap,
   PublisherArtistSuggestion,
+  PublisherDownloadLead,
   PublisherIgnore,
   PublisherIgnoreCreate,
   WechatAccount,
@@ -415,6 +416,9 @@ export const publishersApi = {
   // 每次调用做若干次免费 iTunes lookup（~20-30 秒），由用户显式「扫描」触发。零 ST 配额。
   artistSuggestions: (limit = 40): Promise<PublisherArtistSuggestion[]> =>
     api.get('/publishers/itunes-artist-suggestions', { params: { limit } }).then(r => r.data),
+  // 下载榜早期信号：下载榜 is_slg=false 但 genre=Strategy 的新品（待建档新厂线索）。零 ST。
+  downloadLeads: (days = 90, limit = 20): Promise<PublisherDownloadLead[]> =>
+    api.get('/publishers/download-leads', { params: { days, limit } }).then(r => r.data),
   // 缺口忽略名单：把已知非 SLG 巨头从缺口里剔掉（publisher / app_id 两种粒度）。
   ignores: (): Promise<PublisherIgnore[]> =>
     api.get('/publishers/ignores').then(r => r.data),

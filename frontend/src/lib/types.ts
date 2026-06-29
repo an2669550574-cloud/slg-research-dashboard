@@ -907,6 +907,21 @@ export interface PublisherArtistSuggestion {
   artist_name: string | null
 }
 
+/** 下载榜早期信号：下载榜 is_slg=false 但 genre=Strategy 的新品（待建档新厂线索）。 */
+export interface PublisherDownloadLead {
+  app_id: string
+  name: string
+  publisher: string | null
+  genre: string | null
+  summary_cn: string | null
+  icon_url: string | null
+  store_url: string | null
+  country: string
+  platform: string
+  rank: number | null
+  first_detected_at: string | null
+}
+
 /** 缺口忽略名单条目：人工标过「非 SLG 主体」的发行商 / app，不再进缺口提示。 */
 export interface PublisherIgnore {
   id: number

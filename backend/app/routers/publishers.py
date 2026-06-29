@@ -21,7 +21,8 @@ from app.models.publisher import (
     PublisherEntity, PublisherAlias, PublisherAppId, PublisherSource, PublisherRelation,
     PublisherItunesArtist, PublisherItunesApp, PublisherIgnore,
 )
-from app.models.game import GameRanking, CHART_GROSSING
+from app.models.game import GameRanking, CHART_GROSSING, CHART_FREE
+from app.models.newcomer import MarketNewcomerLog
 from app.schemas import (
     PublisherEntityOut, PublisherEntityCreate, PublisherEntityUpdate,
     PublisherAliasOut, PublisherAliasCreate,
@@ -31,6 +32,7 @@ from app.schemas import (
     PublisherRelationCreate, PublisherRelationLinkOut, PublisherProductOut,
     PublisherTopProductOut, PublisherGapOut, PublisherHealthOut,
     PublisherIgnoreOut, PublisherIgnoreCreate, PublisherArtistSuggestionOut,
+    PublisherDownloadLeadOut,
 )
 from app.services.slg_publishers import load_index_from_db
 from app.services.provenance import is_primary, provenance_tier
@@ -876,6 +878,70 @@ async def list_itunes_artist_suggestions(
                 artist_id=cand["artist_id"], artist_name=cand.get("artist_name"),
             ))
             break  # 每主体只给一条建议
+    return out
+
+
+@router.get("/download-leads", response_model=list[PublisherDownloadLeadOut])
+async def list_download_leads(
+    days: int = Query(90, ge=1, le=365),
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """下载榜早期信号：下载榜(免费榜) is_slg=false（白名单未收录）但 genre=Strategy 的新品，
+    单列为「待建档新厂线索」给维护者。比 grossing 缺口（已起量）更早——新厂常先软启动、
+    买量起量先反映在下载榜装机量，几个月后才进收入榜。把 digest 方案① 的线索搬进 publishers
+    页 UI，让维护者随时浏览这条早期 backlog（不止 digest 推一次）。
+
+    数据源 = market_newcomer_log（chart_type=free），免费富化 genre/summary_cn，零 ST。
+    扣除缺口忽略名单（与 /gaps 同口径）；跨市场同 app 收敛留最新检出；按检出时间倒序。
+
+    必须先于 GET /{entity_id} 声明，否则字面量 'download-leads' 会被 int 路径捕获 → 422。
+    """
+    cutoff = utcnow_naive() - timedelta(days=days)
+    rows = (await db.execute(
+        select(MarketNewcomerLog).where(
+            MarketNewcomerLog.chart_type == CHART_FREE,
+            MarketNewcomerLog.is_slg.is_(False),
+            MarketNewcomerLog.first_detected_at >= cutoff,
+        ).order_by(MarketNewcomerLog.first_detected_at.desc())
+    )).scalars().all()
+
+    ignores = (await db.execute(select(PublisherIgnore))).scalars().all()
+    ignore_app_ids = {ig.value for ig in ignores if ig.kind == "app_id"}
+    ignore_pub_keys = {ig.value for ig in ignores if ig.kind == "publisher"}
+
+    # 跨市场同 app 收敛成一行：留最新检出做展示锚（市场/名次/时间），富化字段（genre/摘要/
+    # 图标/商店）从任意有值的行回填——同 app 不同区富化可能有缺。rows 已按检出时间倒序。
+    by_app: dict[str, dict] = {}
+    for r in rows:
+        rep = by_app.get(r.app_id)
+        if rep is None:
+            by_app[r.app_id] = {"row": r, "genre": r.genre, "summary_cn": r.summary_cn,
+                                "store_url": r.store_url, "icon_url": r.icon_url}
+        else:
+            for k in ("genre", "summary_cn", "store_url", "icon_url"):
+                if not rep[k] and getattr(r, k):
+                    rep[k] = getattr(r, k)
+
+    out: list[PublisherDownloadLeadOut] = []
+    for rep in by_app.values():  # 已按检出时间倒序（最新线索在前）
+        r = rep["row"]
+        if r.is_reentry:
+            continue  # 回归老面孔不是新厂线索
+        if not rep["genre"] or "strateg" not in rep["genre"].lower():
+            continue  # 只要疑似 SLG（genre 含 Strategy），压掉休闲噪声
+        if r.app_id in ignore_app_ids:
+            continue
+        if corp_squash(_toks(r.publisher)) in ignore_pub_keys:
+            continue
+        out.append(PublisherDownloadLeadOut(
+            app_id=r.app_id, name=r.name, publisher=r.publisher, genre=rep["genre"],
+            summary_cn=rep["summary_cn"], icon_url=rep["icon_url"], store_url=rep["store_url"],
+            country=r.country, platform=r.platform, rank=r.rank,
+            first_detected_at=r.first_detected_at.isoformat() if r.first_detected_at else None,
+        ))
+        if len(out) >= limit:
+            break
     return out
 
 
