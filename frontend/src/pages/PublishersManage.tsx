@@ -18,7 +18,7 @@ import type {
   PublisherEntity, PublisherEntityCreate, PublisherEntityUpdate,
   PublisherSourceCreate, PublisherSourceType,
   PublisherRelationCreate, PublisherRelationType, RelationCounterpartRole,
-  PublisherGap, PublisherIgnore, PublisherArtistSuggestion,
+  PublisherGap, PublisherIgnore, PublisherArtistSuggestion, PublisherDownloadLead,
 } from '../lib/types'
 
 type Segment = 'all' | 'operator' | 'capital'
@@ -69,6 +69,7 @@ type Mode = { kind: 'closed' } | { kind: 'create'; prefillAlias?: string } | { k
 const QK = ['publishers'] as const
 const GAPS_QK = ['publishers', 'gaps'] as const
 const IGNORES_QK = ['publishers', 'ignores'] as const
+const LEADS_QK = ['publishers', 'downloadLeads'] as const
 
 // 一手在前、二手在后，select 里分组直观
 const SOURCE_TYPE_ORDER: PublisherSourceType[] = [
@@ -145,6 +146,13 @@ export default function PublishersManage() {
     staleTime: 5 * 60 * 1000,
   })
 
+  // 下载榜早期信号：下载榜 is_slg=false 但 genre=Strategy 的新品（待建档新厂线索）。零 ST。
+  const { data: leads = [], isLoading: leadsLoading } = useQuery({
+    queryKey: LEADS_QK,
+    queryFn: () => publishersApi.downloadLeads(90, 20),
+  })
+  const [leadsOpen, setLeadsOpen] = useState(false)
+
   const invalidate = () => qc.invalidateQueries({ queryKey: QK })
   // 忽略/恢复后缺口与忽略名单都要刷新
   const invalidateGaps = () => {
@@ -159,6 +167,16 @@ export default function PublishersManage() {
   const restoreMut = useMutation({
     mutationFn: (ig: PublisherIgnore) => publishersApi.deleteIgnore(ig.id),
     onSuccess: () => { invalidateGaps(); toast.success(tt.gapsRestoredDone) },
+  })
+  // 忽略一条下载榜线索：app_id 粒度（只剔这一款；同 ignore 名单也会让 digest 线索段不再推它）。
+  const ignoreLeadMut = useMutation({
+    mutationFn: (l: PublisherDownloadLead) =>
+      publishersApi.addIgnore({ kind: 'app_id', raw_value: l.app_id, label: `${l.name}（${l.publisher ?? l.app_id}）` }),
+    onSuccess: (_o, l) => {
+      qc.invalidateQueries({ queryKey: LEADS_QK })
+      qc.invalidateQueries({ queryKey: IGNORES_QK })
+      toast.success(tt.leadsIgnoredDone(l.name))
+    },
   })
   // 一键接入：把反解出的开发者账号接到主体（复用带 409 去重的 itunes-artists 端点）。
   // 成功后乐观移除该行（避免再花 20-30 秒重扫）+ 刷新主体列表/健康度（覆盖率随之上升）。
@@ -748,6 +766,74 @@ export default function PublishersManage() {
                       >
                         <Plus size={11} />
                         {tt.radarWire}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* 下载榜早期信号：下载榜 is_slg=false 但 genre=Strategy 的新品（软启动期「待建档新厂」
+          线索，比收入榜缺口更早）。来自 market_newcomer_log，零 ST。每行可「建主体」或「忽略」。 */}
+      {!isLoading && !isError && (leadsLoading || leads.length > 0) && (
+        <section className="border border-violet-500/30 bg-violet-500/[0.04] rounded-xl">
+          <button
+            onClick={() => setLeadsOpen(o => !o)}
+            className="w-full flex items-center gap-2.5 px-4 py-3 text-left"
+            title={tt.leadsHint}
+          >
+            <span className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center bg-violet-500/15">
+              <DownloadIcon size={14} className="text-violet-400" />
+            </span>
+            <span className="font-display text-sm font-semibold text-primary">
+              {leadsLoading ? tt.leadsLoading : tt.leadsTitle(leads.length)}
+            </span>
+            <span className="ml-auto text-[11px] text-muted">
+              {leadsOpen ? tt.leadsCollapse : tt.leadsExpand}
+            </span>
+            {leadsOpen
+              ? <ChevronDown size={15} className="text-muted" />
+              : <ChevronRight size={15} className="text-muted" />}
+          </button>
+          {leadsOpen && (
+            <div className="border-t border-violet-500/20 px-4 py-3">
+              <div className="text-[11px] text-muted mb-3">{tt.leadsHint}</div>
+              {leads.length === 0 ? (
+                <div className="text-[12px] text-muted py-2">{tt.leadsEmpty}</div>
+              ) : (
+                <div className="grid gap-2">
+                  {leads.map(l => (
+                    <div
+                      key={l.app_id}
+                      className="flex items-center gap-2.5 bg-elevated/60 border border-default/60 rounded-lg px-3 py-2"
+                    >
+                      <GameIcon src={l.icon_url} name={l.name} className="w-8 h-8 rounded-md shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <div className="font-display text-sm text-primary truncate">{l.name}</div>
+                        <div className="text-[11px] text-muted truncate">
+                          {l.publisher ?? '—'} · {tt.leadsMarket(l.country, l.platform)}{l.rank ? ` ${tt.leadsRank(l.rank)}` : ''}{l.genre ? ` · ${l.genre}` : ''}
+                        </div>
+                        {l.summary_cn && <div className="text-[11px] text-secondary truncate mt-0.5">📝 {l.summary_cn}</div>}
+                      </div>
+                      <button
+                        onClick={() => ignoreLeadMut.mutate(l)}
+                        disabled={ignoreLeadMut.isPending}
+                        title={tt.leadsIgnoreHint}
+                        className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-medium text-muted border border-default hover:text-secondary hover:border-strong transition-colors disabled:opacity-50"
+                      >
+                        <EyeOff size={11} />
+                        {tt.leadsIgnore}
+                      </button>
+                      <button
+                        onClick={() => openCreate({ name: l.publisher ?? l.name, alias: l.publisher ?? undefined })}
+                        title={tt.leadsCreateHint}
+                        className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-medium text-white bg-accent hover:brightness-110 transition-all"
+                      >
+                        <Plus size={11} />
+                        {tt.leadsCreate}
                       </button>
                     </div>
                   ))}

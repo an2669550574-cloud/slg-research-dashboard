@@ -506,6 +506,45 @@ async def test_itunes_artist_suggestions_skips_occupied_artist_tries_next(client
 
 
 @pytest.mark.asyncio
+async def test_download_leads_filters_dedups_and_excludes(client):
+    """下载榜早期信号：free + is_slg=false + genre=Strategy + 非忽略 → 入；grossing /
+    is_slg=true / 非 Strategy / reentry / 忽略 → 排除；跨市场同 app 收敛留一条且富化回填。"""
+    from app.database import AsyncSessionLocal
+    from app.models.newcomer import MarketNewcomerLog
+
+    def mk(**kw):
+        base = dict(country="US", platform="android", as_of="2026-06-29",
+                    chart_type="free", is_slg=False, is_reentry=False)
+        base.update(kw)
+        return MarketNewcomerLog(**base)
+
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            mk(app_id="lead1", name="新厂A", publisher="NewCo A", genre="Strategy", rank=20),
+            # 同 app 第二市场 genre 缺失 → 应被收敛进 lead1 并回填 genre 后仍命中
+            mk(app_id="lead1", platform="ios", name="新厂A", publisher="NewCo A", genre=None, rank=5),
+            mk(app_id="lead2", name="新厂B", publisher="NewCo B", genre="Strategy Games", rank=30),
+            mk(app_id="x_grossing", chart_type="grossing", name="收入榜", publisher="GCo", genre="Strategy"),
+            mk(app_id="x_slg", is_slg=True, name="已识别", publisher="SLGCo", genre="Strategy"),
+            mk(app_id="x_puzzle", name="消除", publisher="PuzzleCo", genre="Puzzle"),
+            mk(app_id="x_reentry", is_reentry=True, name="回归", publisher="OldCo", genre="Strategy"),
+            mk(app_id="x_ig_app", name="忽略app", publisher="IgAppCo", genre="Strategy"),
+            mk(app_id="x_ig_pub", name="忽略厂", publisher="IgnoredPub Inc", genre="Strategy"),
+        ])
+        await db.commit()
+    # 忽略名单（与 /gaps 同口径）：app_id 粒度 + publisher 粒度（后端归一成 squash 键）
+    await client.post("/api/publishers/ignores", json={"kind": "app_id", "raw_value": "x_ig_app"})
+    await client.post("/api/publishers/ignores", json={"kind": "publisher", "raw_value": "IgnoredPub Inc"})
+
+    leads = (await client.get("/api/publishers/download-leads")).json()
+    assert {l["app_id"] for l in leads} == {"lead1", "lead2"}
+    assert len([l for l in leads if l["app_id"] == "lead1"]) == 1  # 跨市场收敛成一行
+    by_app = {l["app_id"]: l for l in leads}
+    assert by_app["lead1"]["genre"] == "Strategy"  # genre 缺失的 ios 行经回填仍拿到
+    assert by_app["lead2"]["publisher"] == "NewCo B"
+
+
+@pytest.mark.asyncio
 async def test_sibling_dedup_collapses_ios_android_same_game(client):
     """同 publisher + 名字 prefix 匹配的 iOS+Android 同款 → 合并为 1 个 product，
     收入/下载求和；product_count + top_products + /products 三处口径一致。"""

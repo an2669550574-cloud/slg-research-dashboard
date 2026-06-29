@@ -248,6 +248,27 @@ class PublisherGapOut(BaseModel):
     top_app: PublisherTopProductOut  # 收入最高的代表 app（icon + 名）
 
 
+class PublisherDownloadLeadOut(BaseModel):
+    """下载榜早期信号行：下载榜(免费榜) is_slg=false（白名单未收录）但 genre=Strategy 的新品。
+
+    grossing 缺口（PublisherGapOut）是「已起量、该建档的发行商」；这个是更早的信号——
+    新厂常先软启动、买量起量先反映在下载榜装机量，几个月后才进收入榜。把 digest 方案①
+    的「待建档新厂线索」搬进 publishers 页 UI，让维护者随时浏览这条早期 backlog（不止
+    digest 推一次）。数据源 = market_newcomer_log（免费富化 genre/summary_cn，零 ST）。
+    """
+    app_id: str
+    name: str
+    publisher: Optional[str] = None
+    genre: Optional[str] = None            # 英文 genre（前端可转中文）
+    summary_cn: Optional[str] = None       # 一句话中文摘要（#147 已扩到 is_slg=false 待识别新厂）
+    icon_url: Optional[str] = None
+    store_url: Optional[str] = None
+    country: str
+    platform: str
+    rank: Optional[int] = None
+    first_detected_at: Optional[str] = None  # ISO，检出时间（最新在前）
+
+
 class PublisherArtistSuggestionOut(BaseModel):
     """雷达覆盖建议行：未接 iOS 雷达的 is_slg 主体，从其已钉 iOS app_id 反解出的开发者账号候选。
 
