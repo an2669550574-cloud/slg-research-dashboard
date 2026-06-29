@@ -34,6 +34,9 @@ export default function NewReleases() {
   const [signal, setSignal] = useLocalStorageState<'true_new' | 'reentry' | 'all'>('slg.nc.signal', 'true_new')
   // 榜类型筛选：收入榜(默认) / 下载榜 / 全部（ADR 0001）。下载榜按装机速度抓更早期新品。
   const [chart, setChart] = useLocalStorageState<'grossing' | 'free' | 'all'>('slg.nc.chart', 'grossing')
+  // SLG 状态筛选：默认只看「已识别 SLG」（发行商在白名单/已建档），把「待识别新厂」
+  // (is_slg=false) 折进独立选项——次市场涌入的非 SLG 噪声不再默认刷屏催建档。
+  const [slgFilter, setSlgFilter] = useLocalStorageState<'slg' | 'pending' | 'all'>('slg.nc.slgstatus', 'slg')
   const [selected, setSelected] = useState<GroupedNewcomer | null>(null)
 
   const { data, isLoading, isError, refetch } = useQuery({
@@ -102,7 +105,16 @@ export default function NewReleases() {
 
   // CSV 仍导逐市场全量行（不丢粒度）；卡片按 app_id 跨市场合并展示。
   const items = data?.items ?? []
-  const groups = useMemo(() => groupByApp(items), [items])
+  const allGroups = useMemo(() => groupByApp(items), [items])
+  // SLG 状态分桶：is_slg 活算（含已建档主体），用代表行判定。计数给筛选 chip 显示
+  // 「待识别 N」，让被默认隐藏的待识别量一眼可见（不静默吞）。
+  const slgCount = useMemo(() => allGroups.filter(g => g.rep.is_slg).length, [allGroups])
+  const pendingCount = allGroups.length - slgCount
+  const groups = useMemo(() => {
+    if (slgFilter === 'slg') return allGroups.filter(g => g.rep.is_slg)
+    if (slgFilter === 'pending') return allGroups.filter(g => !g.rep.is_slg)
+    return allGroups
+  }, [allGroups, slgFilter])
   // 厂商新品视角的去重后计数（表格合并在子组件内，这里只为表头计数与之一致）。
   const pubGroupCount = useMemo(
     () => groupPublisherByApp(pubQuery.data?.items ?? []).length,
@@ -290,6 +302,23 @@ export default function NewReleases() {
                 </button>
               ))}
             </div>
+            <div className="flex gap-1 bg-elevated rounded-lg p-1" title={t.newcomers.slgFilterHint}>
+              {(['slg', 'pending', 'all'] as const).map(s => (
+                <button
+                  key={s}
+                  onClick={() => setSlgFilter(s)}
+                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${slgFilter === s ? 'bg-brand-600 text-white' : 'text-secondary hover:text-primary'}`}
+                >
+                  {s === 'slg' && <Star size={11} />}
+                  {s === 'pending' && <FilePlus2 size={11} />}
+                  {s === 'slg'
+                    ? `${t.newcomers.slgFilterSlg}${!isLoading && slgCount ? ` ${slgCount}` : ''}`
+                    : s === 'pending'
+                    ? `${t.newcomers.slgFilterPending}${!isLoading && pendingCount ? ` ${pendingCount}` : ''}`
+                    : t.newcomers.slgFilterAll}
+                </button>
+              ))}
+            </div>
           </>
         )}
       </div>
@@ -357,6 +386,9 @@ export default function NewReleases() {
                     </div>
                   </div>
                 </div>
+                {g.summary_cn && (
+                  <div className="text-[11px] text-secondary leading-snug line-clamp-2">📝 {g.summary_cn}</div>
+                )}
                 {multi && (
                   <div className="flex flex-wrap items-center gap-1">
                     {gr.markets.map(m => (

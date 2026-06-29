@@ -192,6 +192,11 @@ export const en: Translations = {
     revenue: 'Revenue',
     slgKnown: 'Known SLG',
     slgUnknown: 'New publisher',
+    // SLG-status filter (defaults to Known SLG; folds unidentified new faces into a separate tab)
+    slgFilterSlg: 'Known SLG',
+    slgFilterPending: 'Unidentified',
+    slgFilterAll: 'All',
+    slgFilterHint: 'Known SLG = publisher is whitelisted/profiled (note: is_slg is a publisher-level flag, not product genre — may include non-SLG titles from that publisher). Unidentified = new faces needing manual triage/ignore. Defaults to Known SLG to cut secondary-market noise.',
     countSuffix: (n: number) => `${n} newcomers`,
     empty: 'No newly charting titles this period',
     noBaseline: 'Not enough snapshot history yet (need at least 1 prior snapshot to flag newcomers)',
