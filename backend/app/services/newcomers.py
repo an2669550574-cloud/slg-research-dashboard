@@ -24,7 +24,9 @@
 - 只看 as_of 当期 rank ≤ TopN 的行：榜尾噪声大，且新品要"够亮"才值得提示。
 - 这是按**本地榜单存在性**判定，是真实上线日的零配额代理(proxy)，不等于产品发布日。
 """
+import asyncio
 import logging
+from datetime import timedelta
 from typing import Optional
 
 from sqlalchemy import select, func, distinct
@@ -313,6 +315,17 @@ async def detect_publisher_newcomers(
     historical_ids = base.get("historical_ids")
     summary = {k: v for k, v in base.items() if k not in ("rows", "historical_ids")}
     summary["newcomers"] = []
+
+    # B：baseline 充分性门控。本地快照过少时，"首次出现在本地榜单" ≈ "首次被采到"，
+    # 与真实上架日脱钩——次市场（DE/RU 双周同步）刚采集只有 1~2 个快照，会把一整批
+    # 老 SLG（2013–2017）误报"新品"。要求 ≥ MIN_BASELINE 个历史快照才报，不足视为
+    # 数据积累中（沿用 no_baseline 语义：端点进 combos_without_baseline、digest/落库
+    # 拿到空 newcomers）。攒够后由真实上架日门控（端点/digest 层）继续滤老产品。
+    if not summary["no_baseline"] and \
+            len(summary.get("baseline_dates") or []) < settings.PUBLISHER_NEWCOMER_MIN_BASELINE:
+        summary["no_baseline"] = True
+        return summary
+
     for r in base["rows"]:
         if r.rank is None or r.rank > topn:
             continue
@@ -332,3 +345,80 @@ async def detect_publisher_newcomers(
             })
             break  # 一个产品归属到第一个命中的主体即可
     return summary
+
+
+# 富化 miss 时现打免费 lookup 的请求间停顿（秒）。实际 miss 量极小（多为 Android
+# 包名，iOS 命中检出历史缓存），礼貌限速即可，与 newcomer_log 落库富化同口径。
+_ENRICH_DELAY_S = 1.0
+
+
+async def gate_publisher_newcomers_by_release_date(
+    newcomers: list[dict],
+    country: str,
+    platform: str,
+    *,
+    max_age_days: Optional[int] = None,
+    enrich_miss: bool = True,
+) -> list[dict]:
+    """按**真实上架日**给厂商新品二次门控 + 回填 release_date（全零 ST 配额）。
+
+    detect_publisher_newcomers 判「新」用的是本地榜单存在性（首次进本地 game_rankings），
+    是真实上线日的零配额代理——但对快照稀疏的次市场会把老产品误报为新品（详见
+    config.PUBLISHER_NEWCOMER_MIN_BASELINE / detect_publisher_newcomers docstring）。
+    这里用 release_date 兜底：上架早于 N 天前的剔除，N 天内 / 无从判断的保留（缺失
+    按新处理、不丢真新品信号——与 itunes_releases._is_old_release 同源哲学）。
+
+    release_date 解析顺序（全免费、零 ST）：
+      1) MarketNewcomerLog.release_date —— 检出落库时已富化的缓存（命中率最高）；
+      2) PublisherItunesApp.release_date —— 雷达账号下 app（track_id = iOS 数字 app_id）；
+      3) enrich_miss=True 时，对仍缺的 app_id 现打一次免费 iTunes/GP lookup（限速）。
+    每行回填 `release_date`（供前端展示「新」的判定依据）；返回过滤后的列表。
+    """
+    if not newcomers:
+        return newcomers
+    max_age_days = (max_age_days if max_age_days is not None
+                    else settings.ITUNES_RELEASES_OLD_RELEASE_DAYS)
+    from app.models.newcomer import MarketNewcomerLog
+    from app.models.publisher import PublisherItunesApp
+
+    app_ids = [n["app_id"] for n in newcomers if n.get("app_id")]
+    rd_by_app: dict[str, str] = {}
+    async with AsyncSessionLocal() as db:
+        # 1) 检出历史缓存（任一非空 release_date）。
+        for aid, rd in (await db.execute(
+            select(MarketNewcomerLog.app_id, MarketNewcomerLog.release_date).where(
+                MarketNewcomerLog.app_id.in_(app_ids),
+                MarketNewcomerLog.release_date.is_not(None),
+            )
+        )).all():
+            rd_by_app.setdefault(aid, rd)
+        # 2) 雷达 app 缓存（track_id ≡ iOS 数字 app_id）。
+        miss_ids = [a for a in app_ids if a not in rd_by_app]
+        if miss_ids:
+            for tid, rd in (await db.execute(
+                select(PublisherItunesApp.track_id, PublisherItunesApp.release_date).where(
+                    PublisherItunesApp.track_id.in_(miss_ids),
+                    PublisherItunesApp.release_date.is_not(None),
+                )
+            )).all():
+                rd_by_app.setdefault(tid, rd)
+
+    # 3) 仍缺的 → 免费 lookup（限速）。mock 模式不出外网；失败/拿不到 → 留缺失（保留行）。
+    if enrich_miss and not settings.USE_MOCK_DATA:
+        from app.services.newcomer_log import enrich_fields
+        still_miss = [a for a in app_ids if a not in rd_by_app]
+        for i, aid in enumerate(still_miss):
+            if i > 0:
+                await asyncio.sleep(_ENRICH_DELAY_S)
+            data = await enrich_fields(aid, country.lower(), platform.lower())
+            if data and data.get("release_date"):
+                rd_by_app[aid] = data["release_date"]
+
+    cutoff = (utcnow_naive() - timedelta(days=max_age_days)).strftime("%Y-%m-%d")
+    out = []
+    for n in newcomers:
+        rd = rd_by_app.get(n.get("app_id"))
+        if rd and rd < cutoff:
+            continue  # 真实上架日早于阈值 → 老产品，剔除
+        out.append({**n, "release_date": rd})
+    return out

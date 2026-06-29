@@ -230,6 +230,8 @@ async def test_send_daily_digest_end_to_end(client, monkeypatch):
 
     today = utcnow_naive().strftime("%Y-%m-%d")
     prev = (utcnow_naive() - timedelta(days=1)).strftime("%Y-%m-%d")
+    prev2 = (utcnow_naive() - timedelta(days=2)).strftime("%Y-%m-%d")
+    prev3 = (utcnow_naive() - timedelta(days=3)).strftime("%Y-%m-%d")
 
     r = await client.post("/api/publishers/", json={
         "name": "江娱互动测试", "aliases": [{"keyword": "river game"}]})
@@ -237,6 +239,10 @@ async def test_send_daily_digest_end_to_end(client, monkeypatch):
 
     async with AsyncSessionLocal() as db:
         rows = [
+            # veteran 贯穿 ≥3 个 baseline 快照 + 今日（满足 PUBLISHER_NEWCOMER_MIN_BASELINE
+            # 门控；movement 仍只比今日 vs 昨日，不受更早快照影响）。
+            ("veteran", prev3, 1, "Century Games Pte. Ltd."),
+            ("veteran", prev2, 1, "Century Games Pte. Ltd."),
             ("veteran", prev, 1, "Century Games Pte. Ltd."),
             ("veteran", today, 1, "Century Games Pte. Ltd."),
             ("rookie", today, 4, "Mystery Studio"),                    # 全市场新面孔

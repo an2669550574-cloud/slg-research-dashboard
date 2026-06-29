@@ -81,6 +81,7 @@ function pubRow(p: Partial<PublisherNewcomerItem> & { app_id: string }): Publish
     country: 'US', platform: 'ios', as_of: '2026-06-01', name: 'Game', publisher: 'Studio',
     icon_url: null, rank: null, revenue: null, downloads: null,
     entity_id: 1, entity_name: '某主体', matched_by: 'alias',
+    release_date: null, is_reentry: null,
     ...p,
   }
 }

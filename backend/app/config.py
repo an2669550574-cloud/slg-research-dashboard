@@ -170,6 +170,13 @@ class Settings(BaseSettings):
     # JP/android 实测单 combo 23 项里 22 项是 #137–#535 的长尾噪声。设 200 让
     # 真正值得关注的中段新品仍能命中，砍掉榜尾。
     PUBLISHER_NEWCOMER_TOPN: int = 200
+    # 厂商新品的 baseline 充分性门控：本地 game_rankings 快照过少时，"首次出现在
+    # 本地榜单" ≈ "首次被我们采到"，与产品真实上架日完全脱钩——次市场（DE/RU 双周
+    # 同步）刚开始采集只有 1~2 个快照，as_of 当期榜里凡上一快照不在榜的老产品全被
+    # 误报"新品"（实测 DE/ios 18 项、RU/ios 12 项全是 2013–2017 老 SLG）。要求至少
+    # N 个历史快照才报厂商新品，不足则视为"数据积累中"（no_baseline）不报。攒够后
+    # 真实上架日门控（见 ITUNES_RELEASES_OLD_RELEASE_DAYS）继续兜底滤老产品。
+    PUBLISHER_NEWCOMER_MIN_BASELINE: int = 3
 
     # ── 每日 digest 群推送封顶（避免波动大的日子刷出一张超长卡）────────────
     # 单 combo 的 movement 显示行上限（新品两层已各自 [:10]）。movement 原本无任何

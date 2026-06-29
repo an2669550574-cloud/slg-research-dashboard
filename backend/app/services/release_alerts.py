@@ -938,6 +938,7 @@ async def send_daily_digest() -> bool:
     from app.services.newcomers import (
         detect_newcomers, detect_publisher_newcomers,
         _load_ignore_keys, _load_entity_matchers, resolve_entity,
+        gate_publisher_newcomers_by_release_date,
     )
 
     today = utcnow_naive().strftime("%Y-%m-%d")
@@ -982,6 +983,10 @@ async def send_daily_digest() -> bool:
                     if n.get("name"):
                         all_newcomer_names.add(n["name"])
             if publisher.get("as_of") == today:
+                # 真实上架日门控：剔除老产品（本地"首次出现"≠ 真新品）——与 /publishers
+                # 端点同一 helper、同口径，避免 2013–2017 老 SLG 被当新品推给领导。
+                publisher["newcomers"] = await gate_publisher_newcomers_by_release_date(
+                    publisher.get("newcomers") or [], country, platform)
                 entry["publisher"] = publisher
                 # 收集厂商新品名称
                 for n in (publisher.get("newcomers") or []):
@@ -1002,6 +1007,8 @@ async def send_daily_digest() -> bool:
                         if n.get("name"):
                             all_newcomer_names.add(n["name"])
                 if f_publisher.get("as_of") == today:
+                    f_publisher["newcomers"] = await gate_publisher_newcomers_by_release_date(
+                        f_publisher.get("newcomers") or [], country, platform)
                     entry["free_publisher"] = f_publisher
                     for n in (f_publisher.get("newcomers") or []):
                         if n.get("name"):

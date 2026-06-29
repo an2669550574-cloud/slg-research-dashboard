@@ -22,7 +22,7 @@ from app.models.newcomer import NewcomerVideo
 from app.models.publisher import PublisherEntity, PublisherItunesArtist, PublisherItunesApp
 from app.services.newcomers import (
     detect_newcomers, detect_publisher_newcomers, _load_entity_matchers,
-    _load_ignore_keys,
+    _load_ignore_keys, gate_publisher_newcomers_by_release_date,
 )
 from app.services.gp_releases import sync_gp_releases
 from app.services.itunes_releases import sync_itunes_releases
@@ -75,6 +75,12 @@ class PublisherNewcomerItem(BaseModel):
     entity_id: int
     entity_name: str
     matched_by: str  # 'alias' = 发行马甲命中 / 'app_id' = 钉选命中
+    # 真实上架日（免费富化，零 ST）。判「新」的依据：本地榜单"首次出现"只是上线日的
+    # 代理，故再按真实上架日门控（早于 ITUNES_RELEASES_OLD_RELEASE_DAYS 已剔除）。
+    # 缺失（免费源未命中）= None，前端按"无从判断"显示，不剔除。
+    release_date: Optional[str] = None
+    # baseline 窗口之外更早出现过 = 回归（老游戏跌出又回来），非真首发。None=无从判断。
+    is_reentry: Optional[bool] = None
 
 
 class PublisherNewcomersOut(BaseModel):
@@ -200,7 +206,10 @@ async def get_publisher_newcomers(
         if summary["no_baseline"]:
             no_baseline.append(key)
             continue
-        for n in summary["newcomers"]:
+        # 真实上架日门控：剔除老产品（本地"首次出现"≠ 真新品）+ 回填 release_date。
+        # 缓存优先（检出历史 / 雷达 app），miss 才打免费 lookup，零 ST 配额。
+        gated = await gate_publisher_newcomers_by_release_date(summary["newcomers"], c, p)
+        for n in gated:
             items.append(PublisherNewcomerItem(country=c, platform=p, as_of=summary["as_of"], **n))
 
     items.sort(key=lambda e: (e.entity_name, e.rank if e.rank is not None else 999))

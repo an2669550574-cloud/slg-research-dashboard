@@ -376,6 +376,11 @@ export interface PublisherNewcomerItem {
   entity_name: string
   /** 'alias' = 发行马甲命中 / 'app_id' = 钉选命中 */
   matched_by: 'alias' | 'app_id'
+  /** 真实上架日（免费富化，零 ST）。判「新」依据：本地"首次出现"只是上线日代理，
+   *  再按真实上架日门控（早于阈值已在服务端剔除）。null = 免费源未命中、无从判断。 */
+  release_date: string | null
+  /** baseline 窗口之外更早出现过 = 回归（老游戏跌出又回来），非真首发。null = 无从判断。 */
+  is_reentry: boolean | null
 }
 
 export interface PublisherNewcomersOut {
