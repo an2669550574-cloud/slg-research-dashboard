@@ -170,6 +170,17 @@ def _link_line(app_id: str, view: str, *, country=None, platform=None,
     return line
 
 
+def _video_seg(videos: Optional[dict], app_id: Optional[str]) -> str:
+    """新品行内联的实机视频段。取代此前独立的【新品实机视频】段——那段重列同一批新品名
+    （视频项全来自当日新品），领导反馈「同样的游戏说了两遍」。改为并进各新品行的动作行。
+    videos: {app_id: {count, url}}。该 app 无视频 → 返回 ""。"""
+    v = (videos or {}).get(app_id or "")
+    if not v:
+        return ""
+    link = f" 💻 [看第一条]({v['url']})" if v.get("url") else ""   # YouTube=外网，手机打不开
+    return f"🎬 实机视频 {v['count']} 条{link}"
+
+
 # ── 重要度打分（统一喂给 排序 / 全局封顶 / movement TopN / 按钮 / 今日要闻 五处）──
 # 此前这五处一律按 sync_combos_list 的**地理顺序**砍尾：次市场长尾能把核心市场的大
 # 事件（头部空降、高名次收入异动）挤出卡片或按钮折叠。改成统一打分「市场权重 × 事件
@@ -414,9 +425,11 @@ def build_newcomer_lines(market: dict, publisher: dict,
                          platform: Optional[str] = None,
                          summaries: Optional[dict] = None,
                          lead_cta: bool = True,
-                         own_matches: Optional[dict] = None) -> list[str]:
+                         own_matches: Optional[dict] = None,
+                         videos: Optional[dict] = None) -> list[str]:
     """两层新品检测 → 人读行。
     enrich: {app_id: {genre, price, release_date}}
+    videos: {app_id: {count, url}} —— 该新品已搜集的实机视频，内联进动作行（取代独立段）
     articles: {app_id: [WechatArticle]} 微信公众号文章
     entities: {app_id: 中文厂商主体} —— 市场新面孔补中文归属（厂商新品行自带 entity_name）
     summaries: {app_id: 一句话中文摘要} —— LLM 中文化，让领导一眼看懂「这是什么游戏」
@@ -457,12 +470,15 @@ def build_newcomer_lines(market: dict, publisher: dict,
         inner = _meta_inner(genre=en.get("genre"), revenue=n.get("revenue"),
                             downloads=n.get("downloads"),
                             entity=entities.get(aid) or n.get("publisher"))
+        action = " · ".join(s for s in (
+            _link_line(aid or "", "market", country=country, platform=platform,
+                       with_store=is_lead, articles=articles.get(aid)),
+            _video_seg(videos, aid)) if s)
         lines.append(_block([
             f"✨ **{_md_name(n['name'])}** 空降 **#{n['rank']}**{tag}{_own_tag(aid, own_matches)}",
             f"> {inner}" if inner else "",
             f"📝 {summaries.get(aid)}" if summaries.get(aid) else "",   # LLM 一句话：领导秒懂
-            _link_line(aid or "", "market", country=country, platform=platform,
-                       with_store=is_lead, articles=articles.get(aid)),
+            action,
         ]))
     lead_hidden = lead_total - lead_shown
     if lead_hidden > 0:
@@ -474,11 +490,14 @@ def build_newcomer_lines(market: dict, publisher: dict,
         aid = n.get("app_id")
         rank = f"#{n['rank']}" if n.get("rank") else "进榜"
         inner = _meta_inner(revenue=n.get("revenue"), downloads=n.get("downloads"))
+        action = " · ".join(s for s in (
+            _link_line(aid or "", "publisher", articles=articles.get(aid)),
+            _video_seg(videos, aid)) if s)
         lines.append(_block([
             f"🏢 **{_md_name(n['entity_name'])}** 新品 **{_md_name(n['name'])}** {rank}{_own_tag(aid, own_matches)}",
             f"> {inner}" if inner else "",
             f"📝 {summaries.get(aid)}" if summaries.get(aid) else "",
-            _link_line(aid or "", "publisher", articles=articles.get(aid)),
+            action,
         ]))
     return lines
 
@@ -486,7 +505,8 @@ def build_newcomer_lines(market: dict, publisher: dict,
 def build_free_newcomer_lines(market: dict, publisher: dict,
                               articles: Optional[dict] = None,
                               entities: Optional[dict] = None,
-                              own_matches: Optional[dict] = None) -> list[str]:
+                              own_matches: Optional[dict] = None,
+                              videos: Optional[dict] = None) -> list[str]:
     """下载榜新品 → 人读行（ADR 0001 切片 2）。
 
     **钉钉只推 is_slg=True**（下载榜噪声大：休闲/工具类装机榜混入多）——非 SLG 的
@@ -513,10 +533,13 @@ def build_free_newcomer_lines(market: dict, publisher: dict,
         rank = f"#{n['rank']}" if n.get("rank") else "上榜"
         inner = _meta_inner(downloads=n.get("downloads"),
                             entity=n.get("entity_name") or entities.get(aid) or n.get("publisher"))
+        action = " · ".join(s for s in (
+            _link_line(aid or "", "market", articles=articles.get(aid)),
+            _video_seg(videos, aid)) if s)
         lines.append(_block([
             f"⬇️ **{_md_name(n['name'])}** 下载榜 **{rank}**{_own_tag(aid, own_matches)}",
             f"> {inner}" if inner else "",
-            _link_line(aid or "", "market", articles=articles.get(aid)),
+            action,
         ]))
     return lines
 
@@ -569,24 +592,6 @@ def build_version_lines(changes: list[dict], cap: int) -> list[str]:
     for c in changes[:cap]:
         date = f"（{c['date']}）" if c.get("date") else ""
         out.append(f"🆙 **{_md_name(c['name'])}**：{_md_name(c['old'], maxlen=None)} → {_md_name(c['new'], maxlen=None)}{date}")
-    return out
-
-
-def build_video_lines(items: list[dict], cap: int) -> list[str]:
-    """新品实机视频 → 人读行（需求① / ADR 0002）。items: [{name, count, url}]。
-
-    让领导在钉钉就看到「系统给新竞品自动搜了实机视频」，免开网站。url = 头条视频。
-    只详列前 cap 条，其余折叠成一行汇总（新品多的日子能搜出几十条，逐条列会刷屏）。
-    """
-    out: list[str] = []
-    for it in items[:cap]:
-        link = f" 💻 [看第一条]({it['url']})" if it.get("url") else ""   # YouTube=外网，手机打不开
-        out.append(f"🎬 **{_md_name(it['name'])}**：已搜集 {it['count']} 条实机玩法视频{link}")
-    extra = len(items) - cap
-    if extra > 0:
-        base = (settings.DASHBOARD_BASE_URL or "").rstrip("/")
-        tail = f"，[看板查看全部]({base}/newcomers)" if base else ""   # 看板深链手机可达，不标 💻
-        out.append(f"> …另有 **{extra}** 个新品也已搜集实机视频{tail}")
     return out
 
 
@@ -700,12 +705,21 @@ def _highlight_line(item: dict, own_matches: Optional[dict] = None) -> str:
 
 def build_highlight_lines(per_combo: list[dict], topn: int,
                           own_matches: Optional[dict] = None) -> list[str]:
-    """跨 combo「今日要闻」Top N（重要度置顶）。topn<=0 或事件数 ≤ topn → 返回 []
-    （小卡本身已短，置顶会和正文重复，没必要）。own_matches 既参与打分（对标竞品上浮）
-    又用于渲染 ⚔️ 标签。"""
+    """跨 combo「今日要闻」Top N（重要度置顶）。topn<=0 或（排除置顶 combo 后）事件数
+    ≤ topn → 返回 []（小卡本身已短，置顶会和正文重复，没必要）。own_matches 既参与打分
+    （对标竞品上浮）又用于渲染 ⚔️ 标签。
+
+    **去重**：排除「正文首位 combo」（_combo_sort_key 最高，通常核心 US/iOS）的事件——
+    它本就排在正文最前，再抽进今日要闻就是同事件列两遍（领导反馈的重复）。无损：单/少
+    combo 日今日要闻自然消失；多 combo 日今日要闻只上浮「排在后面、可能被折叠的次要市场
+    大事件」，正文首位 combo 的事件不再重复。"""
     if topn <= 0:
         return []
     scored = _collect_scored_items(per_combo, own_matches)
+    if per_combo:
+        top = max(per_combo, key=_combo_sort_key)
+        tc = (top.get("country"), top.get("platform"))
+        scored = [(s, it) for s, it in scored if (it["country"], it["platform"]) != tc]
     if len(scored) <= topn:
         return []
     return [_highlight_line(item, own_matches) for _, item in scored[:topn]]
@@ -789,6 +803,8 @@ def build_daily_digest(per_combo: list[dict], today: str,
     sections: list[str] = []
     cap = settings.DIGEST_MAX_ITEMS
     mv_cap = settings.DIGEST_MOVEMENT_TOPN
+    # 实机视频按 app_id 内联进各新品行（取代独立段，免同产品名列两遍）。
+    videos_by_app = {v["app_id"]: v for v in (video_items or []) if v.get("app_id")}
     total = 0      # 全部检出项（含未展示），进标题
     shown = 0      # 已渲染项，触发全局封顶
     overflow = 0   # 因封顶/movement 截断未展示的项，进折叠行（不静默丢）
@@ -802,13 +818,14 @@ def build_daily_digest(per_combo: list[dict], today: str,
                                           enrich=c.get("enrich"), articles=articles,
                                           entities=entities, summaries=summaries,
                                           country=c["country"], platform=c["platform"],
-                                          lead_cta=not is_leader, own_matches=own_matches)
+                                          lead_cta=not is_leader, own_matches=own_matches,
+                                          videos=videos_by_app)
                      if (c.get("market") or c.get("publisher")) else [])
         # 下载榜新品（ADR 0001 切片 2）：只推 is_slg=True，⬇️ 段单列。
         free_blocks = (build_free_newcomer_lines(c.get("free_market") or {},
                                                  c.get("free_publisher") or {},
                                                  articles=articles, entities=entities,
-                                                 own_matches=own_matches)
+                                                 own_matches=own_matches, videos=videos_by_app)
                        if (c.get("free_market") or c.get("free_publisher")) else [])
         if not mv_all and not nc_blocks and not free_blocks:
             continue
@@ -841,12 +858,8 @@ def build_daily_digest(per_combo: list[dict], today: str,
         if rlines:
             total += len(region_changes)
             sections.append("【竞品新区上线 · iOS】\n\n" + "\n\n".join(rlines))
-    # 全局「新品实机视频」段（需求① / ADR 0002）：今日新品已自动搜集的实机视频。
-    if video_items:
-        vid_lines = build_video_lines(video_items, settings.DIGEST_VIDEO_TOPN)
-        if vid_lines:
-            total += len(video_items)
-            sections.append("【新品实机视频】\n\n" + "\n\n".join(vid_lines))
+    # 「新品实机视频」不再单列整段——已内联进各新品行的动作行（🎬，见 build_newcomer_lines），
+    # 免同一批新品名在【新品上架】和【实机视频】列两遍（领导反馈的重复）。TL;DR 仍计 🎬 N。
     # 全局「待建档新厂线索」段（方案①）：下载榜 is_slg=false（白名单未收录）但
     # genre=Strategy 的新品，单列给**维护者**核查建档——补救白名单滞后导致的漏推。
     # **领导卡跳过整段**（建档是维护者动作、对领导是杂讯）；领导卡的「下载榜新品 · SLG」
@@ -1072,8 +1085,8 @@ async def send_daily_digest() -> bool:
             for v in vids:
                 by_app.setdefault(v.app_id, []).append(v)
             for aid, vlist in by_app.items():
-                video_items.append({"name": newcomer_apps[aid], "count": len(vlist),
-                                    "url": vlist[0].url})
+                video_items.append({"app_id": aid, "name": newcomer_apps[aid],
+                                    "count": len(vlist), "url": vlist[0].url})
     except Exception:
         logger.exception("Video items for digest failed")
 

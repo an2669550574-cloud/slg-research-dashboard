@@ -252,6 +252,10 @@ async def test_send_daily_digest_end_to_end(client, monkeypatch):
             db.add(GameRanking(app_id=app_id, date=date, rank=rank, downloads=None,
                                revenue=None, country="US", platform="ios",
                                name=app_id, publisher=pub, icon_url=None))
+        # topheroes 已搜集 1 条实机视频 → 应内联进该新品行（🎬），不另起【新品实机视频】段。
+        from app.models.newcomer import NewcomerVideo
+        db.add(NewcomerVideo(app_id="topheroes", video_id="vid1", title="实机演示",
+                             url="https://www.youtube.com/watch?v=vid1", rank=1))
         await db.commit()
 
     monkeypatch.setattr(settings, "DINGTALK_WEBHOOK_URL", "https://example.com/hook")
@@ -267,6 +271,10 @@ async def test_send_daily_digest_end_to_end(client, monkeypatch):
     _, text, _ = sent[0]
     assert "rookie" in text
     assert "🏢 **江娱互动测试** 新品 **topheroes** #88" in text
+    # 实机视频内联进新品行（🎬），不再单列【新品实机视频】整段重列产品名（领导反馈的重复）。
+    assert "🎬 实机视频 1 条" in text
+    assert "【新品实机视频】" not in text
+    assert text.count("topheroes") == 1   # 产品名只出现一次
 
 
 @pytest.mark.asyncio
@@ -544,28 +552,30 @@ def test_digest_global_cap_never_drops_core_market(monkeypatch):
     assert "另有 **1** 项未在此展示" in text
 
 
-def test_digest_highlights_section_pins_top_events_cross_combo():
-    """今日要闻：跨 combo 抽最高重要度事件置顶，事件数 > TOPN 时才渲染。"""
+def test_digest_highlights_excludes_top_combo_to_dedup():
+    """今日要闻去重（领导反馈「重复内容太多」）：正文首位 combo（核心 US/iOS，本就排正文
+    最前）的事件不再抽进今日要闻重列；今日要闻只上浮「排在后面、可能被折叠的次要市场」
+    大事件。首位 combo 的大事件仍在正文照常展示。"""
     from app.services import release_alerts as ra
-    us_mv = {
-        "new_entrants": [{"app_id": str(i), "name": f"小新{i}", "prev_rank": None, "cur_rank": 45 + i}
-                         for i in range(5)],
-        "surges": [], "drops": [],
-        "revenue_spikes": [{"app_id": "big", "name": "头部巨鳄", "cur_rank": 2,
-                            "prev_revenue": 1_000_000, "cur_revenue": 3_000_000, "pct": 200.0}],
-    }
-    kr_mv = {"new_entrants": [{"app_id": "kr1", "name": "韩区爆款", "prev_rank": None, "cur_rank": 1}],
-             "surges": [], "drops": [], "revenue_spikes": []}
+    us_mv = {"new_entrants": [], "surges": [], "drops": [],
+             "revenue_spikes": [{"app_id": "big", "name": "头部巨鳄", "cur_rank": 2,
+                                 "prev_revenue": 1_000_000, "cur_revenue": 3_000_000, "pct": 200.0}]}
+    # 次要市场各 4 个新进 → 排除首位 US 后仍 > TOPN(5)，今日要闻照常渲染。
+    kr_mv = {"new_entrants": [{"app_id": f"kr{i}", "name": f"韩区{i}", "prev_rank": None, "cur_rank": 1 + i}
+                              for i in range(4)], "surges": [], "drops": [], "revenue_spikes": []}
+    jp_mv = {"new_entrants": [{"app_id": f"jp{i}", "name": f"日区{i}", "prev_rank": None, "cur_rank": 1 + i}
+                              for i in range(4)], "surges": [], "drops": [], "revenue_spikes": []}
     per_combo = [
-        {"country": "KR", "platform": "ios", "movement": kr_mv, "market": None, "publisher": None},
         {"country": "US", "platform": "ios", "movement": us_mv, "market": None, "publisher": None},
+        {"country": "KR", "platform": "ios", "movement": kr_mv, "market": None, "publisher": None},
+        {"country": "JP", "platform": "ios", "movement": jp_mv, "market": None, "publisher": None},
     ]
     _, text, _ = ra.build_daily_digest(per_combo, "2026-06-28")
     assert "【📌 今日要闻】" in text
     hi = text.split("【📌 今日要闻】")[1].split("---")[0]
-    # 头部收入异动第一、韩区 #1 爆款第二（跨 combo），均压过 US 榜尾长尾
-    assert hi.index("头部巨鳄") < hi.index("韩区爆款") < hi.index("小新0")
-    assert "🇰🇷 韩国 · iOS 🆕 **韩区爆款**" in hi   # 要闻行内联市场标签
+    assert "头部巨鳄" not in hi      # 首位 combo（US/iOS）事件不进今日要闻——去重
+    assert "头部巨鳄" in text         # 但仍在正文 US 段照常展示
+    assert ("韩区" in hi) or ("日区" in hi)   # 次要市场事件上浮今日要闻
 
 
 def test_digest_own_match_boosts_highlight_ranking():
@@ -857,19 +867,23 @@ async def test_load_own_products_filters_splits_lowercases(client):
     assert "无关键词对标测试" not in names and "空白词对标测试" not in names
 
 
-def test_digest_video_lines_caps_and_folds():
-    """① 实机视频段：超过 cap 条只详列前 N，其余折叠成一行汇总（不静默丢）。"""
-    from app.services.release_alerts import build_video_lines
+def test_digest_video_inlined_into_newcomer_row():
+    """① 实机视频不再单列整段——内联进各新品行（🎬），免同批新品名在【新品上架】和
+    【实机视频】列两遍（领导反馈的重复）。"""
+    from app.services.release_alerts import _video_seg, build_newcomer_lines
 
-    items = [{"name": f"新品{i}", "count": 5, "url": f"https://y/{i}"} for i in range(8)]
-    lines = build_video_lines(items, 5)
-    detailed = [l for l in lines if l.startswith("🎬")]
-    assert len(detailed) == 5                       # 只详列前 5
-    fold = [l for l in lines if "另有" in l]
-    assert len(fold) == 1 and "**3**" in fold[0]    # 8 - 5 = 3 折叠
-    # 不超 cap：不折叠、全列
-    lines2 = build_video_lines(items[:4], 5)
-    assert len(lines2) == 4 and all("另有" not in l for l in lines2)
+    # _video_seg：有视频 → 🎬 段带数量 + 头条链接；无视频 → 空串。
+    assert _video_seg({"111": {"count": 3, "url": "https://y/x"}}, "111") == \
+        "🎬 实机视频 3 条 💻 [看第一条](https://y/x)"
+    assert _video_seg({}, "111") == ""
+    assert _video_seg({"111": {"count": 1, "url": None}}, "111") == "🎬 实机视频 1 条"
+
+    # 厂商新品行把 🎬 并进动作行（与 🎯 看板同一行），产品名只出现一次。
+    pub = {"newcomers": [{"app_id": "111", "name": "战旗OL", "entity_name": "某厂", "rank": 88}]}
+    blob = "\n".join(build_newcomer_lines({}, pub, videos={"111": {"count": 3, "url": "https://y/x"}}))
+    assert "🏢" in blob and "战旗OL" in blob
+    assert "🎬 实机视频 3 条" in blob
+    assert blob.count("战旗OL") == 1   # 不再【新品上架】+【实机视频】各列一遍
 
 
 def test_digest_market_lead_caps_and_folds():
