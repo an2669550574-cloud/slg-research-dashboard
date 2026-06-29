@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { Plus, Trash2, Pencil, X, Building2, Globe, ChevronRight, ChevronDown, Link2, ShieldCheck, Network, Search, List, Landmark, CornerDownRight, LayoutGrid, ListTree, Download as DownloadIcon, AlertTriangle, TrendingUp, Layers, Activity, Telescope, EyeOff, RotateCcw } from 'lucide-react'
+import { Plus, Trash2, Pencil, X, Building2, Globe, ChevronRight, ChevronDown, Link2, ShieldCheck, Network, Search, List, Landmark, CornerDownRight, LayoutGrid, ListTree, Download as DownloadIcon, AlertTriangle, TrendingUp, Layers, Activity, Telescope, EyeOff, RotateCcw, Radar } from 'lucide-react'
 import { publishersApi } from '../lib/api'
 import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
@@ -18,7 +18,7 @@ import type {
   PublisherEntity, PublisherEntityCreate, PublisherEntityUpdate,
   PublisherSourceCreate, PublisherSourceType,
   PublisherRelationCreate, PublisherRelationType, RelationCounterpartRole,
-  PublisherGap, PublisherIgnore,
+  PublisherGap, PublisherIgnore, PublisherArtistSuggestion,
 } from '../lib/types'
 
 type Segment = 'all' | 'operator' | 'capital'
@@ -134,6 +134,17 @@ export default function PublishersManage() {
   const [gapsOpen, setGapsOpen] = useState(false)
   const [ignoredOpen, setIgnoredOpen] = useState(false)
 
+  // 雷达覆盖建议：未接 iOS 雷达的 is_slg 主体，从已钉 iOS app_id 反解开发者账号候选。
+  // 扫描会做若干次 iTunes lookup（~20-30 秒），故只在用户点「扫描」(radarScan=true) 后才发起。
+  const [radarOpen, setRadarOpen] = useState(false)
+  const [radarScan, setRadarScan] = useState(false)
+  const { data: radarSuggestions = [], isFetching: radarLoading } = useQuery({
+    queryKey: ['publishers', 'artistSuggestions'],
+    queryFn: () => publishersApi.artistSuggestions(40),
+    enabled: radarScan,
+    staleTime: 5 * 60 * 1000,
+  })
+
   const invalidate = () => qc.invalidateQueries({ queryKey: QK })
   // 忽略/恢复后缺口与忽略名单都要刷新
   const invalidateGaps = () => {
@@ -148,6 +159,21 @@ export default function PublishersManage() {
   const restoreMut = useMutation({
     mutationFn: (ig: PublisherIgnore) => publishersApi.deleteIgnore(ig.id),
     onSuccess: () => { invalidateGaps(); toast.success(tt.gapsRestoredDone) },
+  })
+  // 一键接入：把反解出的开发者账号接到主体（复用带 409 去重的 itunes-artists 端点）。
+  // 成功后乐观移除该行（避免再花 20-30 秒重扫）+ 刷新主体列表/健康度（覆盖率随之上升）。
+  const wireArtistMut = useMutation({
+    mutationFn: (s: PublisherArtistSuggestion) =>
+      publishersApi.addItunesArtist(s.entity_id, {
+        artist_id: s.artist_id, platform: 'ios', label: s.artist_name || null,
+      }),
+    onSuccess: (_o, s) => {
+      qc.setQueryData<PublisherArtistSuggestion[]>(['publishers', 'artistSuggestions'],
+        old => (old ?? []).filter(x => x.entity_id !== s.entity_id))
+      qc.invalidateQueries({ queryKey: ['publishers', 'health'] })
+      invalidate()
+      toast.success(tt.radarWiredDone(s.entity_name))
+    },
   })
 
   const createMut = useMutation({
@@ -654,6 +680,77 @@ export default function PublishersManage() {
                       ))}
                     </div>
                   )}
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* 雷达覆盖建议：未接 iOS 雷达的 is_slg 主体，从已钉 iOS app_id 免费反解开发者账号 →
+          一键接入。把「找开发者页→抄 artistId→粘进抽屉」自动化成「核对→接入」。扫描显式触发。 */}
+      {!isLoading && !isError && entities.length > 0 && (
+        <section className="border border-sky-500/30 bg-sky-500/[0.04] rounded-xl">
+          <button
+            onClick={() => { setRadarOpen(o => !o); if (!radarScan) setRadarScan(true) }}
+            className="w-full flex items-center gap-2.5 px-4 py-3 text-left"
+            title={tt.radarHint}
+          >
+            <span className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center bg-sky-500/15">
+              <Radar size={14} className="text-sky-400" />
+            </span>
+            <span className="font-display text-sm font-semibold text-primary">
+              {radarLoading ? tt.radarLoading : tt.radarTitle(radarScan ? radarSuggestions.length : null)}
+            </span>
+            <span className="ml-auto text-[11px] text-muted">
+              {radarOpen ? tt.radarCollapse : tt.radarExpand}
+            </span>
+            {radarOpen
+              ? <ChevronDown size={15} className="text-muted" />
+              : <ChevronRight size={15} className="text-muted" />}
+          </button>
+          {radarOpen && (
+            <div className="border-t border-sky-500/20 px-4 py-3">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="text-[11px] text-muted flex-1">{tt.radarHint}</div>
+                <button
+                  onClick={() => { setRadarScan(true); qc.invalidateQueries({ queryKey: ['publishers', 'artistSuggestions'] }) }}
+                  disabled={radarLoading}
+                  className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-medium text-sky-300 border border-sky-500/40 hover:bg-sky-500/10 transition-colors disabled:opacity-50"
+                >
+                  <Radar size={11} />
+                  {radarLoading ? tt.radarLoading : tt.radarRescan}
+                </button>
+              </div>
+              {radarLoading ? (
+                <div className="text-[12px] text-muted py-2">{tt.radarLoading}</div>
+              ) : radarSuggestions.length === 0 ? (
+                <div className="text-[12px] text-muted py-2">{tt.radarEmpty}</div>
+              ) : (
+                <div className="grid gap-2">
+                  {radarSuggestions.map(s => (
+                    <div
+                      key={s.entity_id}
+                      className="flex items-center gap-2.5 bg-elevated/60 border border-default/60 rounded-lg px-3 py-2"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="font-display text-sm text-primary truncate">{s.entity_name}</div>
+                        <div className="text-[11px] text-muted truncate">
+                          {s.artist_name ?? tt.radarUnknownArtist} · <span className="font-data">id {s.artist_id}</span>
+                          {s.source_app_name && <span> · {tt.radarFrom(s.source_app_name)}</span>}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => wireArtistMut.mutate(s)}
+                        disabled={wireArtistMut.isPending}
+                        title={tt.radarWireHint}
+                        className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-medium text-white bg-accent hover:brightness-110 transition-all disabled:opacity-50"
+                      >
+                        <Plus size={11} />
+                        {tt.radarWire}
+                      </button>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

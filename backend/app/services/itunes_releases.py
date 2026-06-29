@@ -110,6 +110,39 @@ async def fetch_artist_apps_multi(artist_id: str) -> list[dict]:
     return list(merged.values())
 
 
+async def resolve_artist_for_app(app_id: str) -> Optional[dict]:
+    """反向解析：iTunes lookup **按 app track id** 查 → 该 app 的开发者账号 (artistId, artistName)。
+
+    用于「雷达覆盖建议」——主体已钉了 iOS 数字 app_id，但还没接开发者账号雷达时，
+    从这个 app 免费反解出 artistId 供一键接入。仅对 iOS 数字 app_id 有效（Android
+    包名 / 空 → None）。免费、公开、零 ST 配额。失败 / 无 software 结果 / 无 artistId → None。
+    返回 {"artist_id": str, "artist_name": str|None, "app_name": str|None}。
+    """
+    if not app_id or not app_id.isdigit():
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.get(ITUNES_LOOKUP_URL, params={
+                "id": app_id, "entity": "software", "country": "us",
+            })
+            resp.raise_for_status()
+            results = resp.json().get("results", [])
+    except Exception:
+        logger.warning("itunes artist resolve failed for app %s", app_id, exc_info=True)
+        return None
+    soft = [r for r in results if r.get("wrapperType") == "software"]
+    if not soft:
+        return None
+    art_id = soft[0].get("artistId")
+    if not art_id:
+        return None
+    return {
+        "artist_id": str(art_id),
+        "artist_name": soft[0].get("artistName"),
+        "app_name": soft[0].get("trackName"),
+    }
+
+
 def _app_fields(r: dict) -> dict:
     # genre：genres[] 第一个非 "Games" 的子品类（Strategy/Puzzle…）比 primaryGenreName
     # ("Games") 有信息量，便于分级新上架是否 SLG；都没有时回退 primaryGenreName。

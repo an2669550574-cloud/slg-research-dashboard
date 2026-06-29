@@ -363,6 +363,73 @@ async def test_health_reports_itunes_artist_coverage(client):
 
 
 @pytest.mark.asyncio
+async def test_itunes_artist_suggestions_mock_mode_empty(client):
+    """mock 模式不出外网 → 雷达覆盖建议恒空（默认 USE_MOCK_DATA=true）。"""
+    await client.post("/api/publishers/", json={
+        "name": "有 iOS app 的厂", "app_ids": [{"app_id": "111"}],
+    })
+    assert (await client.get("/api/publishers/itunes-artist-suggestions")).json() == []
+
+
+@pytest.mark.asyncio
+async def test_itunes_artist_suggestions_resolves_and_filters(client, monkeypatch):
+    """雷达覆盖建议：未接雷达的 is_slg 主体从已钉 iOS app_id 反解开发者账号；
+    已覆盖/资本方/无 iOS app_id/artist 已占用 全部排除。"""
+    from app.config import settings
+    import app.services.itunes_releases as svc
+
+    # A: is_slg、有 iOS 数字 app_id、未接雷达 → 应出现
+    a = (await client.post("/api/publishers/", json={
+        "name": "工作室A", "is_slg": True, "app_ids": [{"app_id": "111"}],
+    })).json()["id"]
+    # B: 已接雷达（artist=800）→ 不出现（covered），且全局占用 800
+    b = (await client.post("/api/publishers/", json={
+        "name": "已接雷达B", "is_slg": True, "app_ids": [{"app_id": "222"}],
+    })).json()["id"]
+    assert (await client.post(f"/api/publishers/{b}/itunes-artists",
+                              json={"artist_id": "800", "platform": "ios"})).status_code == 201
+    # C: 资本方（is_slg=False）→ 不出现（非雷达目标）
+    await client.post("/api/publishers/", json={
+        "name": "资本方C", "is_slg": False, "app_ids": [{"app_id": "333"}],
+    })
+    # D: is_slg 但只有 Android 包名（非数字）→ 不出现（不可反解）
+    await client.post("/api/publishers/", json={
+        "name": "仅安卓D", "is_slg": True, "app_ids": [{"app_id": "com.x.y"}],
+    })
+    # E: is_slg、iOS app_id 反解出的 artist 已被 B 占用 → 跳过
+    await client.post("/api/publishers/", json={
+        "name": "撞车E", "is_slg": True, "app_ids": [{"app_id": "444"}],
+    })
+
+    # 每个非 A 主体的 app 都映射到一个「未被占用」的可解析 artist——这样若任一排除分支
+    # （covered / is_slg / isdigit）被误删，对应主体会**多出一行**，len 立即 ≠ 1（让过滤器
+    # 真正 load-bearing，不靠 resolve→None 兜底假绿）。唯独 444→800 撞 B 已占用，测去重分支。
+    table = {
+        "111": {"artist_id": "900", "artist_name": "Studio A", "app_name": "Game A"},
+        "222": {"artist_id": "801", "artist_name": "Studio B", "app_name": "Game B"},      # B covered → 删 covered 过滤才会泄漏
+        "333": {"artist_id": "802", "artist_name": "Studio C", "app_name": "Game C"},      # C 资本方 → 删 is_slg 过滤才会泄漏
+        "com.x.y": {"artist_id": "803", "artist_name": "Studio D", "app_name": "Game D"},  # D 安卓 → 删 isdigit 过滤才会泄漏
+        "444": {"artist_id": "800", "artist_name": "撞车工作室", "app_name": "Game E"},     # E 撞 B 已占用 800 → 测去重分支
+    }
+
+    async def fake_resolve(app_id):
+        return table.get(app_id)
+
+    monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
+    monkeypatch.setattr(svc, "resolve_artist_for_app", fake_resolve)
+    monkeypatch.setattr("app.routers.publishers._SUGGEST_LOOKUP_DELAY_S", 0)
+
+    sugg = (await client.get("/api/publishers/itunes-artist-suggestions")).json()
+    assert {s["entity_id"] for s in sugg} == {a}  # 仅 A；B/C/D/E 全被各自分支排除
+    s = sugg[0]
+    assert s["entity_name"] == "工作室A"
+    assert s["source_app_id"] == "111"
+    assert s["artist_id"] == "900"
+    assert s["artist_name"] == "Studio A"
+    assert s["source_app_name"] == "Game A"
+
+
+@pytest.mark.asyncio
 async def test_sibling_dedup_collapses_ios_android_same_game(client):
     """同 publisher + 名字 prefix 匹配的 iOS+Android 同款 → 合并为 1 个 product，
     收入/下载求和；product_count + top_products + /products 三处口径一致。"""

@@ -897,6 +897,16 @@ export interface PublisherGap {
   top_app: PublisherTopProduct
 }
 
+/** 雷达覆盖建议：未接 iOS 雷达的 is_slg 主体，从已钉 iOS app_id 反解出的开发者账号候选。 */
+export interface PublisherArtistSuggestion {
+  entity_id: number
+  entity_name: string
+  source_app_id: string
+  source_app_name: string | null
+  artist_id: string
+  artist_name: string | null
+}
+
 /** 缺口忽略名单条目：人工标过「非 SLG 主体」的发行商 / app，不再进缺口提示。 */
 export interface PublisherIgnore {
   id: number

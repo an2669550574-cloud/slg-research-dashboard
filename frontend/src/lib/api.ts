@@ -70,6 +70,7 @@ import type {
   PublisherProduct,
   PublisherHealth,
   PublisherGap,
+  PublisherArtistSuggestion,
   PublisherIgnore,
   PublisherIgnoreCreate,
   WechatAccount,
@@ -410,6 +411,10 @@ export const publishersApi = {
   // 调研缺口：近 N 天有收入、任何 alias/app_id 都没命中、未被忽略的 publisher。
   gaps: (days = 30, limit = 20): Promise<PublisherGap[]> =>
     api.get('/publishers/gaps', { params: { days, limit } }).then(r => r.data),
+  // 雷达覆盖建议：未接 iOS 雷达的 is_slg 主体，从已钉 iOS app_id 反解开发者账号候选。
+  // 每次调用做若干次免费 iTunes lookup（~20-30 秒），由用户显式「扫描」触发。零 ST 配额。
+  artistSuggestions: (limit = 40): Promise<PublisherArtistSuggestion[]> =>
+    api.get('/publishers/itunes-artist-suggestions', { params: { limit } }).then(r => r.data),
   // 缺口忽略名单：把已知非 SLG 巨头从缺口里剔掉（publisher / app_id 两种粒度）。
   ignores: (): Promise<PublisherIgnore[]> =>
     api.get('/publishers/ignores').then(r => r.data),

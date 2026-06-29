@@ -248,6 +248,20 @@ class PublisherGapOut(BaseModel):
     top_app: PublisherTopProductOut  # 收入最高的代表 app（icon + 名）
 
 
+class PublisherArtistSuggestionOut(BaseModel):
+    """雷达覆盖建议行：未接 iOS 雷达的 is_slg 主体，从其已钉 iOS app_id 反解出的开发者账号候选。
+
+    驱动「📡 雷达覆盖建议」面板——把「手动找开发者页 → 抄 artistId → 粘进抽屉」这段 toil
+    自动化成「一眼看 entity→artistName 对不对 → 一键接入」。零 ST 配额（免费 iTunes lookup）。
+    """
+    entity_id: int
+    entity_name: str
+    source_app_id: str             # 反解所用的 iOS 数字 app_id（主体已钉）
+    source_app_name: Optional[str] = None  # 该 app 名（供人工核对账号归属）
+    artist_id: str                 # 反解出的开发者账号 artistId（接入后即雷达账号）
+    artist_name: Optional[str] = None  # 开发者账号名（人工把关锚点：与主体对得上才接）
+
+
 class PublisherIgnoreOut(BaseModel):
     """缺口忽略名单条目：被人工标为「非 SLG 主体」的发行商 / app，不再进缺口提示。"""
     model_config = ConfigDict(from_attributes=True)
