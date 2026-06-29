@@ -430,6 +430,82 @@ async def test_itunes_artist_suggestions_resolves_and_filters(client, monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_itunes_artist_suggestions_from_matched_products(client, monkeypatch):
+    """slice 2：未钉任何 app、只靠 alias 归属的 SLG 主体，也能从 alias 匹配到的 iOS 产品
+    反解 artistId（大量真 SLG 单厂属此类）。source_app_id 来自匹配产品而非 pinned。"""
+    from app.config import settings
+    import app.services.itunes_releases as svc
+    today = _today()
+    # 一个 iOS 产品，publisher 命中下面主体的 alias；该主体不钉任何 app_id（slice 1 覆盖不到）
+    await _seed_rankings([
+        ("7001", today, 1, 500, 300.0, "US", "ios", "Mega Strategy", "MegaCorp Studios"),
+        # 同主体第二个 iOS 产品收入更高 → 应优先用它反解（旗舰先解）
+        ("7002", today, 2, 800, 900.0, "US", "ios", "Mega War", "MegaCorp Studios"),
+        # Android 包名产品（非数字）→ 不可反解，不应被选
+        ("com.mega.x", today, 3, 100, 50.0, "US", "android", "Mega Mobile", "MegaCorp Studios"),
+    ])
+    eid = (await client.post("/api/publishers/", json={
+        "name": "兆业", "is_slg": True, "aliases": [{"keyword": "megacorp"}],  # 无 app_ids
+    })).json()["id"]
+
+    table = {
+        "7002": {"artist_id": "950", "artist_name": "MegaCorp", "app_name": "Mega War"},
+        "7001": {"artist_id": "951", "artist_name": "MegaCorp", "app_name": "Mega Strategy"},
+    }
+
+    async def fake_resolve(app_id):
+        return table.get(app_id)
+
+    monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
+    monkeypatch.setattr(svc, "resolve_artist_for_app", fake_resolve)
+    monkeypatch.setattr("app.routers.publishers._SUGGEST_LOOKUP_DELAY_S", 0)
+
+    sugg = (await client.get("/api/publishers/itunes-artist-suggestions")).json()
+    assert {s["entity_id"] for s in sugg} == {eid}
+    s = sugg[0]
+    assert s["source_app_id"] == "7002"  # 旗舰（收入最高的 iOS 匹配产品）先反解
+    assert s["artist_id"] == "950"
+
+
+@pytest.mark.asyncio
+async def test_itunes_artist_suggestions_skips_occupied_artist_tries_next(client, monkeypatch):
+    """旗舰反解出的开发者账号已被占用时，应试本主体下一候选而非放弃整主体
+    （多候选结构下 break→continue 修漏报；单 pinned 时两者等价）。"""
+    from app.config import settings
+    import app.services.itunes_releases as svc
+    today = _today()
+    await _seed_rankings([
+        ("8001", today, 1, 900, 900.0, "US", "ios", "Twin Flagship", "TwinCo Ltd"),  # 旗舰 → 已占用账号
+        ("8002", today, 2, 100, 100.0, "US", "ios", "Twin Minor", "TwinCo Ltd"),      # 次品 → 未占用账号
+    ])
+    # 占位主体先接入 artist 700，让旗舰 8001 反解出的账号成为「已占用」
+    occ = (await client.post("/api/publishers/", json={"name": "占位厂", "is_slg": True})).json()["id"]
+    assert (await client.post(f"/api/publishers/{occ}/itunes-artists",
+                              json={"artist_id": "700", "platform": "ios"})).status_code == 201
+    x = (await client.post("/api/publishers/", json={
+        "name": "双子", "is_slg": True, "aliases": [{"keyword": "twinco"}],
+    })).json()["id"]
+
+    table = {
+        "8001": {"artist_id": "700", "artist_name": "TwinCo A", "app_name": "Twin Flagship"},  # 占用
+        "8002": {"artist_id": "701", "artist_name": "TwinCo B", "app_name": "Twin Minor"},     # 自由
+    }
+
+    async def fake_resolve(app_id):
+        return table.get(app_id)
+
+    monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
+    monkeypatch.setattr(svc, "resolve_artist_for_app", fake_resolve)
+    monkeypatch.setattr("app.routers.publishers._SUGGEST_LOOKUP_DELAY_S", 0)
+
+    sugg = (await client.get("/api/publishers/itunes-artist-suggestions")).json()
+    by_eid = {s["entity_id"]: s for s in sugg}
+    assert x in by_eid  # 旗舰账号被占用没导致整主体被跳过
+    assert by_eid[x]["source_app_id"] == "8002"  # 退到次品反解出未占用账号
+    assert by_eid[x]["artist_id"] == "701"
+
+
+@pytest.mark.asyncio
 async def test_sibling_dedup_collapses_ios_android_same_game(client):
     """同 publisher + 名字 prefix 匹配的 iOS+Android 同款 → 合并为 1 个 product，
     收入/下载求和；product_count + top_products + /products 三处口径一致。"""
