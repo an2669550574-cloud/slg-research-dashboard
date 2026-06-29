@@ -421,7 +421,8 @@ async def test_itunes_artist_suggestions_resolves_and_filters(client, monkeypatc
     await client.post("/api/publishers/", json={
         "name": "资本方C", "is_slg": False, "app_ids": [{"app_id": "333"}],
     })
-    # D: is_slg 但只有 Android 包名（非数字）→ 不出现（不可反解）
+    # D: is_slg 但只有 Android 包名（非数字）→ iOS 侧不出现（数字 id 才能 iTunes 反解；
+    # Android 走 GP 侧，本测试聚焦 iOS 过滤、把 GP 反解打桩为空，GP 路径另有专测）
     await client.post("/api/publishers/", json={
         "name": "仅安卓D", "is_slg": True, "app_ids": [{"app_id": "com.x.y"}],
     })
@@ -444,14 +445,19 @@ async def test_itunes_artist_suggestions_resolves_and_filters(client, monkeypatc
     async def fake_resolve(app_id):
         return table.get(app_id)
 
+    async def _no_gp(pkg):  # 聚焦 iOS 过滤：GP 反解打桩为空（D 的 Android 走 GP，专测另有）
+        return None
+
     monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
     monkeypatch.setattr(svc, "resolve_artist_for_app", fake_resolve)
+    monkeypatch.setattr("app.services.gp_releases.resolve_gp_developer_for_package", _no_gp)
     monkeypatch.setattr("app.routers.publishers._SUGGEST_LOOKUP_DELAY_S", 0)
 
     sugg = (await client.get("/api/publishers/itunes-artist-suggestions")).json()
     assert {s["entity_id"] for s in sugg} == {a}  # 仅 A；B/C/D/E 全被各自分支排除
     s = sugg[0]
     assert s["entity_name"] == "工作室A"
+    assert s["platform"] == "ios"
     assert s["source_app_id"] == "111"
     assert s["artist_id"] == "900"
     assert s["artist_name"] == "Studio A"
@@ -470,7 +476,7 @@ async def test_itunes_artist_suggestions_from_matched_products(client, monkeypat
         ("7001", today, 1, 500, 300.0, "US", "ios", "Mega Strategy", "MegaCorp Studios"),
         # 同主体第二个 iOS 产品收入更高 → 应优先用它反解（旗舰先解）
         ("7002", today, 2, 800, 900.0, "US", "ios", "Mega War", "MegaCorp Studios"),
-        # Android 包名产品（非数字）→ 不可反解，不应被选
+        # Android 包名产品 → iOS 侧不选（走 GP，本测试 GP 反解打桩为空，聚焦 iOS 旗舰优先）
         ("com.mega.x", today, 3, 100, 50.0, "US", "android", "Mega Mobile", "MegaCorp Studios"),
     ])
     eid = (await client.post("/api/publishers/", json={
@@ -485,13 +491,17 @@ async def test_itunes_artist_suggestions_from_matched_products(client, monkeypat
     async def fake_resolve(app_id):
         return table.get(app_id)
 
+    async def _no_gp(pkg):
+        return None
+
     monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
     monkeypatch.setattr(svc, "resolve_artist_for_app", fake_resolve)
+    monkeypatch.setattr("app.services.gp_releases.resolve_gp_developer_for_package", _no_gp)
     monkeypatch.setattr("app.routers.publishers._SUGGEST_LOOKUP_DELAY_S", 0)
 
     sugg = (await client.get("/api/publishers/itunes-artist-suggestions")).json()
     assert {s["entity_id"] for s in sugg} == {eid}
-    s = sugg[0]
+    s = next(x for x in sugg if x["platform"] == "ios")
     assert s["source_app_id"] == "7002"  # 旗舰（收入最高的 iOS 匹配产品）先反解
     assert s["artist_id"] == "950"
 
@@ -523,8 +533,12 @@ async def test_itunes_artist_suggestions_skips_occupied_artist_tries_next(client
     async def fake_resolve(app_id):
         return table.get(app_id)
 
+    async def _no_gp(pkg):
+        return None
+
     monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
     monkeypatch.setattr(svc, "resolve_artist_for_app", fake_resolve)
+    monkeypatch.setattr("app.services.gp_releases.resolve_gp_developer_for_package", _no_gp)
     monkeypatch.setattr("app.routers.publishers._SUGGEST_LOOKUP_DELAY_S", 0)
 
     sugg = (await client.get("/api/publishers/itunes-artist-suggestions")).json()
@@ -532,6 +546,48 @@ async def test_itunes_artist_suggestions_skips_occupied_artist_tries_next(client
     assert x in by_eid  # 旗舰账号被占用没导致整主体被跳过
     assert by_eid[x]["source_app_id"] == "8002"  # 退到次品反解出未占用账号
     assert by_eid[x]["artist_id"] == "701"
+
+
+@pytest.mark.asyncio
+async def test_gp_artist_suggestions_from_android(client, monkeypatch):
+    """GP 侧雷达覆盖建议：未接 GP 雷达的 is_slg 主体，从安卓包名（pinned/alias 匹配产品）反解
+    GP 开发者 id，platform='gp'——治 GP-only SLG 在面板失明。已接 GP 雷达的主体不再建议。"""
+    from app.config import settings
+    today = _today()
+    await _seed_rankings([
+        ("com.geeker.gok", today, 5, 200, 400.0, "US", "android", "Game of Kings", "LIGHTNING STUDIOS"),
+    ])
+    # A: 只钉安卓包名、未接 GP 雷达 → 应出 GP 建议
+    a = (await client.post("/api/publishers/", json={
+        "name": "雷电工作室", "is_slg": True, "app_ids": [{"app_id": "com.geeker.gok"}],
+    })).json()["id"]
+    # B: 钉安卓包名但已接 GP 雷达 → 不出现（gp_covered，删该过滤才会泄漏）
+    b = (await client.post("/api/publishers/", json={
+        "name": "已接GP的B", "is_slg": True, "app_ids": [{"app_id": "com.b.pkg"}],
+    })).json()["id"]
+    assert (await client.post(f"/api/publishers/{b}/itunes-artists",
+                              json={"artist_id": "gpdevB", "platform": "gp"})).status_code == 201
+
+    async def fake_gp(pkg):
+        return {"com.geeker.gok": {"artist_id": "8266249258995725273",
+                                   "artist_name": "LIGHTNING STUDIOS", "app_name": "Game of Kings"},
+                "com.b.pkg": {"artist_id": "gpZ", "artist_name": "B", "app_name": "BGame"}}.get(pkg)
+
+    async def _no_ios(app_id):
+        return None
+
+    monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
+    monkeypatch.setattr("app.services.gp_releases.resolve_gp_developer_for_package", fake_gp)
+    monkeypatch.setattr("app.services.itunes_releases.resolve_artist_for_app", _no_ios)
+    monkeypatch.setattr("app.routers.publishers._SUGGEST_LOOKUP_DELAY_S", 0)
+
+    sugg = (await client.get("/api/publishers/itunes-artist-suggestions")).json()
+    assert {s["entity_id"] for s in sugg} == {a}  # 仅 A；B 已接 GP 雷达被排除
+    s = sugg[0]
+    assert s["platform"] == "gp"
+    assert s["artist_id"] == "8266249258995725273"
+    assert s["source_app_id"] == "com.geeker.gok"
+    assert s["artist_name"] == "LIGHTNING STUDIOS"
 
 
 @pytest.mark.asyncio

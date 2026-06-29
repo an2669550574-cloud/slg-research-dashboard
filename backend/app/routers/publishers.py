@@ -827,79 +827,112 @@ def _ios_suggest_candidates(entity_aliases, pinned_ios: list[str], pairs) -> lis
     return out[:_SUGGEST_MAX_APPS_PER_ENTITY]
 
 
+def _gp_suggest_candidates(entity_aliases, pinned_gp: list[str], pairs) -> list[str]:
+    """某主体可反解 GP 开发者账号的安卓包名候选（与 `_ios_suggest_candidates` 对称，治
+    GP-only SLG 在覆盖建议面板失明）：① pinned 安卓包名（含 `.`、非纯数字）在前；② alias
+    匹配产品里的安卓包名按收入降序补在后。封顶同 iOS。"""
+    out: list[str] = list(pinned_gp)
+    seen = set(out)
+    kw_tokens = [tuple(_toks(a.keyword)) for a in entity_aliases if _toks(a.keyword)]
+    squashes = _alias_squash_set(entity_aliases)
+    if kw_tokens or squashes:
+        matched: list[tuple[str, float]] = []
+        for app_id, pub, name, icon, rev in pairs:
+            if ("." in app_id and not app_id.isdigit()) and app_id not in seen \
+                    and _pub_hit(_toks(pub), kw_tokens, squashes):
+                matched.append((app_id, float(rev or 0)))
+                seen.add(app_id)
+        matched.sort(key=lambda x: -x[1])
+        out.extend(app_id for app_id, _ in matched)
+    return out[:_SUGGEST_MAX_APPS_PER_ENTITY]
+
+
 @router.get("/itunes-artist-suggestions", response_model=list[PublisherArtistSuggestionOut])
 async def list_itunes_artist_suggestions(
     limit: int = Query(25, ge=1, le=60),
     db: AsyncSession = Depends(get_db),
 ):
-    """雷达覆盖建议：对「未接 iOS 雷达的 is_slg 主体」，从其 **iOS 数字 app_id** 免费反解出
-    开发者账号 artistId，给出可一键接入的候选（接入复用 POST /{id}/itunes-artists）。
+    """雷达覆盖建议（**iOS + GP 双侧**）：对「未接雷达的 is_slg 主体」，从其 app 免费反解出
+    开发者账号 id，给出可一键接入的候选（接入复用 POST /{id}/itunes-artists，按 platform 路由）。
 
-    候选 app_id 来源（高置信优先）：① pinned iOS app_id（人工钉）；② alias 匹配到的产品里的
-    iOS app_id（slice 2——大量真 SLG 单厂没钉 app、只靠 alias 归属，旗舰产品的开发者账号
-    就是它的雷达入口）。省 toil：把「找开发者页 → 抄 artistId → 粘进抽屉」自动化成「核对
-    entity→artistName → 接入」。解析出的 artist 已被任意主体接入则跳过（artist_id 全局唯一）。
-    每主体只取第一个能解析的 app（封顶 `_SUGGEST_MAX_APPS_PER_ENTITY`）、礼貌限速、按 limit
-    截断。零 ST 配额。mock 模式不出外网 → 空（本地/测试经 monkeypatch 验证）。
+    - **iOS**：未接 iOS 雷达的主体，从 iOS 数字 app_id（pinned 或 alias 匹配产品）iTunes 反解
+      artistId（治日韩限定 SLG——`resolve_artist_for_app` 多 storefront 兜底，#165）。
+    - **GP**：未接 GP 雷达的主体，从安卓包名（pinned 或 alias 匹配产品）抓 GP 详情页反解开发者
+      id（治 GP-only SLG 在面板失明——很多 SLG 只在 Google Play，iOS 侧永远看不见）。
+    两侧各自独立判覆盖（一主体可同时缺 iOS + GP 雷达 → 两条建议）。省 toil：把「找开发者页
+    → 抄 id → 粘进抽屉」自动化成「核对 entity→开发者名 → 接入」。解析出的账号已被任意主体接入
+    则跳过（artist_id 全局唯一）。每主体每平台只取第一个能解析的 app（封顶
+    `_SUGGEST_MAX_APPS_PER_ENTITY`）、礼貌限速、按 limit 截断。零 ST 配额。mock 模式 → 空。
 
     必须先于 GET /{entity_id} 声明，否则字面量 'itunes-artist-suggestions' 会被 int 路径捕获。
     """
     if settings.USE_MOCK_DATA:
         return []
     from app.services.itunes_releases import resolve_artist_for_app
+    from app.services.gp_releases import resolve_gp_developer_for_package
 
     entities = (await db.execute(select(PublisherEntity))).scalars().all()
-    ios_artists = (await db.execute(
-        select(PublisherItunesArtist).where(PublisherItunesArtist.platform == "ios")
-    )).scalars().all()
+    artists = (await db.execute(select(PublisherItunesArtist))).scalars().all()
     app_ids = (await db.execute(select(PublisherAppId))).scalars().all()
     aliases = (await db.execute(select(PublisherAlias))).scalars().all()
     pairs = await _ranking_pairs(db)  # (app_id, pub, name, icon, rev)；占用反解前算好
 
-    covered = {a.entity_id for a in ios_artists}
-    seen_artist = {a.artist_id for a in ios_artists}  # 已接入的全局占用 → 不再建议
-    pinned_by_eid: dict[int, list[str]] = {}
+    ios_covered = {a.entity_id for a in artists if a.platform == "ios"}
+    gp_covered = {a.entity_id for a in artists if a.platform == "gp"}
+    seen_artist = {a.artist_id for a in artists}  # 已接入的全局占用（跨平台唯一）→ 不再建议
+    pinned_ios: dict[int, list[str]] = {}   # iOS 数字 id
+    pinned_gp: dict[int, list[str]] = {}    # 安卓包名（含 `.`、非纯数字）
     for a in app_ids:
-        if a.app_id.isdigit():  # iOS 数字 id 才能 iTunes 反解（Android 包名不行）
-            pinned_by_eid.setdefault(a.entity_id, []).append(a.app_id)
+        if a.app_id.isdigit():
+            pinned_ios.setdefault(a.entity_id, []).append(a.app_id)
+        elif "." in a.app_id:
+            pinned_gp.setdefault(a.entity_id, []).append(a.app_id)
     aliases_by_eid: dict[int, list] = {}
     for a in aliases:
         aliases_by_eid.setdefault(a.entity_id, []).append(a)
 
-    # 雷达目标 = is_slg、未接 iOS 雷达、且有可反解的 iOS app_id（pinned 或 alias 匹配产品）；
-    # 资本方/纯控股母体不算。每主体的候选 app_id 列表预算好（pinned + 匹配产品）。
-    cands_by_eid: dict[int, list[str]] = {}
+    # 每主体 × 平台 的候选：is_slg、该平台未接雷达、且有可反解的 app（pinned 或 alias 匹配产品）。
+    ios_cands: dict[int, list[str]] = {}
+    gp_cands: dict[int, list[str]] = {}
     for e in entities:
-        if not e.is_slg or e.id in covered:
+        if not e.is_slg:
             continue
-        cands = _ios_suggest_candidates(
-            aliases_by_eid.get(e.id, []), pinned_by_eid.get(e.id, []), pairs)
-        if cands:
-            cands_by_eid[e.id] = cands
-    targets = [e for e in entities if e.id in cands_by_eid]
+        if e.id not in ios_covered:
+            c = _ios_suggest_candidates(aliases_by_eid.get(e.id, []), pinned_ios.get(e.id, []), pairs)
+            if c:
+                ios_cands[e.id] = c
+        if e.id not in gp_covered:
+            c = _gp_suggest_candidates(aliases_by_eid.get(e.id, []), pinned_gp.get(e.id, []), pairs)
+            if c:
+                gp_cands[e.id] = c
+    targets = [e for e in entities if e.id in ios_cands or e.id in gp_cands]
     targets.sort(key=lambda e: (e.sort_order, e.id))
 
+    # (platform, 反解函数, 候选表)——两侧统一处理（反解返回同形 dict）。
+    plans = [("ios", resolve_artist_for_app, ios_cands),
+             ("gp", resolve_gp_developer_for_package, gp_cands)]
     out: list[PublisherArtistSuggestionOut] = []
     lookups = 0
     for e in targets:
+        for platform, resolver, cmap in plans:
+            if len(out) >= limit:
+                break
+            for src in cmap.get(e.id, []):
+                if lookups > 0:
+                    await asyncio.sleep(_SUGGEST_LOOKUP_DELAY_S)
+                lookups += 1
+                cand = await resolver(src)
+                if not cand or cand["artist_id"] in seen_artist:
+                    continue  # 反解失败 / 账号已被接入 → 试本主体下一个候选
+                seen_artist.add(cand["artist_id"])  # 防同一账号本轮被多主体重复建议
+                out.append(PublisherArtistSuggestionOut(
+                    entity_id=e.id, entity_name=e.name, platform=platform,
+                    source_app_id=src, source_app_name=cand.get("app_name"),
+                    artist_id=cand["artist_id"], artist_name=cand.get("artist_name"),
+                ))
+                break  # 每主体每平台只给一条建议
         if len(out) >= limit:
             break
-        for app_id in cands_by_eid[e.id]:
-            if lookups > 0:
-                await asyncio.sleep(_SUGGEST_LOOKUP_DELAY_S)
-            lookups += 1
-            cand = await resolve_artist_for_app(app_id)
-            if not cand:
-                continue
-            if cand["artist_id"] in seen_artist:
-                continue  # 该候选的开发者账号已被接入 → 试本主体下一个候选（可能另一未占用账号）
-            seen_artist.add(cand["artist_id"])  # 防同一 artist 在本轮被多个主体重复建议
-            out.append(PublisherArtistSuggestionOut(
-                entity_id=e.id, entity_name=e.name,
-                source_app_id=app_id, source_app_name=cand.get("app_name"),
-                artist_id=cand["artist_id"], artist_name=cand.get("artist_name"),
-            ))
-            break  # 每主体只给一条建议
     return out
 
 

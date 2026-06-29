@@ -905,10 +905,12 @@ export interface PublisherGap {
   summary_cn: string | null      // 代表 app 一句话中文摘要
 }
 
-/** 雷达覆盖建议：未接 iOS 雷达的 is_slg 主体，从已钉 iOS app_id 反解出的开发者账号候选。 */
+/** 雷达覆盖建议：未接雷达的 is_slg 主体，从已钉/在榜 app 反解出的开发者账号候选（iOS + GP 双侧）。 */
 export interface PublisherArtistSuggestion {
   entity_id: number
   entity_name: string
+  /** 'ios' = iTunes 开发者账号 / 'gp' = Google Play 开发者账号；接入按此路由 platform。 */
+  platform: 'ios' | 'gp'
   source_app_id: string
   source_app_name: string | null
   artist_id: string
