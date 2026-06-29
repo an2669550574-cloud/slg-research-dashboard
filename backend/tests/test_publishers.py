@@ -430,6 +430,44 @@ async def test_itunes_artist_suggestions_resolves_and_filters(client, monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_itunes_artist_suggestions_from_matched_products(client, monkeypatch):
+    """slice 2：未钉任何 app、只靠 alias 归属的 SLG 主体，也能从 alias 匹配到的 iOS 产品
+    反解 artistId（大量真 SLG 单厂属此类）。source_app_id 来自匹配产品而非 pinned。"""
+    from app.config import settings
+    import app.services.itunes_releases as svc
+    today = _today()
+    # 一个 iOS 产品，publisher 命中下面主体的 alias；该主体不钉任何 app_id（slice 1 覆盖不到）
+    await _seed_rankings([
+        ("7001", today, 1, 500, 300.0, "US", "ios", "Mega Strategy", "MegaCorp Studios"),
+        # 同主体第二个 iOS 产品收入更高 → 应优先用它反解（旗舰先解）
+        ("7002", today, 2, 800, 900.0, "US", "ios", "Mega War", "MegaCorp Studios"),
+        # Android 包名产品（非数字）→ 不可反解，不应被选
+        ("com.mega.x", today, 3, 100, 50.0, "US", "android", "Mega Mobile", "MegaCorp Studios"),
+    ])
+    eid = (await client.post("/api/publishers/", json={
+        "name": "兆业", "is_slg": True, "aliases": [{"keyword": "megacorp"}],  # 无 app_ids
+    })).json()["id"]
+
+    table = {
+        "7002": {"artist_id": "950", "artist_name": "MegaCorp", "app_name": "Mega War"},
+        "7001": {"artist_id": "951", "artist_name": "MegaCorp", "app_name": "Mega Strategy"},
+    }
+
+    async def fake_resolve(app_id):
+        return table.get(app_id)
+
+    monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
+    monkeypatch.setattr(svc, "resolve_artist_for_app", fake_resolve)
+    monkeypatch.setattr("app.routers.publishers._SUGGEST_LOOKUP_DELAY_S", 0)
+
+    sugg = (await client.get("/api/publishers/itunes-artist-suggestions")).json()
+    assert {s["entity_id"] for s in sugg} == {eid}
+    s = sugg[0]
+    assert s["source_app_id"] == "7002"  # 旗舰（收入最高的 iOS 匹配产品）先反解
+    assert s["artist_id"] == "950"
+
+
+@pytest.mark.asyncio
 async def test_sibling_dedup_collapses_ios_android_same_game(client):
     """同 publisher + 名字 prefix 匹配的 iOS+Android 同款 → 合并为 1 个 product，
     收入/下载求和；product_count + top_products + /products 三处口径一致。"""
