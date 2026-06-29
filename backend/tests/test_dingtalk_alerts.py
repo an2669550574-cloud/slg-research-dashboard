@@ -678,22 +678,28 @@ def test_digest_escapes_game_name_no_broken_markdown():
 # ── P0-1/P0-4: 领导卡受众剥离 + 双发路由 + 主卡失败升 Sentry ────────────────────
 
 def test_digest_leader_audience_strips_maintainer_noise():
-    """领导卡剥离维护者杂讯（待建档段/建议建档尾标/TLDR 待建档计数），但保留竞品情报。"""
+    """领导卡剥离维护者杂讯（榜单异动整段/待建档段/建议建档尾标/TLDR 异动+待建档计数），
+    但保留竞品新品情报。"""
     from app.services.release_alerts import build_daily_digest
+    movement = {"new_entrants": [], "surges": [], "revenue_spikes": [],
+                "drops": [{"app_id": "d1", "name": "老游戏跌出", "prev_rank": 18,
+                           "cur_rank": 22, "publisher": "某厂"}]}
     market = {"newcomers": [{"app_id": "999", "rank": 12, "name": "陌生新游",
                              "publisher": "无名工作室", "is_slg": False, "is_reentry": False}]}
     publisher = {"newcomers": [{"app_id": "p1", "entity_name": "莉莉丝", "name": "已识别SLG新品",
                                 "rank": 8, "is_reentry": False}]}
-    per_combo = [{"country": "US", "platform": "ios", "movement": None,
+    per_combo = [{"country": "US", "platform": "ios", "movement": movement,
                   "market": market, "publisher": publisher}]
     lead = [{"app_id": "com.a.b", "name": "疑似新厂SLG", "publisher": "无名工作室",
              "rank": 7, "country": "US", "platform": "ios", "genre": "Strategy"}]
     _, m_text, _ = build_daily_digest(per_combo, "2026-06-28", lead_items=lead, audience="maintainer")
     _, l_text, _ = build_daily_digest(per_combo, "2026-06-28", lead_items=lead, audience="leader")
-    # maintainer：维护者杂讯齐全（待建档段 + 待识别 market 新品 + 建议建档尾标）
+    # maintainer：维护者杂讯齐全（榜单异动 + 待建档段 + 待识别 market 新品 + 建议建档尾标）
+    assert "榜单异动" in m_text and "老游戏跌出" in m_text and "📊 异动" in m_text
     assert "待建档新厂线索" in m_text and "建议建档" in m_text and "🔍 待建档" in m_text
     assert "陌生新游" in m_text
-    # leader：维护者杂讯全剥离
+    # leader：榜单异动整段 + 维护者杂讯全剥离（含 TL;DR 异动计数）
+    assert "榜单异动" not in l_text and "老游戏跌出" not in l_text and "📊 异动" not in l_text
     assert "待建档新厂线索" not in l_text
     assert "建议建档" not in l_text
     assert "🔍 待建档" not in l_text
