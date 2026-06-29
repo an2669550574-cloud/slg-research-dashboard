@@ -28,13 +28,16 @@ class Settings(BaseSettings):
     # Sensor Tower 内存级缓存 TTL（秒）。Sensor Tower 数据本身是 T+1 日级，
     # 缓存比源头还短就纯属浪费配额。默认 24 小时。
     SENSOR_TOWER_CACHE_TTL: int = 86400
-    # 每月最多调用 Sensor Tower 真实 API 的次数（硬上限）。公司账号 3000/月共享。
-    # 配额分级后稳态自动同步 ≈ 74/月（US 每日拉榜 + JP/KR 月级 + 销量仅主市场周级），
-    # 留余量给手动刷新/详情页按需取 → 设 100 封顶。
+    # 每月最多调用 Sensor Tower 真实 API 的次数（本项目本地软护栏，防 bug 烧穿公司池）。
+    # 公司账号 3000/月多团队共享；软预留护栏（SENSOR_TOWER_ORG_RESERVE）另保护池底。
+    # 当前节奏（prod 10 combo 收入榜 + US/JP/KR 下载榜，US 每日 / 次市场双周）自动同步
+    # ≈156/月（次市场周级则 ≈182），叠加手动刷新 / 详情页按需取 → 设 200 留 ~44 余量，
+    # 仅占公司池 ~6%。旧注释「≈74/月、设 100」是 6-combo 时代的，节奏扩到 10 组 + 下载榜
+    # 后真实需求早破 100，导致每月中旬就烧穿、后半月全站回退快照——本次抬到 200 修复。
     # 超额后自动降级到 sensor_tower_snapshots 表里的最后一次成功响应（不报错、不断站）。
-    # 注意：此值低于 RANK_BACKFILL_QUOTA_FLOOR(150) → 历史回填默认被该上限挡停
-    #（设计内：回填是一次性活，补完即可停；要补未完的历史临时把本值调高再跑）。
-    SENSOR_TOWER_MONTHLY_LIMIT: int = 100
+    # 历史回填已默认关闭（RANK_BACKFILL_ENABLED=False），故本值不再依赖
+    # RANK_BACKFILL_QUOTA_FLOOR 挡停回填；要一次性补历史另见该开关。
+    SENSOR_TOWER_MONTHLY_LIMIT: int = 200
     # 用量越过该百分比时打一条 ERROR（经 Sentry 推送），让维护者在配额耗尽
     # 前就收到主动告警，而不是等线上静默降级到过期快照才发现。
     SENSOR_TOWER_QUOTA_WARN_PCT: int = 80
@@ -116,9 +119,13 @@ class Settings(BaseSettings):
     # ── 历史排名回填 ─────────────────────────────────────────────
     # ST 无"某 app 排名历史"接口；只能逐 (combo, 日期) 拉整张品类榜
     # (1 调用/日/组合)，从有序列表里读出名次。粒度用周(rank 长期趋势够看)：
-    # 4 组合 × 52 周 ≈ 208 次一次性。每晚日常同步后涓流补，受配额护栏约束，
+    # 10 组合 × 52 周 ≈ 520 次一次性。每晚日常同步后涓流补，受配额护栏约束，
     # 永不挤占核心日同步；补完自动停（按 game_rankings 已有 rank 行判进度）。
-    RANK_BACKFILL_ENABLED: bool = True
+    # **默认关闭**：回填是一次性活、主历史早已补齐；此前靠 MONTHLY_LIMIT(100) <
+    # QUOTA_FLOOR(150) 被动挡停。本次把月上限抬到 200(>150) 后它会自动复活、每晚
+    # +5 贪婪补到「剩余=FLOOR」吃掉同步余量，故显式关闭。要补未完历史（如新加 combo）：
+    # 临时置 True + 把 MONTHLY_LIMIT 调到 >FLOOR 再跑，补完调回。
+    RANK_BACKFILL_ENABLED: bool = False
     RANK_BACKFILL_WEEKS: int = 52          # 回填多少周历史（每周采 1 个锚点日）
     RANK_BACKFILL_DAILY_BUDGET: int = 5    # 每晚最多消耗多少次配额做回填
     # 当月剩余配额 ≤ 此值则当晚跳过回填，把预算留给核心日同步/仪表盘。
