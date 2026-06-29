@@ -1,12 +1,15 @@
 """新品中文化（LLM 网关）。
 
-商店描述是源区语言（日/韩/英），团队读中文费劲。LLM 给 is_slg 新品按 app 翻一次：
-- summary_cn：一句话「这是什么游戏」（题材+品类+卖点，≤约35字）→ digest 新品行 + 抽屉副标题。
+商店描述是源区语言（日/韩/英/德/俄），团队读中文费劲。LLM 给新品按 app 翻一次：
+- summary_cn：一句话「这是什么游戏」（题材+品类+卖点，≤约35字）→ digest 新品行 + 抽屉副标题 + 新品页卡片。
 - description_cn：商店描述全文中译 → 抽屉展示、可切原文。
 
-只对 **is_slg** 新品、按 **app_id 去重**（同游戏跨 combo 多行只翻一次、回写全部行）。
-走太石网关（OpenAI 兼容）便宜文本模型，cost 经 estimate_cost 记日志。USE_MOCK_DATA /
-无 TAISHI_API_KEY → 整体 no-op。每日封顶 NEWCOMER_TRANSLATE_DAILY_CAP 防烧成本。
+覆盖**所有待翻新品**（已识别 SLG + 待识别新厂），按 **app_id 去重**（同游戏跨 combo 多行
+只翻一次、回写全部行）。**is_slg 优先排序**：已识别 SLG 先翻（digest/领导卡依赖），待识别新厂
+用剩余每日 cap——这样把「待识别新厂」也中文化，新品页核查建档时看得懂（领导反馈非中文太多）。
+**人工确认的忽略名单不翻**（省 LLM，这些本就不进待识别视图）。走太石网关（OpenAI 兼容）便宜
+文本模型，cost 经 estimate_cost 记日志。USE_MOCK_DATA / 无 TAISHI_API_KEY → 整体 no-op。
+每日封顶 NEWCOMER_TRANSLATE_DAILY_CAP 防烧成本。
 """
 import json
 import logging
@@ -59,10 +62,12 @@ def _parse(content: str) -> dict | None:
 
 
 async def translate_pending_newcomers(cap: int | None = None) -> int:
-    """给未翻译的 is_slg 新品生成 summary_cn + description_cn，返回翻译的 app 数。
+    """给未翻译的新品生成 summary_cn + description_cn，返回翻译的 app 数。
 
-    取 description 非空、summary_cn 为空、is_slg 的行，按 app_id 去重，每 app 一次
-    LLM 调用，回写该 app **全部** market_newcomer_log 行。USE_MOCK_DATA / 无 key no-op。
+    取 description 非空、summary_cn 为空的行（**SLG + 待识别新厂都覆盖**），按 app_id 去重，
+    每 app 一次 LLM 调用，回写该 app **全部** market_newcomer_log 行。**is_slg 优先排序**：
+    已识别 SLG 先占 cap（digest/领导卡依赖），待识别新厂用剩余名额（多的下次接着翻）。
+    **忽略名单内的行跳过**（人工确认非 SLG，不值当烧 LLM）。USE_MOCK_DATA / 无 key no-op。
     单 app 失败只跳过该 app（summary_cn 留 NULL，下次重试），不拖垮整轮。
     """
     if settings.USE_MOCK_DATA or not settings.TAISHI_API_KEY:
@@ -71,15 +76,22 @@ async def translate_pending_newcomers(cap: int | None = None) -> int:
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(
             select(MarketNewcomerLog.app_id, MarketNewcomerLog.name,
-                   MarketNewcomerLog.genre, MarketNewcomerLog.description)
-            .where(MarketNewcomerLog.is_slg.is_(True),
-                   MarketNewcomerLog.description.is_not(None),
+                   MarketNewcomerLog.genre, MarketNewcomerLog.description,
+                   MarketNewcomerLog.publisher, MarketNewcomerLog.is_slg)
+            .where(MarketNewcomerLog.description.is_not(None),
                    MarketNewcomerLog.summary_cn.is_(None))
-            .order_by(MarketNewcomerLog.id.desc())
+            # is_slg 优先：已识别 SLG 先翻，待识别新厂用剩余 cap。
+            .order_by(MarketNewcomerLog.is_slg.desc(), MarketNewcomerLog.id.desc())
         )).all()
-    # 按 app_id 去重（同游戏跨 combo 多行只翻一次），保序取最新。
+    # 人工确认的非 SLG 噪声（忽略名单，与 /history、/gaps 同口径）不翻：省 LLM，
+    # 且这些行本就被新品页过滤掉、不进待识别视图。
+    from app.services.newcomers import _load_ignore_keys, _is_ignored
+    ignore_pub_keys, ignore_app_ids = await _load_ignore_keys()
+    # 按 app_id 去重（同游戏跨 combo 多行只翻一次），保序取最新（is_slg 优先）。
     seen: dict[str, tuple] = {}
-    for app_id, name, genre, desc in rows:
+    for app_id, name, genre, desc, publisher, _is_slg in rows:
+        if _is_ignored(app_id, publisher, ignore_pub_keys, ignore_app_ids):
+            continue
         seen.setdefault(app_id, (name, genre, desc))
     if not seen:
         return 0

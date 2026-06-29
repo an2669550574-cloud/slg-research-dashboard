@@ -214,6 +214,11 @@ export const zh = {
     revenue: '本期收入',
     slgKnown: '已识别 SLG',
     slgUnknown: '新厂商待识别',
+    // SLG 状态筛选（默认只看已识别 SLG，把待识别新厂折进独立选项，减少次市场噪声催建档）
+    slgFilterSlg: '已识别 SLG',
+    slgFilterPending: '待识别新厂',
+    slgFilterAll: '全部',
+    slgFilterHint: '已识别 SLG = 发行商在 SLG 白名单 / 已建档（注意：is_slg 是厂商维度、非产品品类，可能混入该厂的非 SLG 产品）；待识别新厂 = 未建档新面孔，需人工核查建档 / 忽略。默认只看已识别 SLG，少受待识别噪声打扰。',
     countSuffix: (n: number) => `${n} 个新面孔`,
     empty: '本期暂无新进榜的新面孔',
     noBaseline: '历史快照不足，还在积累中（至少需 1 期历史快照才能判定新面孔）',

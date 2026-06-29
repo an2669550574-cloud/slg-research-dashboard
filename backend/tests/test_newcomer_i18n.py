@@ -1,7 +1,8 @@
 """新品中文化（LLM 网关）：summary_cn / description_cn。
 
-验收：is_slg 新品翻一次写回该 app 全部行 / 按 app 去重（同游戏跨 combo 一次 LLM）/
-非 is_slg 不翻 / cap 封顶 / mock + 无 key no-op / digest 新品行带 📝 摘要。中文夹具。
+验收：新品翻一次写回该 app 全部行 / 按 app 去重（同游戏跨 combo 一次 LLM）/
+**待识别新厂(is_slg=false)也翻**、忽略名单 / 无描述跳过 / cap 封顶 / mock + 无 key
+no-op / digest 新品行带 📝 摘要。中文夹具。
 """
 import pytest
 from sqlalchemy import select
@@ -66,25 +67,35 @@ async def test_translate_dedups_by_app_and_writes_all_rows(app, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_translate_skips_non_slg_and_already_done(app, monkeypatch):
-    """非 is_slg 不翻；summary_cn 已有的不重复翻。"""
+async def test_translate_covers_non_slg_but_skips_ignored_and_nodesc(app, monkeypatch):
+    """切片2：中文化扩到待识别新厂（is_slg=false 也翻）；忽略名单 / 无描述跳过；
+    summary_cn 已有的不重复翻。"""
     from app.config import settings
     from app.database import AsyncSessionLocal
     from app.models.newcomer import MarketNewcomerLog
+    from app.models.publisher import PublisherIgnore
     from app.services import newcomer_i18n as ni
     monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
     monkeypatch.setattr(settings, "TAISHI_API_KEY", "k")
     calls: list = []
     monkeypatch.setattr(ni.llm_gateway, "get_client", lambda: _Client(_FAKE_JSON, calls))
 
-    await _add_log("noise", "麻将游戏", "US", is_slg=False)   # 非 SLG → 跳过
-    await _add_log("g2", "无描述", "US", description=None)     # 无描述 → 跳过
-    done = await ni.translate_pending_newcomers()
-    assert done == 0 and len(calls) == 0
+    await _add_log("pending", "末日小镇", "US", is_slg=False)   # 待识别新厂 → 现在也翻
+    await _add_log("ignored", "麻将游戏", "US", is_slg=False)    # 忽略名单 → 跳过
+    await _add_log("nodesc", "无描述", "US", is_slg=False, description=None)  # 无描述 → 跳过
     async with AsyncSessionLocal() as db:
-        noise = (await db.execute(select(MarketNewcomerLog).where(
-            MarketNewcomerLog.app_id == "noise"))).scalar_one()
-    assert noise.summary_cn is None
+        db.add(PublisherIgnore(kind="app_id", value="ignored", label="麻将游戏"))
+        await db.commit()
+
+    done = await ni.translate_pending_newcomers()
+    assert done == 1 and len(calls) == 1   # 只翻 pending（ignored / nodesc 跳过）
+    async with AsyncSessionLocal() as db:
+        pend = (await db.execute(select(MarketNewcomerLog).where(
+            MarketNewcomerLog.app_id == "pending"))).scalar_one()
+        ign = (await db.execute(select(MarketNewcomerLog).where(
+            MarketNewcomerLog.app_id == "ignored"))).scalar_one()
+    assert "二战题材 SLG" in (pend.summary_cn or "")   # 待识别新厂也中文化了
+    assert ign.summary_cn is None                       # 忽略名单不翻
 
 
 @pytest.mark.asyncio
