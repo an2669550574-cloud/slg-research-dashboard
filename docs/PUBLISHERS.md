@@ -10,8 +10,9 @@
 | is_slg 判定 + 内存索引 + 起步种子 | `backend/app/services/slg_publishers.py` |
 | 溯源分级（一手/二手）+ tier 派生 | `backend/app/services/provenance.py` |
 | 跨平台同款合并（iOS+Android 去重）规则 | `backend/app/services/sibling_match.py`；publishers router 通过 `_dedup_siblings` 接入 |
-| 免费 iTunes 雷达同步 + **按 app_id 反解开发者账号**（`resolve_artist_for_app`，给雷达覆盖建议用） | `backend/app/services/itunes_releases.py` |
-| 雷达覆盖建议候选 app_id（pinned ∪ alias 匹配产品） | `backend/app/routers/publishers.py` `_ios_suggest_candidates` |
+| 免费 iTunes 雷达同步 + **按 app_id 反解 iOS 开发者账号**（`resolve_artist_for_app`，**多 storefront 兜底** us→jp/kr/cn/tw/hk，治日韩限定 SLG 美区失明，#165） | `backend/app/services/itunes_releases.py` |
+| **按安卓包名反解 GP 开发者账号**（`resolve_gp_developer_for_package`，抓详情页解析 `dev?id=`，#166；与 iOS 反解同形供雷达建议统一处理） | `backend/app/services/gp_releases.py` |
+| 雷达覆盖建议候选（iOS 数字 app_id / 安卓包名，各 = pinned ∪ alias 匹配产品） | `backend/app/routers/publishers.py` `_ios_suggest_candidates` / `_gp_suggest_candidates` |
 | API（CRUD + 子资源 + 聚合） | `backend/app/routers/publishers.py`（前缀 `/api/publishers`） |
 | 前端集团/列表/图谱/资本树 | `frontend/src/pages/PublishersManage.tsx` + `frontend/src/lib/equityGraph.ts` |
 | brief 戳记折叠（抽屉里把【调研更新 …】戳记折叠到「调研历史 N」） | `frontend/src/lib/briefStamps.ts` + 单测 `briefStamps.test.ts` |
@@ -26,7 +27,7 @@
 | `GET /api/publishers/health` | 数据健康度自检（tier 分布 + 待补/命名/复核 backlog + 总量 + **iTunes 雷达覆盖率** `total_itunes_artists`/`entities_without_itunes_artist`） | 是（顶部 HealthChip「一手 N%」+ tooltip 含「iOS 雷达覆盖 X/Y」） |
 | `GET /api/publishers/gaps?days=30&limit=20` | 未归属高收入 publisher（按累计收入降序，已扣除忽略名单）。**带置信信号**：`days_on_chart`（名下最持久 app 上榜天数=桶内 max distinct date，持续=真厂/一日闪现=噪声）+ `genre`/`summary_cn`（gaps→`market_newcomer_log` 数据回流，按代表 app_id join） | 是（顶部「调研缺口」折叠卡，行内显品类/连续上榜天数/📝摘要） |
 | `GET /api/publishers/download-leads?days=90&limit=20` | **下载榜早期信号（待建档新厂线索）**：`market_newcomer_log` 里 chart_type=free、is_slg=false、非 reentry、genre 含 strateg 的新品，扣忽略名单、跨市场同 app 收敛+富化回填。比 grossing 缺口更早（软启动期/装机量先起）；与 digest 方案① 共用同一忽略名单 | 是（顶部「📥 下载榜早期信号」折叠卡，建主体/忽略[app_id 粒度]） |
-| `GET /api/publishers/itunes-artist-suggestions?limit=25` | **雷达覆盖建议**：对未接 iOS 雷达的 is_slg 主体，从其 iOS 数字 app_id（pinned ∪ alias 匹配产品，旗舰优先）免费 iTunes lookup 反解开发者账号 artistId 给一键接入候选。已接入 artist 全局去重、每主体一条、显式扫描触发（~20-30s 多次 lookup）。接入复用 `POST /{id}/itunes-artists` | 是（顶部「📡 雷达覆盖建议」折叠卡「接入雷达」；⚠️多品类大厂会出现，需人工跳过） |
+| `GET /api/publishers/itunes-artist-suggestions?limit=25` | **雷达覆盖建议（iOS + GP 双侧，#166）**：对未接雷达的 is_slg 主体，从其 app（pinned ∪ alias 匹配产品，旗舰优先）免费反解开发者账号给一键接入候选。**iOS** 走 iTunes lookup 反解 artistId（多 storefront 兜底）；**GP** 走详情页解析 `dev?id=` 反解开发者 id（治 GP-only SLG 在面板失明——很多 SLG 只在 Google Play）。两侧各自独立判覆盖（一主体可同时缺两侧 → 两条建议）；账号跨平台全局去重、每主体每平台一条、显式扫描触发。接入复用 `POST /{id}/itunes-artists`（按 `platform` 路由）。响应行带 `platform`('ios'/'gp') | 是（顶部「📡 雷达覆盖建议」折叠卡，行带 iOS/GP 徽标、「接入雷达」；⚠️多品类大厂会出现，需人工跳过） |
 | `GET/POST/DELETE /api/publishers/ignores` | 缺口忽略名单（kind=publisher/app_id 两粒度）；POST 对 publisher 归一成 corp_squash 键存储、幂等。**同时被 /gaps、/download-leads、detect_newcomers（digest 方案①）三处共用** | 是（缺口卡「忽略」按钮 + 「已忽略 N」恢复） |
 | `POST/PUT/DELETE …` | 主体 + 5 类子资源（aliases/app_ids/itunes-artists/sources/relations）CRUD；写后内存 is_slg 索引自动刷新 | 是（抽屉编辑） |
 
@@ -57,7 +58,9 @@
 7. **命名**：中国厂尽量用中文名（「中文 English」式，如「库卡游戏 Qookka」「游族 YOOZOO」）。
 8. **negative finding 戳记**：调研验证「无关系/无母体」也是结果。用 `【调研负面发现 YYYY-MM-DD】` 或 `【复查 negative YYYY-MM-DD】` 追加到 brief 锁死研究分支，下次别再回头查（抽屉里会折叠到「调研历史 N」）。
 
-## 当前资本集团速览（2026-06-29；107 实体 / 115 alias / 123 app_id / 242 source / 37 关系 / 21 资本方 / 30 忽略 / 59 iTunes-artist 账号（雷达覆盖 58/107≈54%）；tier_primary 103/107）
+## 当前资本集团速览（2026-06-30；~107 实体 / 30 忽略 / **iOS 雷达 64 账号 + GP 雷达 32 账号**；tier_primary 103/107）
+
+> 雷达 2026-06-30 一轮核查后：iOS 59→64（接 6waves/gumi/星辉Rastar/英雄互娱/Rudel）、GP 28→32（接安卓-only 真 SLG：EasyTech/LIGHTNING/iFun/Immersive）。深圳九九（Falcon Poker，扑克误标）已改 `is_slg=false` + 删错 pin，不在 SLG 口径。
 
 - **途游游戏 Tuyoo** → EVISTA(SLG·新加坡)/Ark Game(HK)/Tuyoo Online HK/Tuyoo Games HK
 - **灵犀互娱（阿里）** → 库卡游戏 Qookka ｜ **益世界** → Just Game ｜ **新奇互娱（爱奇艺）** → Special Gamez
@@ -82,6 +85,7 @@
 - **资本数据反映 2025-26 并购，可能比训练知识新**：Plarium→MTG（2025 Aristocrat 转卖）、Moonton→Savvy（字节转卖）——「疑似挂错」**先验证再动**。
 - **股东册多在付费墙后**（ACRA BizFile；opengovsg/recordowl 只给 officer 数量）→ 海外壳归属常只能靠 media + 开发者账号佐证，标 `controlling` 不标 `wholly_owned`。
 - **安卓包名钉慎用**：若该包在 game_rankings 是未富化行（name/publisher 空），钉它会在产品抽屉顶出一条空名 $0 裸行；优先用 alias，iOS 用数字 id 钉。
+- **`app_id pin` = 产品级 SLG 标记，独立于 `entity.is_slg`（反直觉，#165）**：`load_index_from_db` 把**全部** alias/app_id 灌进 is_slg 内存索引，**不按 `entity.is_slg` 门控**——这是**故意的**。多品类巨头（KOEI/华纳/万代，`entity.is_slg=false`）钉特定 app_id 来标「这一款是真 SLG」（光荣三國志），运行时 `is_slg(app_id)` 据此返回 True。**推论**：要让某个误标产品不再算 SLG（如深圳九九的扑克 Falcon Poker 被新品监测误建档+误钉），正解是**删那个错 pin**，不是改 loader（改 loader 会误伤巨头的合法产品级 pin），也不是只改 `entity.is_slg`（光改 entity flag 不动 pin，运行时 is_slg 仍 True）。
 - **巨头多主体扫描结论**：策略榜未归属的高收入发行商绝大多数是**非 SLG**（Niantic/Supercell/Chess.com/EA/PUBG/NetEase 荒野/KRAFTON/KONAMI/Cygames/Wizards/Voodoo/Highbrow 等），勿误归。
 - **App Store「전략/Strategy」标签是缺口 + 新品噪声主因**：2026-06-22 把最后 9 条缺口全部三角化清零——8 行经验证是误挂 strategy 标签的非 SLG（社交推理 Mafia42 标 strategy+board / 合成·roguelike RPG / 挂机 RPG / 麻将雀魂 / 回合制收集 Summoners War），全部 publisher 粒度忽略；唯一真策略是 Asobism 城とドラゴン（已建档）。**判 genre 别信 App Store 单一 strategy 标签，看 `genres` 全列 + 实际玩法**（iTunes lookup `genres` 字段 + 旗下产品名最准；宝可梦对战/Order of Kings/Infinity Kingdom **全标 genre=Strategy**，genre 字段不可用于区分）。5minlab 是 Krafton 全资子（2022 收购）但旗下是合成/roguelike RPG 非 SLG，**母体大不等于产品是 SLG**。
 - **新品监测复用同一忽略名单过滤噪声（2026-06-22，PR #99 已部署）**：`detect_newcomers`/digest 接 `publisher_ignores`（与 /gaps 同口径）剔除确认非 SLG（宝可梦对战刷屏/扑克/塔防），**但不按 is_slg 白名单过滤**——白名单滞后会误杀真新厂。范例：**DEQU《Order of Kings》就是新品监测以 is_slg=false 浮现、人工溯源确认是真出海 RTS-SLG 后建档的**（详见 [`ARCHITECTURE.md` § 缺口忽略名单过滤](ARCHITECTURE.md)）。给新品打 is_slg=false ≠ 非 SLG，可能是「未识别的真新厂」线索。
