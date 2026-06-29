@@ -219,15 +219,18 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 - **markdown 转义**（`_md_name(s, maxlen=32)`）：折叠空白 + 超长截断 + 方括号→圆括号（防 `名](url` 误成链接）+ 转义 `* _ \\` `` ` `` `~`（防加粗错位/代码块），套到所有 markdown **正文文本**名字插值位（movement / 三类新品 / 待建档 / 版本 / 视频 / 新区 / 今日要闻 / 商店雷达 / `_meta_inner` 厂商）。ActionCard 按钮 title 是纯文本不过它；`[锚文本](url)` 文章标题另有 sanitize（只括号替换）。
 - **上线开关**：HK `backend/.env` 配 `DINGTALK_WEBHOOK_URL_LEADER`（+ `DINGTALK_SECRET_LEADER` / `DINGTALK_WEBHOOK_LABEL_LEADER`，**敏感不进 git**）→ `compose --env-file .env up -d backend` 重读即生效；不配 = 维持单卡单群（向后兼容）。
 
-### digest 对标我方哪款（PR #139）
+### digest 同赛道：竞品和我方哪款同赛道（PR #139 起，玩法子品类精确匹配）
 
-**缺口**：digest 此前只有竞品 `name/rank/revenue`，不告诉领导「这竞品**对标我方哪款**产品 / 威胁我方什么」——领导扫一条异动得自己脑补「跟我们有关系吗、要不要管」。**纯本地零 ST / 零 LLM** 补上这个决策锚点。
+**缺口**：digest 此前只有竞品 `name/rank/revenue`，不告诉领导「这竞品和我方**哪款同赛道** / 威胁我方什么」——领导扫一条异动得自己脑补「跟我们有关系吗、要不要管」。**纯本地零 ST**（分类复用新品中文化的 LLM 调用，零额外 LLM）补上这个决策锚点。
 
-- **数据**：`own_products.match_keywords`（逗号分隔题材词，如 `丧尸,末日,survival,zombie`；alembic `0035`，纯加列）。挑**区分度高**的词——泛词（如 `war`）会全命中。
-- **匹配**（`_match_own_product` / `_load_own_products`）：纯小写子串匹配，第一个产品优先（`is_default` → `id` 排序）。竞品文本：**新品**用「名字 + LLM 中文摘要 `summary_cn`」（题材信号最浓）、**movement** 老竞品用名字。`send_daily_digest` 一次性建 `own_matches{app_id: 我方产品名}`，整段 try/except 兜底——匹配失败不影响其它情报。
-- **渲染**：命中给 movement / 三类新品 / 今日要闻 行尾打 `⚔️ 对标《X》`（⚔️ 刻意避开已表「看板」的 🎯；产品名过 `_md_name`）；TL;DR 加 `⚔️ 对标 N` 置顶提威胁面。**领导卡 + 维护者卡都显示**（纯决策信号，不像待建档那样剥离领导卡）。
-- **录入**：「我方产品」页（`ProductsManage.tsx`）编辑面板加对标关键词输入框 + 卡片 chip。不填则该段静默、不影响其它情报；一次录入长期复用。
-- **匹配局限（有意从简）**：子串匹配会漏「同义不同词」（产品配「丧尸」但竞品摘要写「僵尸」需各自列全）、可能误命中泛词——靠录入方挑词把关，不引同义词库/LLM 语义匹配（候选量小、成本不值当，观察后再定）。movement 仅有名字、命中率低于新品，属预期。
+- **措辞「同赛道」而非「对标」**：X 是我方产品，「竞品**对标**我方」方向说反且自抬（对标=后来者拿强者当标杆）；「《我方产品》**同赛道**」把我方当参照系、陈述竞争关系。渲染 `⚔️《X》同赛道`、TL;DR `⚔️ 同赛道 N`。
+- **匹配维度从题材关键词 → 玩法子品类（核心精度修复）**：原 `own_products.match_keywords`（题材词如「丧尸/末日/survival」）**先天太宽泛**——「末日」横跨数字门/基地建设/塔防/城建/益智多品类，分不出「数字门玩法 SLG」（无尽火线真赛道）vs「基地建设 SLG」（State of Survival / Last Shelter）。prod 实测：题材匹配命中的全是同题材**不同赛道**的游戏（城建模拟 Frozen City、益智 Boom Blast、塔防…），无一真同赛道。**根因**：匹配的文本（名+摘要）没有玩法机制维度。
+- **修法（alembic `0036`，纯加列）**：① `market_newcomer_log.subgenre_cn`——新品中文化（`newcomer_i18n`）时 LLM **同一次调用**多分类一个受控玩法子品类（`SUBGENRE_VOCAB`：数字门SLG/基地建设SLG/国战SLG/塔防/三消合成/城建模拟/放置养成/卡牌RPG/休闲益智/其他，**按核心机制非题材**判；非词表值丢弃为 NULL 不脏库）。② `own_products.match_subgenre`——我方产品的目标子品类（如无尽火线=数字门SLG）。
+- **匹配**（`_match_own_product` / `_load_own_products`）：**子品类优先权威**——产品配了 `match_subgenre` 就**只**按 `竞品 subgenre_cn == 产品 match_subgenre` 精确匹配（忽略关键词）；竞品未分类（NULL）/异子品类 → 不命中（宁缺毋滥，正是要去掉的假阳）。未配子品类的产品才回退题材关键词子串匹配（新品用「名+摘要」、movement 老竞品用名）。`send_daily_digest` 先一次查全部候选竞品（新品+movement）的 `subgenre_cn`，再建 `own_matches`，整段 try/except 兜底。
+- **前进式（不回填）**：`subgenre_cn` 与 summary 同一次产出，故新品天然带；老行不回填——切到子品类匹配后老假阳行（`subgenre_cn=NULL ≠ 数字门SLG`）**立即不再误标**，无需回填（数据证近期 feed 无数字门新品，回填也捞不到正例），且避开「非词表值→NULL→每天重试烧配额」。真数字门竞品 going-forward 自动分类命中。
+- **录入**：「我方产品」页（`ProductsManage.tsx`）编辑面板加**玩法子品类下拉**（受控词表，首选）+ 题材关键词输入框（回退）+ 卡片 chip。子品类的词表前后端两处（`newcomer_i18n.SUBGENRE_VOCAB` + `ProductsManage.SUBGENRE_OPTIONS`）须同步。
+- **加权**：`_collect_scored_items` 对命中竞品 ×`_OWN_MATCH_BOOST`(2.5) 上浮今日要闻排序（PR #148）。**领导卡 + 维护者卡都显示**（纯决策信号，不剥离）。
+- **局限**：子品类靠 LLM 分类（已用最糟样本验证 Last Shelter→基地建设SLG / Frozen City→城建模拟 / 合成数字门样本→数字门SLG 三者分得开）；movement 老竞品若从未作为新品建档则无 `subgenre_cn`、子品类产品对其不命中（属预期——established 竞品领导本就熟）。
 
 ### 新厂商线索 CTA（PR #104）
 

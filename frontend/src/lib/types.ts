@@ -544,6 +544,7 @@ export interface OwnProduct {
   name: string
   brief: string
   match_keywords: string | null
+  match_subgenre: string | null
   is_default: boolean
   created_at: string
   updated_at: string
@@ -553,6 +554,7 @@ export interface OwnProductCreate {
   name: string
   brief: string
   match_keywords?: string | null
+  match_subgenre?: string | null
   is_default?: boolean
 }
 

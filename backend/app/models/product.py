@@ -17,10 +17,14 @@ class OwnProduct(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
     brief: Mapped[str] = mapped_column(Text)
-    # 「对标我方哪款」匹配关键词：逗号分隔的题材/玩法词（如「丧尸,末日,survival,zombie」）。
-    # digest 用它对竞品名 + LLM 中文摘要做纯本地小写子串匹配，命中给该竞品行打「⚔️ 对标《本品》」。
-    # 空/None = 该产品不参与对标匹配。挑**区分度高**的词（避免「war」这类泛词全命中）。
+    # 「同赛道」匹配关键词：逗号分隔的题材/玩法词（如「丧尸,末日,survival,zombie」）。digest 用它
+    # 对竞品名 + LLM 中文摘要做纯本地小写子串匹配。**题材关键词先天太宽泛**（末日横跨多品类），
+    # 优先用 match_subgenre 精确匹配；本字段作回退/兼容。空/None = 不参与关键词匹配。
     match_keywords: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    # 「同赛道」目标玩法子品类（受控词表，与 market_newcomer_log.subgenre_cn 同口径，如「数字门SLG」）。
+    # 配了就**优先按子品类相等精确匹配**（竞品的 LLM 分类 subgenre_cn == 本值）——治题材关键词
+    # 分不出「数字门 SLG vs 基地建设 SLG」。逗号分隔可配多个子品类。空 = 退回 match_keywords。
+    match_subgenre: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     # 创意迁移面板打开时默认带入这条。全表至多一条为 True（写入时互斥）。
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)

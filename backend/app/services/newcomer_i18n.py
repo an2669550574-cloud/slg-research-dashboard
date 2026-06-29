@@ -24,8 +24,28 @@ from app.services import llm_gateway
 
 logger = logging.getLogger(__name__)
 
+# 玩法子品类受控词表（**按核心玩法机制，非题材**）。给「对标我方哪款」精确匹配用——题材关键词
+# （末日/丧尸）横跨多品类分不出「数字门 SLG vs 基地建设 SLG」，靠这个机制维度区分。新增子品类
+# 必须同步：本词表 + _PROMPT 定义 + 前端 ProductsManage 下拉 + own_products.match_subgenre 配置。
+SUBGENRE_VOCAB = (
+    "数字门SLG", "基地建设SLG", "国战SLG", "塔防", "三消合成",
+    "城建模拟", "放置养成", "卡牌RPG", "休闲益智", "其他",
+)
+
 _PROMPT = """你是手游竞品调研助手。下面是一款游戏的应用商店信息。只输出 JSON（不要解释、不要代码围栏）：
-{{"summary": "一句话简体中文，说清这是什么游戏（题材+品类+核心玩法卖点），不超过35字，不带书名号", "translation": "把下面的商店描述完整翻译成简体中文，保留分段，不增删内容"}}
+{{"summary": "一句话简体中文，说清这是什么游戏（题材+品类+核心玩法卖点），不超过35字，不带书名号", "subgenre": "从下面固定列表选最贴切的一个核心玩法子品类(只填列表里的词)", "translation": "把下面的商店描述完整翻译成简体中文，保留分段，不增删内容"}}
+
+子品类固定列表（**按核心玩法机制判定，不看题材**）：
+- 数字门SLG：有「跑酷穿门、兵力数字增减(加减乘除)、滚雪球合成」前置小游戏，过关后回基地建设/PvP 的 SLG（Last War: Survival 类）
+- 基地建设SLG：建避难所/城市、招英雄、出兵 PvP/联盟国战的传统 SLG，**无数字门跑酷前置**（State of Survival / Whiteout Survival / Last Shelter 类）
+- 国战SLG：历史/文明大地图国战（Rise of Kingdoms / 三国类）
+- 塔防：布阵/派兵守固定路线
+- 三消合成：消除或合成为核心玩法
+- 城建模拟：单机城市/家园建设经营、无 PvP 攻防（Frostpunk / 模拟经营类）
+- 放置养成：挂机/放置为主
+- 卡牌RPG：抽卡养成、回合/卡牌战斗
+- 休闲益智：超休闲/益智小游戏
+- 其他：都不贴切
 
 游戏名：{name}
 品类：{genre}
@@ -78,6 +98,10 @@ async def translate_pending_newcomers(cap: int | None = None) -> int:
             select(MarketNewcomerLog.app_id, MarketNewcomerLog.name,
                    MarketNewcomerLog.genre, MarketNewcomerLog.description,
                    MarketNewcomerLog.publisher, MarketNewcomerLog.is_slg)
+            # 前进式：只翻 summary_cn 缺的（真·待翻）。subgenre_cn 与 summary 同一次调用产出，
+            # 故新行天然带子品类；老行不回填——「对标我方哪款」已从题材关键词切到子品类相等匹配，
+            # 老假阳行（subgenre_cn=NULL ≠「数字门SLG」）立即不再误标，无需回填（数据证近期 feed
+            # 无数字门新品，回填也捞不到正例）。这样也避开「非词表 subgenre→NULL→每天重试烧配额」。
             .where(MarketNewcomerLog.description.is_not(None),
                    MarketNewcomerLog.summary_cn.is_(None))
             # is_slg 优先：已识别 SLG 先翻，待识别新厂用剩余 cap。
@@ -121,6 +145,10 @@ async def translate_pending_newcomers(cap: int | None = None) -> int:
             continue
         summary = str(parsed["summary"]).strip()[:200]
         translation = str(parsed.get("translation") or "").strip() or None
+        # 玩法子品类：只收受控词表里的值（LLM 偶尔会编新词/带解释），非词表 → None（不脏库、
+        # 精确匹配也不会误命中）。给「对标我方哪款」按机制精确匹配，治题材关键词太宽泛。
+        sg_raw = str(parsed.get("subgenre") or "").strip()
+        subgenre = sg_raw if sg_raw in SUBGENRE_VOCAB else None
         # 回写该 app 全部行（跨 combo/榜）。summary 本就 app 级、country 无关；
         # description_cn 用最新行的译文覆盖全部——同 app 跨国描述偶有差异，但这是竞品
         # 速览、headline 价值在 summary，按 app 翻一次省 LLM 是有意取舍（cost 硬上限
@@ -129,7 +157,8 @@ async def translate_pending_newcomers(cap: int | None = None) -> int:
             await db.execute(
                 update(MarketNewcomerLog)
                 .where(MarketNewcomerLog.app_id == app_id)
-                .values(summary_cn=summary, description_cn=translation))
+                .values(summary_cn=summary, description_cn=translation,
+                        subgenre_cn=subgenre))
             await db.commit()
         done += 1
     if done:
