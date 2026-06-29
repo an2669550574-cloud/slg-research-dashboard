@@ -868,7 +868,7 @@ async def list_itunes_artist_suggestions(
             if not cand:
                 continue
             if cand["artist_id"] in seen_artist:
-                break  # 该主体的开发者账号已被接入（可能挂在别处）→ 跳过该主体
+                continue  # 该候选的开发者账号已被接入 → 试本主体下一个候选（可能另一未占用账号）
             seen_artist.add(cand["artist_id"])  # 防同一 artist 在本轮被多个主体重复建议
             out.append(PublisherArtistSuggestionOut(
                 entity_id=e.id, entity_name=e.name,

@@ -468,6 +468,44 @@ async def test_itunes_artist_suggestions_from_matched_products(client, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_itunes_artist_suggestions_skips_occupied_artist_tries_next(client, monkeypatch):
+    """旗舰反解出的开发者账号已被占用时，应试本主体下一候选而非放弃整主体
+    （多候选结构下 break→continue 修漏报；单 pinned 时两者等价）。"""
+    from app.config import settings
+    import app.services.itunes_releases as svc
+    today = _today()
+    await _seed_rankings([
+        ("8001", today, 1, 900, 900.0, "US", "ios", "Twin Flagship", "TwinCo Ltd"),  # 旗舰 → 已占用账号
+        ("8002", today, 2, 100, 100.0, "US", "ios", "Twin Minor", "TwinCo Ltd"),      # 次品 → 未占用账号
+    ])
+    # 占位主体先接入 artist 700，让旗舰 8001 反解出的账号成为「已占用」
+    occ = (await client.post("/api/publishers/", json={"name": "占位厂", "is_slg": True})).json()["id"]
+    assert (await client.post(f"/api/publishers/{occ}/itunes-artists",
+                              json={"artist_id": "700", "platform": "ios"})).status_code == 201
+    x = (await client.post("/api/publishers/", json={
+        "name": "双子", "is_slg": True, "aliases": [{"keyword": "twinco"}],
+    })).json()["id"]
+
+    table = {
+        "8001": {"artist_id": "700", "artist_name": "TwinCo A", "app_name": "Twin Flagship"},  # 占用
+        "8002": {"artist_id": "701", "artist_name": "TwinCo B", "app_name": "Twin Minor"},     # 自由
+    }
+
+    async def fake_resolve(app_id):
+        return table.get(app_id)
+
+    monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
+    monkeypatch.setattr(svc, "resolve_artist_for_app", fake_resolve)
+    monkeypatch.setattr("app.routers.publishers._SUGGEST_LOOKUP_DELAY_S", 0)
+
+    sugg = (await client.get("/api/publishers/itunes-artist-suggestions")).json()
+    by_eid = {s["entity_id"]: s for s in sugg}
+    assert x in by_eid  # 旗舰账号被占用没导致整主体被跳过
+    assert by_eid[x]["source_app_id"] == "8002"  # 退到次品反解出未占用账号
+    assert by_eid[x]["artist_id"] == "701"
+
+
+@pytest.mark.asyncio
 async def test_sibling_dedup_collapses_ios_android_same_game(client):
     """同 publisher + 名字 prefix 匹配的 iOS+Android 同款 → 合并为 1 个 product，
     收入/下载求和；product_count + top_products + /products 三处口径一致。"""
