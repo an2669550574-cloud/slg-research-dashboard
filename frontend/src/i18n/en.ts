@@ -637,6 +637,8 @@ export const en: Translations = {
     healthTipNoCnName: (n: number) => `CN entities without Chinese name: ${n}`,
     healthTipStale: (n: number) => `Need review (>12 mo): ${n}`,
     healthTipNoRels: (n: number) => `No equity relations: ${n} (independent or unmapped)`,
+    healthTipArtist: (withN: number, total: number, artists: number) =>
+      `iOS radar coverage: ${withN}/${total} entities (${artists} accounts; capital holders / app_id-pinned majors legitimately none)`,
     exportColName: 'Entity',
     exportColNameEn: 'Name (EN)',
     exportColRegion: 'Region',

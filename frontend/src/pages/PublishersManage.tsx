@@ -832,31 +832,38 @@ function PublisherDetailDrawer({ entity: e, entities, onClose, onEdit, onDelete 
   }, [onClose])
 
   const invalidate = () => qc.invalidateQueries({ queryKey: QK })
+  // 加/删 alias·app_id·artist 会改变「旗下产品」集合（products 端点按这三者聚合），
+  // 而产品列表用独立 query key ['publisherProducts', id]，不在 QK 前缀下、不会被 invalidate()
+  // 顺带失效 → 加完马甲抽屉里看不到产品变化。显式失效它，闭合策展反馈环。
+  const invalidateWithProducts = () => {
+    invalidate()
+    qc.invalidateQueries({ queryKey: ['publisherProducts', e.id] })
+  }
 
   const addAliasMut = useMutation({
     mutationFn: (keyword: string) => publishersApi.addAlias(e.id, { keyword }),
-    onSuccess: () => { invalidate(); setNewAlias(''); toast.success(tt.aliasAdded) },
+    onSuccess: () => { invalidateWithProducts(); setNewAlias(''); toast.success(tt.aliasAdded) },
   })
   const delAliasMut = useMutation({
     mutationFn: (aliasId: number) => publishersApi.deleteAlias(e.id, aliasId),
-    onSuccess: () => { invalidate(); toast.success(tt.aliasDeleted) },
+    onSuccess: () => { invalidateWithProducts(); toast.success(tt.aliasDeleted) },
   })
   const addAppIdMut = useMutation({
     mutationFn: (app_id: string) => publishersApi.addAppId(e.id, { app_id }),
-    onSuccess: () => { invalidate(); setNewAppId(''); toast.success(tt.appIdAdded) },
+    onSuccess: () => { invalidateWithProducts(); setNewAppId(''); toast.success(tt.appIdAdded) },
   })
   const delAppIdMut = useMutation({
     mutationFn: (rowId: number) => publishersApi.deleteAppId(e.id, rowId),
-    onSuccess: () => { invalidate(); toast.success(tt.appIdDeleted) },
+    onSuccess: () => { invalidateWithProducts(); toast.success(tt.appIdDeleted) },
   })
   const addArtistMut = useMutation({
     mutationFn: ({ artist_id, label, platform }: { artist_id: string; label: string; platform: 'ios' | 'gp' }) =>
       publishersApi.addItunesArtist(e.id, { artist_id, platform, label: label.trim() || null }),
-    onSuccess: () => { invalidate(); setNewArtist({ artist_id: '', label: '', platform: 'ios' }); toast.success(tt.artistAdded) },
+    onSuccess: () => { invalidateWithProducts(); setNewArtist({ artist_id: '', label: '', platform: 'ios' }); toast.success(tt.artistAdded) },
   })
   const delArtistMut = useMutation({
     mutationFn: (rowId: number) => publishersApi.deleteItunesArtist(e.id, rowId),
-    onSuccess: () => { invalidate(); toast.success(tt.artistDeleted) },
+    onSuccess: () => { invalidateWithProducts(); toast.success(tt.artistDeleted) },
   })
   const addSourceMut = useMutation({
     mutationFn: (data: PublisherSourceCreate) => publishersApi.addSource(e.id, data),
@@ -1373,6 +1380,7 @@ function HealthChip() {
     h.cn_no_chinese_name > 0 && tt.healthTipNoCnName(h.cn_no_chinese_name),
     h.stale_review > 0    && tt.healthTipStale(h.stale_review),
     h.no_relations > 0    && tt.healthTipNoRels(h.no_relations),
+    tt.healthTipArtist(h.total - h.entities_without_itunes_artist, h.total, h.total_itunes_artists),
   ].filter(Boolean).join('\n')
   return (
     <span

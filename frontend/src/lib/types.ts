@@ -932,6 +932,8 @@ export interface PublisherHealth {
   total_app_ids: number
   total_sources: number
   total_relations: number
+  total_itunes_artists: number
+  entities_without_itunes_artist: number
   capital_entities: number
   avg_brief_len: number
   max_brief_len: number
