@@ -401,22 +401,27 @@ async def test_itunes_artist_suggestions_resolves_and_filters(client, monkeypatc
         "name": "撞车E", "is_slg": True, "app_ids": [{"app_id": "444"}],
     })
 
+    # 每个非 A 主体的 app 都映射到一个「未被占用」的可解析 artist——这样若任一排除分支
+    # （covered / is_slg / isdigit）被误删，对应主体会**多出一行**，len 立即 ≠ 1（让过滤器
+    # 真正 load-bearing，不靠 resolve→None 兜底假绿）。唯独 444→800 撞 B 已占用，测去重分支。
     table = {
         "111": {"artist_id": "900", "artist_name": "Studio A", "app_name": "Game A"},
-        "444": {"artist_id": "800", "artist_name": "撞车工作室", "app_name": "Game E"},  # 撞 B 已占用
+        "222": {"artist_id": "801", "artist_name": "Studio B", "app_name": "Game B"},      # B covered → 删 covered 过滤才会泄漏
+        "333": {"artist_id": "802", "artist_name": "Studio C", "app_name": "Game C"},      # C 资本方 → 删 is_slg 过滤才会泄漏
+        "com.x.y": {"artist_id": "803", "artist_name": "Studio D", "app_name": "Game D"},  # D 安卓 → 删 isdigit 过滤才会泄漏
+        "444": {"artist_id": "800", "artist_name": "撞车工作室", "app_name": "Game E"},     # E 撞 B 已占用 800 → 测去重分支
     }
 
     async def fake_resolve(app_id):
-        return table.get(app_id)  # 其它（含 222/333/com.x.y）→ None
+        return table.get(app_id)
 
     monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
     monkeypatch.setattr(svc, "resolve_artist_for_app", fake_resolve)
     monkeypatch.setattr("app.routers.publishers._SUGGEST_LOOKUP_DELAY_S", 0)
 
     sugg = (await client.get("/api/publishers/itunes-artist-suggestions")).json()
-    assert len(sugg) == 1
+    assert {s["entity_id"] for s in sugg} == {a}  # 仅 A；B/C/D/E 全被各自分支排除
     s = sugg[0]
-    assert s["entity_id"] == a
     assert s["entity_name"] == "工作室A"
     assert s["source_app_id"] == "111"
     assert s["artist_id"] == "900"
