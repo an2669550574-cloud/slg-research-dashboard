@@ -186,16 +186,15 @@ async def test_region_history_accrues_without_webhook(app, monkeypatch):
     assert len(evs) == 1 and "KR" in evs[0].title   # 但 region_launch 历史照样落了
 
 
-def test_digest_renders_region_and_video_sections():
-    """build_daily_digest 把新区上线 + 新品视频拼成全局段；纯这两类日也发卡。"""
+def test_digest_renders_region_section():
+    """build_daily_digest 把新区上线拼成全局段；纯该类日也发卡。
+    （实机视频不再单列整段——已内联进各新品行，见 test_digest_video_inlined_into_newcomer_row。）"""
     from app.services.release_alerts import build_daily_digest
     region = [{"app_id": "g1", "name": "万国觉醒", "country": "KR", "date": "2026-06-25"}]
-    videos = [{"name": "末日喧嚣", "count": 3, "url": "https://www.youtube.com/watch?v=V1"}]
-    res = build_daily_digest([], "2026-06-27", region_changes=region, video_items=videos)
+    res = build_daily_digest([], "2026-06-27", region_changes=region)
     assert res is not None
     _, body, _ = res
     assert "竞品新区上线" in body and "万国觉醒" in body and "新进 KR 区" in body
-    assert "新品实机视频" in body and "末日喧嚣" in body and "3 条" in body
 
 
 @pytest.mark.asyncio

@@ -187,11 +187,11 @@ class Settings(BaseSettings):
     DIGEST_MAX_ITEMS: int = 30
     # 卡顶「今日要闻」跨 combo 置顶条数：把全卡最高重要度的 N 个事件（市场权重 ×
     # 事件强度，见 release_alerts._event_score）抽出来置顶，保证核心市场大事件不被
-    # 次市场长尾折叠挤掉。仅当全卡事件数 > 该值才渲染（小卡本身已短、不重复）。0=关。
+    # 次市场长尾折叠挤掉。仅当（排除正文首位 combo 后）事件数 > 该值才渲染（小卡本身
+    # 已短、置顶会和正文重复，没必要）。0=关。
     DIGEST_HIGHLIGHTS_TOPN: int = 5
-    # 全局「新品实机视频」段每日展示上限：新品多的日子能一次搜出几十条视频，逐条列会把
-    # 卡刷长。只详列前 N 条，其余折叠成「另有 M 个新品也已搜集视频，看板查看」一行。
-    DIGEST_VIDEO_TOPN: int = 5
+    # 注：实机视频不再单列整段（曾有 DIGEST_VIDEO_TOPN 控制其展示上限），改为内联进各
+    # 新品行（🎬，见 release_alerts.build_newcomer_lines），免同批新品名列两遍。
     # 单 combo「市场新面孔 · 待识别新厂」(is_slg=false) 展示上限：次市场（RU/DE）批量同步日
     # 会一次涌进几十个未识别新面孔（混足球/塔防/恐怖等非 SLG 噪声，且 genre 仅本地化大类
     # 「Игры/Spiele」无法精准门控），逐条列会刷屏。只详列前 N 个（按榜排名），其余折叠成
