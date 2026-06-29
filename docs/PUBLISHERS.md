@@ -10,7 +10,8 @@
 | is_slg 判定 + 内存索引 + 起步种子 | `backend/app/services/slg_publishers.py` |
 | 溯源分级（一手/二手）+ tier 派生 | `backend/app/services/provenance.py` |
 | 跨平台同款合并（iOS+Android 去重）规则 | `backend/app/services/sibling_match.py`；publishers router 通过 `_dedup_siblings` 接入 |
-| 免费 iTunes 雷达同步 | `backend/app/services/itunes_releases.py` |
+| 免费 iTunes 雷达同步 + **按 app_id 反解开发者账号**（`resolve_artist_for_app`，给雷达覆盖建议用） | `backend/app/services/itunes_releases.py` |
+| 雷达覆盖建议候选 app_id（pinned ∪ alias 匹配产品） | `backend/app/routers/publishers.py` `_ios_suggest_candidates` |
 | API（CRUD + 子资源 + 聚合） | `backend/app/routers/publishers.py`（前缀 `/api/publishers`） |
 | 前端集团/列表/图谱/资本树 | `frontend/src/pages/PublishersManage.tsx` + `frontend/src/lib/equityGraph.ts` |
 | brief 戳记折叠（抽屉里把【调研更新 …】戳记折叠到「调研历史 N」） | `frontend/src/lib/briefStamps.ts` + 单测 `briefStamps.test.ts` |
@@ -22,9 +23,11 @@
 | `GET /api/publishers/` | 全部主体（含一手源 tier、关系、product_count、top_products、best_rank） | 是（主页） |
 | `GET /api/publishers/{id}` | 单主体详情 | 是（抽屉） |
 | `GET /api/publishers/{id}/products?days=30` | 旗下产品聚合（跨平台 sibling 去重 + 雷达合并） | 是（抽屉「旗下 SLG 产品」） |
-| `GET /api/publishers/health` | 数据健康度自检（tier 分布 + 待补/命名/复核 backlog + 总量） | 是（顶部 HealthChip「一手 N%」+ tooltip） |
-| `GET /api/publishers/gaps?days=30&limit=20` | 未归属高收入 publisher（按累计收入降序，已扣除忽略名单） | 是（顶部「调研缺口」折叠卡） |
-| `GET/POST/DELETE /api/publishers/ignores` | 缺口忽略名单（kind=publisher/app_id 两粒度）；POST 对 publisher 归一成 corp_squash 键存储、幂等 | 是（缺口卡「忽略」按钮 + 「已忽略 N」恢复） |
+| `GET /api/publishers/health` | 数据健康度自检（tier 分布 + 待补/命名/复核 backlog + 总量 + **iTunes 雷达覆盖率** `total_itunes_artists`/`entities_without_itunes_artist`） | 是（顶部 HealthChip「一手 N%」+ tooltip 含「iOS 雷达覆盖 X/Y」） |
+| `GET /api/publishers/gaps?days=30&limit=20` | 未归属高收入 publisher（按累计收入降序，已扣除忽略名单）。**带置信信号**：`days_on_chart`（名下最持久 app 上榜天数=桶内 max distinct date，持续=真厂/一日闪现=噪声）+ `genre`/`summary_cn`（gaps→`market_newcomer_log` 数据回流，按代表 app_id join） | 是（顶部「调研缺口」折叠卡，行内显品类/连续上榜天数/📝摘要） |
+| `GET /api/publishers/download-leads?days=90&limit=20` | **下载榜早期信号（待建档新厂线索）**：`market_newcomer_log` 里 chart_type=free、is_slg=false、非 reentry、genre 含 strateg 的新品，扣忽略名单、跨市场同 app 收敛+富化回填。比 grossing 缺口更早（软启动期/装机量先起）；与 digest 方案① 共用同一忽略名单 | 是（顶部「📥 下载榜早期信号」折叠卡，建主体/忽略[app_id 粒度]） |
+| `GET /api/publishers/itunes-artist-suggestions?limit=25` | **雷达覆盖建议**：对未接 iOS 雷达的 is_slg 主体，从其 iOS 数字 app_id（pinned ∪ alias 匹配产品，旗舰优先）免费 iTunes lookup 反解开发者账号 artistId 给一键接入候选。已接入 artist 全局去重、每主体一条、显式扫描触发（~20-30s 多次 lookup）。接入复用 `POST /{id}/itunes-artists` | 是（顶部「📡 雷达覆盖建议」折叠卡「接入雷达」；⚠️多品类大厂会出现，需人工跳过） |
+| `GET/POST/DELETE /api/publishers/ignores` | 缺口忽略名单（kind=publisher/app_id 两粒度）；POST 对 publisher 归一成 corp_squash 键存储、幂等。**同时被 /gaps、/download-leads、detect_newcomers（digest 方案①）三处共用** | 是（缺口卡「忽略」按钮 + 「已忽略 N」恢复） |
 | `POST/PUT/DELETE …` | 主体 + 5 类子资源（aliases/app_ids/itunes-artists/sources/relations）CRUD；写后内存 is_slg 索引自动刷新 | 是（抽屉编辑） |
 
 ## 数据存哪、怎么改
@@ -95,6 +98,7 @@
 1. ~~**缺口忽略名单**~~ ✅ **已做**（`publisher_ignores` 表 + `/ignores` 端点 + 前端「忽略」按钮/「已忽略 N」恢复 + 缺口 UI 抬回，alembic 0023）：top 20 里 17 个非 SLG 巨头现可一键剔出，缺口收敛到可操作信号。两种粒度（publisher squash 键 / app_id）。详见上方「数据驱动找缺口」。
 2. ~~**publisher 名归一鲁棒化**~~ ✅ **已做**（`services/name_match.corp_squash` squash 等值回退，wired 进 is_slg/list/gaps/products/sibling 五处）：`Topgames.Inc`↔`top games` 已命中，`Trigger Games` 仍不误命中。详见上方 sibling 去重条。
 3. **关系挂源 FK**（小价值）：`PublisherRelation` 加 `source_id` 可选 FK 让关系绑证据；需 alembic 迁移。
+4. ~~**雷达覆盖建议 / 下载榜早期信号 / 缺口置信信号**~~ ✅ **已做**（#155→#158，2026-06-29 全上线，零 ST/无迁移）：第一性原理审查挖出的 3 个跨模块杠杆点——B 雷达覆盖（`/itunes-artist-suggestions` 反解开发者账号，pinned ∪ alias 匹配产品）/ C 下载榜早期信号（`/download-leads`）/ A 缺口置信（`/gaps` 加 `days_on_chart` + newcomer_log 回流）。详见上方「辅助端点」表。**取舍记录**：grounding 实测 A/C 当前 backlog 近空（grossing 缺口 2~5、下载榜线索 1 且已建档），按产品决定作面向未来基础设施先建好；B 才是真有量（75 未覆盖主体 → 48+ 可建议）。**未上 ML 置信模型**（对个位数缺口=过度工程）。
 
 ## 命名 backlog（等找到中文主体名再回填，2026-06-21 状态）
 
