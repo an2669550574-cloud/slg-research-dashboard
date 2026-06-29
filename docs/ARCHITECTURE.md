@@ -192,7 +192,7 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 - **连锁限制**：看板详情页里的国外资源（商店截图 mzstatic 图床 / YouTube 视频）手机端在看板内也可能加载不全；视频「播放」本质要客户端能访问 YouTube，无解、只能电脑端。
 - **⚠️ 看板深链「两端可达」是乐观假设（2026-06-28 排障证伪）**：HK 境外 IP → 国内手机（移动数据/无代理）跨境拉前端 JS bundle（主包 ~373KB）链路不稳，钉钉 webview 传输中途 `client disconnected` → React 挂载不了 → **整页白屏，连自有文字情报都看不到**；**间歇性**（链路好时能开、差时白屏）。诊断法：`docker logs slg_caddy` 查手机 UA(`AliApp(DingTalk)`) 的 `aborting with incomplete response`。备选治理（均未做，2026-06-28 决议**先观察暂不修**）：① 看板链接也标 💻 ② 后端轻量服务端分享页（绕开重型 SPA，最对症）③ Cloudflare 免备案 CDN ④ 腾讯云跨境加速。**约束**：服务器必须境外（ST API）→ 不能搬国内；nip.io 裸 IP → 国内 CDN 备案走不通。
 
-代码集中在 `build_daily_digest` 拼装层 + `_block` / `_meta_inner` / `_link_line` / `_digest_tldr` helper（`services/release_alerts.py`）。**本轮（2026-06-28）已落地**：重要度排序 + 今日要闻（见下节）、领导群/维护者群双卡分发 + markdown 转义（见「双卡分发」节）、对标我方哪款（见末节）、实机视频/市场待识别折叠减负（#141，见「封顶」节）、领导卡只看 SLG 产品（#143，见「双卡分发」节）。**剩余 digest backlog**：全局段统一封顶预算、emoji 收敛（多个「新」语义重叠）、跨 combo 新品按 app_id 去重、领导卡推送时点前移。（**已落地**：空卡心跳/数据未就位告警 P1.1、movement 空降补 is_reentry 门控 P1.4——见「is_reentry」「空卡分支」节。）
+代码集中在 `build_daily_digest` 拼装层 + `_block` / `_meta_inner` / `_link_line` / `_digest_tldr` helper（`services/release_alerts.py`）。**本轮（2026-06-28）已落地**：重要度排序 + 今日要闻（见下节）、领导群/维护者群双卡分发 + markdown 转义（见「双卡分发」节）、同赛道（竞品玩法子品类精确匹配，见末节）、实机视频/市场待识别折叠减负（#141，见「封顶」节）、领导卡只看 SLG 产品（#143，见「双卡分发」节）。**剩余 digest backlog**：全局段统一封顶预算、emoji 收敛（多个「新」语义重叠）、跨 combo 新品按 app_id 去重、领导卡推送时点前移。（**已落地**：空卡心跳/数据未就位告警 P1.1、movement 空降补 is_reentry 门控 P1.4——见「is_reentry」「空卡分支」节。）
 
 ### digest 重要度排序 + 今日要闻置顶（PR #136）
 
@@ -204,7 +204,7 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 - `_market_weight(country, platform)`：市场权重 US 1.5 / JP 1.15 / KR 1.1…× 平台 iOS 1.0 / 安卓 0.9。**刻意压窄到 1.0~1.5**——只做轻微倾斜，不能把事件强度整个吃掉（否则今日要闻被核心市场榜尾占满）；KR 的 #1 空降仍压过 US 的 #45 长尾（`test_digest_importance_market_weight_is_gentle_tilt`）。
 - **五处的修法**：① combo 段按 `_combo_sort_key`（市场权重为**主键**、combo 内最高单项为辅）排序——核心 US/iOS 永居前列、全局封顶砍的必是次市场；② `build_movement_lines` 内按 `_event_score` 降序再切 `DIGEST_MOVEMENT_TOPN`（combo 内市场权重恒定，故只按事件强度）；③ 按钮 `_ranked_newcomer_buttons` 全局按 `_event_score × 市场权重` 排序取头部新品；④ overflow 计数不变，但砍的已是真·次要项。「核心 combo 永不被封顶挤掉」由排序主键保证，与市场权重量级解耦。
 - **跨 combo「📌 今日要闻」置顶**（`build_highlight_lines` + `_highlight_line`）：`_collect_scored_items` 收全 combo 的 movement + 三类新品（下载榜只算 is_slg=True，与推送门控一致；回归项已滤）→ 取重要度 Top `DIGEST_HIGHLIGHTS_TOPN`（默认 5）→ 内联市场标签的紧凑行，放 TL;DR 之后、combo 段之前。**仅当全卡事件数 > TOPN 才渲染**（小卡本身已短、置顶会与正文重复）。覆盖面**仅 ranking 派生的 per-combo 竞品事件**——版本/新区/视频/待建档是各自独立的全局段（本就不受地理顺序挤压），不纳入要闻。
-- **对标加权（PR #148）**：`_collect_scored_items` 对命中 `own_matches`（对标我方）的竞品 ×`_OWN_MATCH_BOOST`(2.5) 上浮——竞品打进我方赛道是领导第一决策轴，#139 此前只加 ⚔️ 标签不参与排序（榜尾对标竞品会被次市场高名次长尾挤出今日要闻）。仅影响今日要闻排序，⚔️ 标签照常。
+- **同赛道加权（PR #148）**：`_collect_scored_items` 对命中 `own_matches`（同赛道竞品）的 ×`_OWN_MATCH_BOOST`(2.5) 上浮——竞品打进我方赛道是领导第一决策轴，#139 此前只加 ⚔️ 标签不参与排序（榜尾同赛道竞品会被次市场高名次长尾挤出今日要闻）。仅影响今日要闻排序，⚔️ 标签照常。
 - 入参 `per_combo` 不被 mutate（排序走副本，`test_digest_does_not_mutate_input_order`）；常态下排序与现地理顺序几乎一致（US→JP→KR、iOS→安卓），只有次市场冒大事件才上浮，低惊扰。
 
 ### 领导群 / 维护者群双卡分发 + markdown 转义（PR #138）
