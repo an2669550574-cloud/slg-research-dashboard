@@ -765,7 +765,9 @@ async def list_publisher_gaps(
             key, {"display": pub, "revenue": 0.0, "downloads": 0, "apps": [], "days": 0})
         bucket["revenue"] += revv
         bucket["downloads"] += int(dl or 0)
-        bucket["days"] = max(bucket["days"], int(days or 0))  # 旗舰持续上榜天数=桶内最大
+        # 该发行商名下「最持久 app」的上榜天数（桶内取最大，可能不是收入最高那款）——
+        # 任一 app 持续上榜即「真发行商」信号，全是一日闪现=噪声。
+        bucket["days"] = max(bucket["days"], int(days or 0))
         bucket["apps"].append((revv, app_id, name, icon))
 
     # gaps→newcomer_log 数据回流：拿各桶代表 app 的玩法品类 + 一句话中文摘要，让缺口行从
