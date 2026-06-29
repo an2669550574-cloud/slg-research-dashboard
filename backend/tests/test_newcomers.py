@@ -298,6 +298,9 @@ async def test_publisher_newcomer_alias_match_any_rank(client):
     from app.services.newcomers import detect_publisher_newcomers
     e = await _mk_entity(client, "江娱互动测试", aliases=["river game"])
 
+    # ≥3 个 baseline 快照（PUBLISHER_NEWCOMER_MIN_BASELINE 门控）——老产品 topwar 贯穿基线。
+    await _seed("2026-05-01", [("topwar", 5, None, "River Game HK Limited")])
+    await _seed("2026-05-04", [("topwar", 5, None, "River Game HK Limited")])
     await _seed("2026-05-08", [("topwar", 5, None, "River Game HK Limited")])
     await _seed("2026-05-15", [
         ("topwar", 5, None, "River Game HK Limited"),          # 老产品：不报
@@ -320,6 +323,8 @@ async def test_publisher_newcomer_respects_publisher_topn_default(client):
     #201+ 即使首次出现也不报——治 JP/android weekly 抖动产生 #535 类长尾刷屏 digest。"""
     from app.services.newcomers import detect_publisher_newcomers
     await _mk_entity(client, "TopN 测试", aliases=["river game"])
+    await _seed("2026-05-01", [("anchor", 1, None, "River Game HK Limited")])
+    await _seed("2026-05-04", [("anchor", 1, None, "River Game HK Limited")])
     await _seed("2026-05-08", [("anchor", 1, None, "River Game HK Limited")])
     await _seed("2026-05-15", [
         ("anchor", 1, None, "River Game HK Limited"),
@@ -337,6 +342,8 @@ async def test_publisher_newcomer_respects_explicit_topn_override(client):
     """显式传 topn 覆盖默认值——API 调用方可放宽收紧门槛。"""
     from app.services.newcomers import detect_publisher_newcomers
     await _mk_entity(client, "覆盖测试", aliases=["river game"])
+    await _seed("2026-05-01", [("anchor", 1, None, "River Game HK Limited")])
+    await _seed("2026-05-04", [("anchor", 1, None, "River Game HK Limited")])
     await _seed("2026-05-08", [("anchor", 1, None, "River Game HK Limited")])
     await _seed("2026-05-15", [
         ("anchor", 1, None, "River Game HK Limited"),
@@ -379,6 +386,8 @@ async def test_publisher_newcomer_app_id_pin(client):
     from app.services.newcomers import detect_publisher_newcomers
     e = await _mk_entity(client, "钉选主体", app_ids=["com.pin.newgame"])
 
+    await _seed("2026-05-01", [("a", 1, None, SLG_PUB)])
+    await _seed("2026-05-04", [("a", 1, None, SLG_PUB)])
     await _seed("2026-05-08", [("a", 1, None, SLG_PUB)])
     await _seed("2026-05-15", [
         ("a", 1, None, SLG_PUB),
@@ -392,12 +401,103 @@ async def test_publisher_newcomer_app_id_pin(client):
 
 
 @pytest.mark.asyncio
+async def test_publisher_newcomer_min_baseline_gate(client):
+    """B 门控：本地快照不足 PUBLISHER_NEWCOMER_MIN_BASELINE 时视为「数据积累中」
+    (no_baseline)、不报——治次市场（DE/RU 双周）刚采集只有 1~2 个快照时，"首次出现
+    在本地榜单" ≈ "首次被采到"，把一整批 2013–2017 老 SLG 误报"新品"。"""
+    from app.services.newcomers import detect_publisher_newcomers
+    await _mk_entity(client, "稀疏快照主体", aliases=["river game"])
+    # 只有 2 个快照（baseline 仅 1 个 < MIN_BASELINE=3）：即便有明显主体新品也不报。
+    await _seed("2026-05-08", [("anchor", 1, None, "River Game HK Limited")])
+    await _seed("2026-05-15", [
+        ("anchor", 1, None, "River Game HK Limited"),
+        ("newone", 50, None, "River Game HK Limited"),
+    ])
+    s = await detect_publisher_newcomers("US", "ios", window=4)
+    assert s["no_baseline"] is True
+    assert s["newcomers"] == []
+
+    # 补到 3 个 baseline 快照后恢复检出（门控只挡"数据不足"，不挡有效检出）。
+    await _seed("2026-05-01", [("anchor", 1, None, "River Game HK Limited")])
+    await _seed("2026-05-04", [("anchor", 1, None, "River Game HK Limited")])
+    s2 = await detect_publisher_newcomers("US", "ios", window=4)
+    assert s2["no_baseline"] is False
+    assert [n["name"] for n in s2["newcomers"]] == ["newone"]
+
+
+@pytest.mark.asyncio
+async def test_gate_release_date_filters_old_keeps_new(client):
+    """A 门控：按真实上架日过滤——老产品（早于 ITUNES_RELEASES_OLD_RELEASE_DAYS）剔除，
+    新品保留并回填 release_date；无 release_date 缓存的（mock 不打 lookup）保留（不丢
+    信号）。缓存源 = MarketNewcomerLog（检出落库富化过的）。"""
+    from datetime import timedelta
+    from app.services.newcomers import gate_publisher_newcomers_by_release_date
+    from app.config import settings
+    from app.database import AsyncSessionLocal, utcnow_naive
+    from app.models.newcomer import MarketNewcomerLog
+
+    old_day = (utcnow_naive() - timedelta(
+        days=settings.ITUNES_RELEASES_OLD_RELEASE_DAYS + 60)).strftime("%Y-%m-%d")
+    new_day = (utcnow_naive() - timedelta(days=10)).strftime("%Y-%m-%d")
+    async with AsyncSessionLocal() as db:
+        db.add(MarketNewcomerLog(country="US", platform="ios", app_id="old_app",
+                                 chart_type="grossing", as_of=new_day, name="老游戏",
+                                 release_date=old_day))
+        db.add(MarketNewcomerLog(country="US", platform="ios", app_id="new_app",
+                                 chart_type="grossing", as_of=new_day, name="真新品",
+                                 release_date=new_day))
+        await db.commit()
+
+    items = [
+        {"app_id": "old_app", "name": "老游戏"},
+        {"app_id": "new_app", "name": "真新品"},
+        {"app_id": "no_cache", "name": "无缓存新品"},
+    ]
+    out = await gate_publisher_newcomers_by_release_date(items, "US", "ios")
+    by_name = {n["name"]: n for n in out}
+    assert "老游戏" not in by_name                       # 老产品剔除
+    assert set(by_name) == {"真新品", "无缓存新品"}        # 新品 + 无从判断的保留
+    assert by_name["真新品"]["release_date"] == new_day   # 命中缓存、回填
+    assert by_name["无缓存新品"]["release_date"] is None   # 缺失保留、标 None
+
+
+@pytest.mark.asyncio
+async def test_gate_release_date_falls_back_to_itunes_app_cache(client):
+    """A 门控缓存兜底：MarketNewcomerLog 没有时，回落到雷达 PublisherItunesApp
+    （track_id ≡ iOS 数字 app_id）的 release_date。"""
+    from datetime import timedelta
+    from app.services.newcomers import gate_publisher_newcomers_by_release_date
+    from app.config import settings
+    from app.database import AsyncSessionLocal, utcnow_naive
+    from app.models.publisher import PublisherItunesArtist, PublisherItunesApp
+
+    e = await _mk_entity(client, "雷达缓存主体")
+    old_day = (utcnow_naive() - timedelta(
+        days=settings.ITUNES_RELEASES_OLD_RELEASE_DAYS + 30)).strftime("%Y-%m-%d")
+    async with AsyncSessionLocal() as db:
+        artist = PublisherItunesArtist(entity_id=e["id"], artist_id="999001",
+                                       platform="ios", label="Radar")
+        db.add(artist)
+        await db.flush()
+        db.add(PublisherItunesApp(entity_id=e["id"], artist_row_id=artist.id,
+                                  track_id="555000111", name="雷达老包",
+                                  release_date=old_day))
+        await db.commit()
+
+    out = await gate_publisher_newcomers_by_release_date(
+        [{"app_id": "555000111", "name": "雷达老包"}], "US", "ios")
+    assert out == []  # 雷达缓存命中老上架日 → 剔除
+
+
+@pytest.mark.asyncio
 async def test_publisher_newcomers_endpoint(client, monkeypatch):
     """端点跨 combo 汇总 + no_baseline 标记 + 中文主体名。"""
     from app.config import settings
     monkeypatch.setattr(settings, "SYNC_RANKING_COMBOS", "US:ios,JP:ios")
     await _mk_entity(client, "壳木游戏测试", aliases=["camel games"])
 
+    await _seed("2026-05-01", [("old", 1, None, SLG_PUB)], country="US", platform="ios")
+    await _seed("2026-05-04", [("old", 1, None, SLG_PUB)], country="US", platform="ios")
     await _seed("2026-05-08", [("old", 1, None, SLG_PUB)], country="US", platform="ios")
     await _seed("2026-05-15", [
         ("old", 1, None, SLG_PUB),

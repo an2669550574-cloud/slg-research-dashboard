@@ -96,9 +96,12 @@ async def test_record_includes_tracked_publisher_deep_climber(client, monkeypatc
     now = database.utcnow_naive()
     today = now.strftime("%Y-%m-%d")
     prev = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+    prev2 = (now - timedelta(days=2)).strftime("%Y-%m-%d")
+    prev3 = (now - timedelta(days=3)).strftime("%Y-%m-%d")
     async with database.AsyncSessionLocal() as db:
-        # baseline 锚点（昨日+今日都在 = 老面孔，不算新）
-        for d in (prev, today):
+        # baseline 锚点（≥3 个历史快照 + 今日都在 = 老面孔，不算新；满足
+        # PUBLISHER_NEWCOMER_MIN_BASELINE 门控）
+        for d in (prev3, prev2, prev, today):
             db.add(GameRanking(app_id="d_anchor", date=d, rank=1, country="AT",
                                platform="ios", name="锚", publisher="某厂"))
         # 已建档主体的深位首发（rank 144 > 100、<= 200）

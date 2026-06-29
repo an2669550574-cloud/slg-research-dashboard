@@ -1056,6 +1056,9 @@ function PublisherNewcomersTable({ query, focusId }: { query: UseQueryResult<Pub
                           <span className="ml-1.5 text-[10px] text-secondary border border-default rounded px-1 py-px">
                             {g.matched_by === 'app_id' ? t.newcomers.matchedAppId : t.newcomers.matchedAlias}
                           </span>
+                          {g.release_date && (
+                            <span className="ml-1.5 text-[10px] text-secondary">· {t.newcomers.appstoreReleasedAt(g.release_date)}</span>
+                          )}
                         </div>
                       </div>
                     </div>

@@ -140,7 +140,7 @@ export const en: Translations = {
     viewPublishers: 'Publisher releases',
     publisherWindowHint: (w: number) => `Rule: unseen in last ${w} snapshots · now charting at any rank · tracked publishers only · across all monitored markets`,
     publisherEmpty: 'No new releases from tracked publishers in monitored charts recently',
-    publisherNote: '"Publisher releases" watches tracked entities: products under their aliases / pinned app_ids appearing in local charts for the first time (no rank gate — a known publisher\'s new title is a high signal at any rank). Complements "Market newcomers": that view catches unknown players, this one catches new moves from known ones. Zero ST quota.',
+    publisherNote: '"Publisher releases" watches tracked entities: products under their aliases / pinned app_ids appearing in local charts for the first time (no rank gate — a known publisher\'s new title is a high signal at any rank). Old titles are filtered out by real release date (a chart "first appearance" is only a proxy for launch day), and a sufficient number of local snapshots is required — so a freshly-tracked secondary market won\'t flag old games as new. Complements "Market newcomers": that view catches unknown players, this one catches new moves from known ones. Zero ST quota.',
     entityCol: 'Publisher',
     marketCol: 'Market',
     matchedAlias: 'alias',
