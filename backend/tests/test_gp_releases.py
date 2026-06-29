@@ -204,3 +204,41 @@ async def test_ios_sync_skips_gp_accounts(client, monkeypatch):
     summary = await it.sync_itunes_releases()
     assert called == []  # GP 账号没被 iTunes 侧碰
     assert summary["synced"] == 0 and summary["failed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_resolve_gp_developer_for_package(monkeypatch):
+    """包名 → GP 详情页解析 dev?id= 拿 dev_id；再抓开发者页 og:title 拿名（与 iOS 反解同形）。"""
+    import app.services.gp_releases as gp
+
+    detail_html = (
+        '<html><a href="/store/apps/dev?id=8266249258995725273">LIGHTNING STUDIOS</a>'
+        '<script type="application/ld+json">{"name": "Game of Kings"}</script></html>')
+    dev_html = ('<meta property="og:title" '
+                'content="Android Apps by LIGHTNING STUDIOS on Google Play">')
+
+    class _Resp:
+        def __init__(self, text):
+            self.text = text
+
+        def raise_for_status(self):
+            pass
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, **kw):
+            return _Resp(dev_html if "dev?id=" in url or "developer?id=" in url else detail_html)
+
+    monkeypatch.setattr(gp.httpx, "AsyncClient", lambda *a, **k: _Client())
+
+    r = await gp.resolve_gp_developer_for_package("com.geeker.gok")
+    assert r == {"artist_id": "8266249258995725273",
+                 "artist_name": "LIGHTNING STUDIOS", "app_name": "Game of Kings"}
+    # iOS 数字 id / 空 / 无点包名 → None（仅安卓包名有效）
+    assert await gp.resolve_gp_developer_for_package("123456") is None
+    assert await gp.resolve_gp_developer_for_package("") is None

@@ -876,7 +876,7 @@ export const zh = {
     radarExpand: '展开雷达建议',
     radarCollapse: '收起雷达建议',
     radarTitle: (n: number | null) => n === null ? '雷达覆盖建议（点开扫描）' : `雷达覆盖建议（${n} 个可一键接入）`,
-    radarHint: '对「未接 iOS 雷达的 SLG 主体」，从其已钉 iOS app 免费反解开发者账号 → 接入后雷达自动监测其新上架（软启动期就能抓到，不必等进榜）。核对 主体↔账号名 无误再接。零 ST 配额。',
+    radarHint: '对「未接雷达的 SLG 主体」，从其已钉/在榜 app 免费反解开发者账号（iOS 走 iTunes、GP 走开发者页）→ 接入后雷达自动监测其新上架（软启动期就能抓到，不必等进榜）。iOS / GP 各自独立判覆盖（同一主体可能两条）。核对 主体↔账号名 无误再接。零 ST 配额。',
     radarLoading: '正在反解开发者账号…（约 20–30 秒）',
     radarRescan: '重新扫描',
     radarEmpty: '没有可自动反解的覆盖缺口：未覆盖主体要么无已钉 iOS app（需手动找开发者账号），要么账号已接入。',

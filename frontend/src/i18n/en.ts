@@ -840,7 +840,7 @@ export const en: Translations = {
     radarExpand: 'Expand radar suggestions',
     radarCollapse: 'Collapse radar suggestions',
     radarTitle: (n: number | null) => n === null ? 'Radar coverage suggestions (open to scan)' : `Radar coverage suggestions (${n} one-click)`,
-    radarHint: 'For SLG entities not yet on the iOS radar, reverse-resolve the developer account from a pinned iOS app (free) → wiring it lets the radar catch their new releases (even during soft launch, before charting). Verify entity↔account name before wiring. Zero ST quota.',
+    radarHint: 'For SLG entities not yet on the radar, reverse-resolve the developer account from a pinned/charting app (free; iOS via iTunes, GP via the developer page) → wiring it lets the radar catch their new releases (even during soft launch, before charting). iOS / GP coverage judged independently (an entity may get both). Verify entity↔account name before wiring. Zero ST quota.',
     radarLoading: 'Resolving developer accounts… (~20–30s)',
     radarRescan: 'Rescan',
     radarEmpty: 'No auto-resolvable coverage gaps: remaining uncovered entities either have no pinned iOS app (resolve the account manually) or the account is already wired.',

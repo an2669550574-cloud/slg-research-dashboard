@@ -23,7 +23,7 @@ import logging
 import re
 from html import unescape
 from typing import Optional
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, unquote_plus
 
 import httpx
 from sqlalchemy import select
@@ -87,6 +87,54 @@ def parse_developer_packages(html: str) -> list[str]:
         if pkg not in out:
             out.append(pkg)
     return out
+
+
+# app 详情页里的开发者链接（数字型 /dev?id= 或名称型 /developer?id=）。
+_DEV_LINK_RE = re.compile(r"/store/apps/(?:dev|developer)\?id=([^\"&\\]+)")
+# 开发者页 og:title 形如 "Android Apps by X on Google Play" → 取 X。
+_DEV_OGTITLE_RE = re.compile(r'<meta[^>]+property="og:title"[^>]+content="([^"]+)"')
+
+
+def _parse_gp_developer_name(html: str) -> Optional[str]:
+    m = _DEV_OGTITLE_RE.search(html)
+    if not m:
+        return None
+    t = unescape(m.group(1)).strip()
+    t = re.sub(r"^Android Apps by\s+", "", t)
+    t = re.sub(r"\s+on Google Play$", "", t)
+    return t.strip() or None
+
+
+async def resolve_gp_developer_for_package(package: str) -> Optional[dict]:
+    """反向解析：GP app 详情页 → 该 app 的开发者账号 (dev_id, dev_name)。
+
+    「雷达覆盖建议」GP 侧用——主体钉了安卓包名 / 在榜有安卓产品但还没接 GP 雷达时，
+    从包名免费反解出 GP 开发者 id 供一键接入（与 itunes_releases.resolve_artist_for_app
+    iOS 侧对称）。返回 {"artist_id": dev_id, "artist_name": dev_name|None, "app_name": str|None}
+    （键名与 iOS 反解**同形**，便于「雷达覆盖建议」端点统一处理两侧）。仅安卓包名（含 `.`、
+    非纯数字）有效。免费页面采集、零 ST。失败 / 页面无开发者链接 → None。
+    """
+    if not package or "." not in package or package.isdigit():
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            html = await _get_html(client, app_page_url(package))
+            ids = [unquote_plus(x) for x in _DEV_LINK_RE.findall(html)]
+            if not ids:
+                return None
+            # 该 app 的开发者链接在页内多次出现；取出现最多的（排除「相似应用」其它开发者）。
+            dev_id = max(set(ids), key=ids.count)
+            app_name = parse_app_detail(html, package).get("trackName")
+            # 开发者名 best-effort：再抓一次开发者页拿 og:title（供人工核对账号归属，失败不影响）。
+            dev_name = None
+            try:
+                dev_name = _parse_gp_developer_name(await _get_html(client, developer_page_url(dev_id)))
+            except Exception:
+                logger.warning("gp developer name fetch failed for dev %s", dev_id)
+    except Exception:
+        logger.warning("gp developer resolve failed for %s", package, exc_info=True)
+        return None
+    return {"artist_id": dev_id, "artist_name": dev_name, "app_name": app_name}
 
 
 def _gp_genre(category: Optional[str]) -> Optional[str]:

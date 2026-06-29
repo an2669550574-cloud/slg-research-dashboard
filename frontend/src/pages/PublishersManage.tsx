@@ -183,11 +183,12 @@ export default function PublishersManage() {
   const wireArtistMut = useMutation({
     mutationFn: (s: PublisherArtistSuggestion) =>
       publishersApi.addItunesArtist(s.entity_id, {
-        artist_id: s.artist_id, platform: 'ios', label: s.artist_name || null,
+        artist_id: s.artist_id, platform: s.platform, label: s.artist_name || null,
       }),
     onSuccess: (_o, s) => {
+      // 乐观移除：同主体同平台的那条（一主体可能 iOS + GP 各一条建议，别误删另一条）。
       qc.setQueryData<PublisherArtistSuggestion[]>(['publishers', 'artistSuggestions'],
-        old => (old ?? []).filter(x => x.entity_id !== s.entity_id))
+        old => (old ?? []).filter(x => !(x.entity_id === s.entity_id && x.platform === s.platform)))
       qc.invalidateQueries({ queryKey: ['publishers', 'health'] })
       invalidate()
       toast.success(tt.radarWiredDone(s.entity_name))
@@ -750,11 +751,16 @@ export default function PublishersManage() {
                 <div className="grid gap-2">
                   {radarSuggestions.map(s => (
                     <div
-                      key={s.entity_id}
+                      key={`${s.entity_id}-${s.platform}`}
                       className="flex items-center gap-2.5 bg-elevated/60 border border-default/60 rounded-lg px-3 py-2"
                     >
                       <div className="min-w-0 flex-1">
-                        <div className="font-display text-sm text-primary truncate">{s.entity_name}</div>
+                        <div className="font-display text-sm text-primary truncate flex items-center gap-1.5">
+                          <span className={`shrink-0 text-[9px] font-data px-1 py-px rounded border ${s.platform === 'gp' ? 'text-emerald-400 border-emerald-400/40' : 'text-sky-400 border-sky-400/40'}`}>
+                            {s.platform === 'gp' ? 'GP' : 'iOS'}
+                          </span>
+                          <span className="truncate">{s.entity_name}</span>
+                        </div>
                         <div className="text-[11px] text-muted truncate">
                           {s.artist_name ?? tt.radarUnknownArtist} · <span className="font-data">id {s.artist_id}</span>
                           {s.source_app_name && <span> · {tt.radarFrom(s.source_app_name)}</span>}

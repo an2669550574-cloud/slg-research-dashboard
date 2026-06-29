@@ -274,16 +274,18 @@ class PublisherDownloadLeadOut(BaseModel):
 
 
 class PublisherArtistSuggestionOut(BaseModel):
-    """雷达覆盖建议行：未接 iOS 雷达的 is_slg 主体，从其已钉 iOS app_id 反解出的开发者账号候选。
+    """雷达覆盖建议行：未接雷达的 is_slg 主体，从其已钉 / 在榜 app 反解出的开发者账号候选。
 
-    驱动「📡 雷达覆盖建议」面板——把「手动找开发者页 → 抄 artistId → 粘进抽屉」这段 toil
-    自动化成「一眼看 entity→artistName 对不对 → 一键接入」。零 ST 配额（免费 iTunes lookup）。
+    驱动「📡 雷达覆盖建议」面板——把「手动找开发者页 → 抄 dev id → 粘进抽屉」这段 toil
+    自动化成「一眼看 entity→开发者名 对不对 → 一键接入」。零 ST 配额（免费页面采集）。
+    **双侧**：iOS（iTunes lookup 反解 artistId）+ GP（详情页反解开发者 id），各自独立判覆盖。
     """
     entity_id: int
     entity_name: str
-    source_app_id: str             # 反解所用的 iOS 数字 app_id（主体已钉）
+    platform: str = "ios"          # 'ios' = iTunes 开发者账号 / 'gp' = Google Play 开发者账号
+    source_app_id: str             # 反解所用的 app（iOS 数字 app_id / 安卓包名，主体已钉或在榜）
     source_app_name: Optional[str] = None  # 该 app 名（供人工核对账号归属）
-    artist_id: str                 # 反解出的开发者账号 artistId（接入后即雷达账号）
+    artist_id: str                 # 反解出的开发者账号 id（接入后即雷达账号）
     artist_name: Optional[str] = None  # 开发者账号名（人工把关锚点：与主体对得上才接）
 
 
