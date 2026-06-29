@@ -13,7 +13,9 @@
   trigger 走裸 sync，不触发，避免每次刷新都告警。
 """
 import logging
-from sqlalchemy import select
+from datetime import datetime, timedelta
+
+from sqlalchemy import distinct, select
 from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models.game import GameRanking, CHART_GROSSING
@@ -70,6 +72,28 @@ async def detect_movement(country: str, platform: str, today: str) -> dict:
         today_rows = await _rows(today)
         prev_rows = await _rows(prev_date)
 
+        # 「回归」判定（is_reentry）：上一可用日**之前** window 天内曾在 TopN 的 app_id 集合。
+        # new_entrant 默认只比 today vs 上一可用日两快照，老 SLG 短暂跌出 TopN 又回来会被错标
+        # 「🆕 空降」（prod 实测 US/iOS top 榜 ~32% app 有出榜又回缺口）。命中本集合 → is_reentry，
+        # 渲染层改「🔄 重回」+ 重要度降权、不污染今日要闻。窗口取 [cutoff, prev_date) 避开当期对比日
+        # （在 prev_date 仍在榜就不会是 new_entrant）。COMPETITOR_REENTRY_WINDOW_DAYS=0 关此判定。
+        reentry_ids: set[str] = set()
+        win = settings.COMPETITOR_REENTRY_WINDOW_DAYS
+        if win > 0:
+            cutoff = (datetime.strptime(prev_date, "%Y-%m-%d")
+                      - timedelta(days=win)).strftime("%Y-%m-%d")
+            reentry_ids = set((await db.execute(
+                select(distinct(GameRanking.app_id)).where(
+                    GameRanking.country == country,
+                    GameRanking.platform == platform,
+                    GameRanking.chart_type == CHART_GROSSING,
+                    GameRanking.rank.is_not(None),
+                    GameRanking.rank <= topn,
+                    GameRanking.date >= cutoff,
+                    GameRanking.date < prev_date,
+                )
+            )).scalars().all())
+
     # 缺数据闸门:今日为空 / 严重少于昨天 → 标记不参与对比,router 把这些 combo
     # 单独放到 stale 列表里给前端展示"今日未同步",而不是错报满屏跌出。
     # 纯相对阈值(不少于昨天的 30%):同步出问题时今日行数一般断崖式归零,30%
@@ -94,6 +118,8 @@ async def detect_movement(country: str, platform: str, today: str) -> dict:
                 "app_id": r.app_id, "name": _label(r), "icon_url": r.icon_url,
                 "prev_rank": p.rank if p else None, "cur_rank": r.rank,
                 "publisher": r.publisher, "revenue": r.revenue, "downloads": r.downloads,
+                # 回归判定：window 内曾在 TopN → 老游戏「重回」而非真「空降」（见上 reentry_ids）。
+                "is_reentry": r.app_id in reentry_ids,
             })
             continue
         if p.rank - r.rank >= jump:

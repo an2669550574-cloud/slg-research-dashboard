@@ -188,6 +188,10 @@ _PLATFORM_WEIGHT = {"ios": 1.0, "android": 0.9}
 # movement 四类 → (kind, summary 字段名)，多处复用（行渲染排序 / 今日要闻收集）。
 _MOVEMENT_KINDS = (("new_entrant", "new_entrants"), ("surge", "surges"),
                    ("drop", "drops"), ("revenue_spike", "revenue_spikes"))
+# new_entrant 命中「回归」(is_reentry) 时的强度乘数：老 SLG 短暂跌出 TopN 又回来 ≠ 真首发，
+# 新闻性远低，乘此系数压低分——既改文案「🔄 重回」又**降权今日要闻**（高名次回归仍可冒头，
+# 不硬排除）。0.4 让 #1 回归(≈4.8) 仍高于榜尾长尾、却低于真·头部空降(≈12)/高名次收入异动。
+_REENTRY_PENALTY = 0.4
 
 
 def _market_weight(country: str, platform: str) -> float:
@@ -208,7 +212,8 @@ def _event_score(kind: str, e: dict) -> float:
     后用真实样例校准过相对序：高名次收入异动 > 头部空降/市场新品 > 大幅窜升 > 榜尾长尾
     空降/跌出（见 test_digest_importance_*）。缺字段一律退化为低分、不抛。"""
     if kind == "new_entrant":
-        return 6 + 6 * _rank_height(e.get("cur_rank"))
+        base = 6 + 6 * _rank_height(e.get("cur_rank"))
+        return base * _REENTRY_PENALTY if e.get("is_reentry") else base
     if kind == "surge":
         jump = max(0, (e.get("prev_rank") or 0) - (e.get("cur_rank") or 0))
         return 3 + 4 * _rank_height(e.get("cur_rank")) + min(jump, 40) * 0.15
@@ -298,8 +303,10 @@ def build_movement_lines(s: dict, entities: Optional[dict] = None,
     scored: list[tuple[float, str]] = []
     for e in s["new_entrants"]:
         frm = "榜外" if e["prev_rank"] is None else f"#{e['prev_rank']}"
+        # 回归（is_reentry）：老游戏短暂跌出 TopN 又回来，文案「🔄 重回」区别真「🆕 空降」。
+        ico, verb = ("🔄", "重回") if e.get("is_reentry") else ("🆕", "空降")
         scored.append((_event_score("new_entrant", e),
-                       f"🆕 **{_md_name(e['name'])}** 空降 **#{e['cur_rank']}**（{frm} →）" + _tag(e) + _meta(e)))
+                       f"{ico} **{_md_name(e['name'])}** {verb} **#{e['cur_rank']}**（{frm} →）" + _tag(e) + _meta(e)))
     for e in s["surges"]:
         scored.append((_event_score("surge", e),
                        f"📈 **{_md_name(e['name'])}** #{e['prev_rank']} → **#{e['cur_rank']}**（↑{e['prev_rank'] - e['cur_rank']}）" + _tag(e) + _meta(e)))
@@ -667,7 +674,8 @@ def _highlight_line(item: dict, own_matches: Optional[dict] = None) -> str:
     kind = item["kind"]
     own = _own_tag(e.get("app_id"), own_matches)
     if kind == "new_entrant":
-        return f"{mkt} 🆕 **{_md_name(e['name'])}** 空降 #{e['cur_rank']}{own}"
+        ico, verb = ("🔄", "重回") if e.get("is_reentry") else ("🆕", "空降")
+        return f"{mkt} {ico} **{_md_name(e['name'])}** {verb} #{e['cur_rank']}{own}"
     if kind == "surge":
         return f"{mkt} 📈 **{_md_name(e['name'])}** #{e['prev_rank']} → #{e['cur_rank']}{own}"
     if kind == "drop":
@@ -865,6 +873,23 @@ def build_daily_digest(per_combo: list[dict], today: str,
     if any("💻" in s for s in sections):
         body.append("> 💻 链接需**电脑端**钉钉打开（手机端外网受限）；🎯 看板 · 📰 文章手机可直接点")
     return f"每日情报 {today}", "\n\n---\n\n".join(body), btns
+
+
+def build_heartbeat_card(today: str) -> tuple[str, str]:
+    """平淡日心跳卡（maintainer 卡全空 + 核心 US/iOS 已同步 = 真平淡日）：让收卡方知道
+    『系统活着、今日确实平静』，不把静默误读成漏发。仅 DIGEST_HEARTBEAT_ENABLED 开时发。"""
+    text = (f"### 📡 SLG 每日情报 · {today}\n\n"
+            "> 今日核心市场已同步，SLG 榜单平静——无显著异动 / 新品 / 版本变更。")
+    return f"每日情报 {today}", text
+
+
+def build_data_not_ready_card(today: str) -> tuple[str, str]:
+    """数据未就位兜底卡（maintainer 卡全空 + 核心 US/iOS 今日无快照）：同步可能失败 / 配额烧穿，
+    主动提醒维护者别把『静默』当『平静』。配套 logger.error→Sentry（见 send_daily_digest）。"""
+    text = (f"### ⚠️ SLG 每日情报 · {today} · 数据未就位\n\n"
+            "> 核心市场（🇺🇸 美国 · iOS）今日榜单**未同步**，日报暂缺。\n\n"
+            "> 可能是 Sensor Tower 配额烧穿或同步任务失败——请查同步日志 / 配额水位。")
+    return "每日情报 · 数据未就位", text
 
 
 async def send_daily_digest() -> bool:
@@ -1123,13 +1148,37 @@ async def send_daily_digest() -> bool:
                                   summaries=summaries_by_app, lead_items=lead_items,
                                   audience=audience, own_matches=own_matches)
 
+    # 硬锚核心 US/iOS：区分『真平淡日』(已同步、确无事) vs『数据未就位』(今日无快照=同步可能失败)。
+    # detect_movement 仅在 today 未缺数据时赋值 entry["movement"]（today_missing 闸门），故它非 None
+    # 或 market.as_of==today 即核心 combo 今日有新快照。找不到该 combo（理论不应）→ 保守按已就位、不误报。
+    def _core_synced() -> bool:
+        for c in per_combo:
+            if c["country"] == "US" and c["platform"] == "ios":
+                return c.get("movement") is not None or (c.get("market") or {}).get("as_of") == today
+        return True
+
     sent_any = False
     msg_m = _render("maintainer")
     if msg_m is None:
-        logger.info("daily digest: nothing to report for %s", today)
-    else:
-        sent_any = await dingtalk.send_action_card(*msg_m, target="maintainer",
-                                                   critical=True) or sent_any
+        if not _core_synced():
+            # 数据未就位：核心 US/iOS 今日无快照。升 Sentry(ERROR) + 发克制维护者兜底卡，别让
+            # 管道故障被『静默=平静』掩盖。leader 卡同源也为空，无需再发。critical=True：兜底卡
+            # 自身发失败也升 Sentry。
+            logger.error("daily digest: core US/iOS snapshot missing for %s — sync likely failed/incomplete", today)
+            return await dingtalk.send_markdown(*build_data_not_ready_card(today),
+                                                target="maintainer", critical=True)
+        # 真平淡日：默认静默（测试群只有本人、天天收无聊心跳没意义）；DIGEST_HEARTBEAT_ENABLED
+        # 开才发心跳卡（推领导群后再开——领导看不到卡会误读『是不是坏了』），两群同发。
+        if settings.DIGEST_HEARTBEAT_ENABLED:
+            hb = build_heartbeat_card(today)
+            sent_any = await dingtalk.send_markdown(*hb, target="maintainer") or sent_any
+            if dingtalk.leader_target_configured():
+                sent_any = await dingtalk.send_markdown(*hb, target="leader") or sent_any
+            return sent_any
+        logger.info("daily digest: nothing to report for %s (core synced, quiet day)", today)
+        return sent_any
+    sent_any = await dingtalk.send_action_card(*msg_m, target="maintainer",
+                                               critical=True) or sent_any
     if dingtalk.leader_target_configured():
         msg_l = _render("leader")
         if msg_l is not None:

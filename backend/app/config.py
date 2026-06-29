@@ -143,6 +143,11 @@ class Settings(BaseSettings):
     COMPETITOR_RANK_JUMP: int = 10
     # 收入环比 |变化%| ≥ 该值才报（两日都需有收入数据）。
     COMPETITOR_REVENUE_PCT: int = 50
+    # movement「空降」回归门控回看窗（天）：new_entrant 默认靠 today vs 上一可用日两快照判，
+    # 老 SLG 短暂跌出 TopN 又回来会被错标「🆕 空降」（prod 实测 US/iOS top 榜 ~32% app 有
+    # 出榜又回缺口）。回看上一可用日**之前** N 天内是否曾在 TopN，曾在 → is_reentry=True，
+    # 渲染「🔄 重回」+ 重要度降权、不污染今日要闻。纯本地多一条窗口查询，零 ST。0=关回归判定。
+    COMPETITOR_REENTRY_WINDOW_DAYS: int = 30
 
     # ── 新品监测（newcomers）：本地零配额「新面孔」检测 ─────────────────
     # 「新面孔」= 某 app_id 在过去 NEWCOMER_WINDOW 个同步快照里从没出现过、却在
@@ -185,6 +190,12 @@ class Settings(BaseSettings):
     # 「Игры/Spiele」无法精准门控），逐条列会刷屏。只详列前 N 个（按榜排名），其余折叠成
     # 「另有 M 个未识别新面孔上榜，看板核查」一行——建档线索仍可经折叠行→看板追溯，不静默丢。
     DIGEST_MARKET_LEAD_TOPN: int = 3
+    # 平淡日心跳卡：maintainer 卡全空（无异动/新品/版本…）且核心 US/iOS 已同步=「真平淡日」时，
+    # 是否发一张「今日平静」心跳卡（让领导/维护者知道系统活着、非漏发）。默认 False——测试群
+    # 只有本人、天天收无聊心跳没意义；**推领导群后再开**（领导看不到卡会误读「是不是坏了」）。
+    # 注意：与此分支无关的「核心 US/iOS 今日无快照」(同步未就位) 始终升 logger.error→Sentry
+    # + 发克制维护者兜底卡，不受本开关控制——那是管道故障告警，不是平淡日心跳。
+    DIGEST_HEARTBEAT_ENABLED: bool = False
 
     # ── App Store 清单雷达（免费 iTunes lookup，零 ST 配额）──────────────
     # 每轮对每个开发者账号扫这些 storefront（逗号小写）。SLG 几乎都先软启动：
