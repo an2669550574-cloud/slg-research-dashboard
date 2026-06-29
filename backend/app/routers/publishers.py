@@ -309,8 +309,10 @@ def _dedup_siblings(matched: dict[str, tuple]) -> list[dict]:
         return []
     items = list(matched.items())
     n = len(items)
-    enriched = [(aid, rev, name, icon, pub, _norm_for_sibling(pub), _norm_for_sibling(name))
-                for aid, (rev, name, icon, pub) in items]
+    # 只保留名字归一键参与合并：publisher 字符串等价校验已于 #91 移除（见 docstring），
+    # 原本为它准备的 pub / _norm_for_sibling(pub) 已无任何读取点，删掉避免误导。
+    enriched = [(aid, rev, name, icon, _norm_for_sibling(name))
+                for aid, (rev, name, icon, _pub) in items]
     parent = list(range(n))
 
     def find(i: int) -> int:
@@ -325,11 +327,11 @@ def _dedup_siblings(matched: dict[str, tuple]) -> list[dict]:
             parent[ri] = rj
 
     for i in range(n):
-        nni = enriched[i][6]
+        nni = enriched[i][4]
         if not nni:
             continue  # 纯 CJK 名 norm 后空 → 不参与合并
         for j in range(i + 1, n):
-            nnj = enriched[j][6]
+            nnj = enriched[j][4]
             if not nnj:
                 continue
             short, long = (nni, nnj) if len(nni) <= len(nnj) else (nnj, nni)
@@ -344,7 +346,7 @@ def _dedup_siblings(matched: dict[str, tuple]) -> list[dict]:
     for member_indexes in groups.values():
         members = [enriched[i] for i in member_indexes]
         members.sort(key=lambda m: -m[1])  # by revenue desc
-        rep_aid, rep_rev, rep_name, rep_icon, _, _, _ = members[0]
+        rep_aid, rep_rev, rep_name, rep_icon, _ = members[0]
         # 偏好最长的「含 Latin 字母」名字（同款 iOS+Android 用 US 优先后大概率拿到 Latin）
         latin_names = [m[2] for m in members if m[2] and any('a' <= c.lower() <= 'z' for c in m[2])]
         if latin_names:
@@ -586,6 +588,12 @@ async def publisher_health(db: AsyncSession = Depends(get_db)):
     app_ids = (await db.execute(select(PublisherAppId))).scalars().all()
     sources = (await db.execute(select(PublisherSource))).scalars().all()
     relations = (await db.execute(select(PublisherRelation))).scalars().all()
+    # iTunes-artist 雷达：唯一不依赖产品进榜的自动召回器，但只对手动 wire 过 artist_id 的
+    # iOS 账号生效。追踪覆盖率，让「王牌空转」可见、可被周报驱动补全（见 PUBLISHERS.md 审查）。
+    ios_artists = (await db.execute(
+        select(PublisherItunesArtist).where(PublisherItunesArtist.platform == "ios")
+    )).scalars().all()
+    entities_with_ios_artist = {a.entity_id for a in ios_artists}
 
     aliases_by_eid: dict[int, int] = {}
     for a in aliases:
@@ -659,6 +667,9 @@ async def publisher_health(db: AsyncSession = Depends(get_db)):
         cn_no_chinese_name=cn_no_chinese_name, stale_review=stale_review,
         total_aliases=len(aliases), total_app_ids=len(app_ids),
         total_sources=len(sources), total_relations=len(relations),
+        total_itunes_artists=len(ios_artists),
+        entities_without_itunes_artist=sum(
+            1 for e in entities if e.id not in entities_with_ios_artist),
         capital_entities=capital_entities,
         avg_brief_len=(sum(brief_lens) // total) if total else 0,
         max_brief_len=max(brief_lens) if brief_lens else 0,
@@ -690,12 +701,19 @@ async def list_publisher_gaps(
 
     end = utcnow_naive().date()
     start = end - timedelta(days=days - 1)
+    # publisher/name/icon 用 US 优先 + fallback MAX，与 _ranking_pairs / list_publisher_products
+    # 同口径：同 app_id 跨市场返回本地化名时，裸 MAX 按 Unicode 排序偏向 CJK 吃掉 Latin 原名。
+    # 对 /gaps 尤其要命——CJK publisher 被 _toks 切成空 token → alias/ignore 漏匹 → 已建档/
+    # 已忽略的发行商重新冒成缺口（且缺口卡显示日韩名）。见 PUBLISHERS.md「CJK MAX 偏向」。
+    us_pub = case((GameRanking.country == "US", GameRanking.publisher))
+    us_name = case((GameRanking.country == "US", GameRanking.name))
+    us_icon = case((GameRanking.country == "US", GameRanking.icon_url))
     res = await db.execute(
         select(
             GameRanking.app_id,
-            func.max(GameRanking.publisher).label("pub"),
-            func.max(GameRanking.name).label("name"),
-            func.max(GameRanking.icon_url).label("icon"),
+            func.coalesce(func.max(us_pub), func.max(GameRanking.publisher)).label("pub"),
+            func.coalesce(func.max(us_name), func.max(GameRanking.name)).label("name"),
+            func.coalesce(func.max(us_icon), func.max(GameRanking.icon_url)).label("icon"),
             func.sum(GameRanking.revenue).label("rev"),
             func.sum(GameRanking.downloads).label("dl"),
         ).where(
@@ -861,7 +879,15 @@ async def delete_publisher(entity_id: int, db: AsyncSession = Depends(get_db)):
 @router.post("/{entity_id}/aliases", response_model=PublisherAliasOut, status_code=201)
 async def add_alias(entity_id: int, data: PublisherAliasCreate, db: AsyncSession = Depends(get_db)):
     await _get_entity_or_404(entity_id, db)
-    a = PublisherAlias(entity_id=entity_id, keyword=data.keyword.strip(), label=data.label)
+    keyword = data.keyword.strip()
+    dup = (await db.execute(
+        select(PublisherAlias).where(
+            PublisherAlias.entity_id == entity_id, PublisherAlias.keyword == keyword
+        )
+    )).scalar_one_or_none()
+    if dup:
+        raise HTTPException(status_code=409, detail="该主体下已有同名马甲")
+    a = PublisherAlias(entity_id=entity_id, keyword=keyword, label=data.label)
     db.add(a)
     await db.commit()
     await db.refresh(a)
@@ -888,7 +914,15 @@ async def delete_alias(entity_id: int, alias_id: int, db: AsyncSession = Depends
 @router.post("/{entity_id}/app-ids", response_model=PublisherAppIdOut, status_code=201)
 async def add_app_id(entity_id: int, data: PublisherAppIdCreate, db: AsyncSession = Depends(get_db)):
     await _get_entity_or_404(entity_id, db)
-    a = PublisherAppId(entity_id=entity_id, app_id=data.app_id.strip(), note=data.note)
+    app_id = data.app_id.strip()
+    dup = (await db.execute(
+        select(PublisherAppId).where(
+            PublisherAppId.entity_id == entity_id, PublisherAppId.app_id == app_id
+        )
+    )).scalar_one_or_none()
+    if dup:
+        raise HTTPException(status_code=409, detail="该主体下已钉同一 app_id")
+    a = PublisherAppId(entity_id=entity_id, app_id=app_id, note=data.note)
     db.add(a)
     await db.commit()
     await db.refresh(a)

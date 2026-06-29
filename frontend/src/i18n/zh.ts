@@ -661,6 +661,8 @@ export const zh = {
     healthTipNoCnName: (n: number) => `国内厂未中文化：${n}`,
     healthTipStale: (n: number) => `待复核（>12 月）：${n}`,
     healthTipNoRels: (n: number) => `无股权关系主体：${n}（独立厂或待挂）`,
+    healthTipArtist: (withN: number, total: number, artists: number) =>
+      `iOS 雷达覆盖：${withN}/${total} 主体（${artists} 账号；资本方/app_id 钉的大厂不接属正常）`,
     exportColName: '主体',
     exportColNameEn: '英文名',
     exportColRegion: '地区',

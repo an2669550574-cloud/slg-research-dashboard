@@ -288,6 +288,73 @@ async def test_gaps_respects_window_and_limit(client):
 
 
 @pytest.mark.asyncio
+async def test_gaps_us_first_for_cjk_multimarket_collision(client):
+    """同一 app_id 跨市场同时有 US-Latin 行 + JP/KR-CJK 行时，/gaps 必须 US 优先取代表
+    publisher/name——否则裸 MAX 按 Unicode 排序偏向 CJK → publisher 被 _toks 切成空 token →
+    ① alias 漏匹（已建档厂错误地重新冒成缺口）② 缺口卡显示日韩本地化名。
+    回归「CJK MAX 偏向」修复在 /gaps 出口的覆盖（此前只修了 _ranking_pairs / products 两处）。"""
+    today = _today()
+    await _seed_rankings([
+        # 已建档厂：同 app_id，US 行 Latin publisher，JP 行本地化 CJK publisher
+        ("attr.1", today, 1, 100, 80.0, "US", "ios", "Frost Forge", "FrostForge Ltd"),
+        ("attr.1", today, 1, 90, 70.0, "JP", "ios", "フロストフォージ", "フロストフォージ"),
+        # 真漏网厂：同 app_id，US 行 Latin，KR 行本地化 CJK → 应进缺口，但代表名取 Latin
+        ("gap.1", today, 2, 200, 60.0, "US", "ios", "Last Citadel", "Citadel Mobile Inc"),
+        ("gap.1", today, 2, 180, 50.0, "KR", "android", "라스트 시타델", "시타델 모바일"),
+    ])
+    # 建主体挂 alias，按 US-Latin publisher 命中（裸 MAX 取 CJK 时该 alias 会漏匹）
+    await client.post("/api/publishers/", json={
+        "name": "霜炉", "aliases": [{"keyword": "frostforge"}],
+    })
+    gaps = (await client.get("/api/publishers/gaps")).json()
+    pubs = {g["publisher"]: g for g in gaps}
+    # 已建档厂被 alias 命中 → 不在缺口（US 优先取到 Latin 串才能 token 化匹配）
+    assert "FrostForge Ltd" not in pubs
+    assert "フロストフォージ" not in pubs
+    # 真漏网厂进缺口，且 publisher 与 top_app.name 取 US-Latin 而非 CJK
+    assert "Citadel Mobile Inc" in pubs
+    assert "시타델 모바일" not in pubs
+    assert pubs["Citadel Mobile Inc"]["app_count"] == 1
+    assert pubs["Citadel Mobile Inc"]["top_app"]["name"] == "Last Citadel"
+
+
+@pytest.mark.asyncio
+async def test_add_alias_and_app_id_reject_duplicates(client):
+    """同主体下重复 alias / app_id 返回 409（对齐 itunes-artist / relation 的去重约定），
+    避免人工建档时抽屉出现重复马甲行。跨主体钉同一 app_id 仍允许（另一层语义）。"""
+    eid = (await client.post("/api/publishers/", json={"name": "去重测试"})).json()["id"]
+    # alias 幂等：strip 后同名也判重
+    assert (await client.post(f"/api/publishers/{eid}/aliases", json={"keyword": "funplus"})).status_code == 201
+    assert (await client.post(f"/api/publishers/{eid}/aliases", json={"keyword": "funplus"})).status_code == 409
+    assert (await client.post(f"/api/publishers/{eid}/aliases", json={"keyword": " funplus "})).status_code == 409
+    # app_id 幂等
+    assert (await client.post(f"/api/publishers/{eid}/app-ids", json={"app_id": "com.fp.game"})).status_code == 201
+    assert (await client.post(f"/api/publishers/{eid}/app-ids", json={"app_id": "com.fp.game"})).status_code == 409
+    # 不同主体钉同一 app_id 仍允许（按 entity 维度去重，非全局）
+    eid2 = (await client.post("/api/publishers/", json={"name": "另一主体"})).json()["id"]
+    assert (await client.post(f"/api/publishers/{eid2}/app-ids", json={"app_id": "com.fp.game"})).status_code == 201
+    # 去重生效：只各剩一条
+    body = (await client.get(f"/api/publishers/{eid}")).json()
+    assert len(body["aliases"]) == 1
+    assert len(body["app_ids"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_health_reports_itunes_artist_coverage(client):
+    """health 端点暴露 iOS 雷达覆盖率：total_itunes_artists + entities_without_itunes_artist。
+    只统计 platform='ios'（雷达 sync_itunes_releases 只跑 iOS；GP 账号不计）。"""
+    e1 = (await client.post("/api/publishers/", json={"name": "接雷达的厂"})).json()["id"]
+    (await client.post("/api/publishers/", json={"name": "没接雷达的厂"}))  # 无 artist
+    r = await client.post(f"/api/publishers/{e1}/itunes-artists",
+                          json={"artist_id": "123456", "platform": "ios"})
+    assert r.status_code == 201
+    h = (await client.get("/api/publishers/health")).json()
+    assert h["total"] == 2
+    assert h["total_itunes_artists"] == 1
+    assert h["entities_without_itunes_artist"] == 1  # 2 主体 - 1 已接
+
+
+@pytest.mark.asyncio
 async def test_sibling_dedup_collapses_ios_android_same_game(client):
     """同 publisher + 名字 prefix 匹配的 iOS+Android 同款 → 合并为 1 个 product，
     收入/下载求和；product_count + top_products + /products 三处口径一致。"""
