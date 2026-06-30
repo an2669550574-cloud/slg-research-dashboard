@@ -20,6 +20,7 @@ const ProductsManage = lazy(() => import('./pages/ProductsManage'))
 const TagsManage = lazy(() => import('./pages/TagsManage'))
 const PublishersManage = lazy(() => import('./pages/PublishersManage'))
 const Compare = lazy(() => import('./pages/Compare'))
+const WechatLogin = lazy(() => import('./pages/WechatLogin'))
 
 function PageFallback() {
   const t = useT()
@@ -151,6 +152,7 @@ export default function App() {
                 <Route path="/publishers" element={<PublishersManage />} />
                 <Route path="/games" element={<GamesManage />} />
                 <Route path="/game/:appId" element={<GameDetail />} />
+                <Route path="/wechat-login" element={<WechatLogin />} />
               </Routes>
             </Suspense>
           </main>
