@@ -58,7 +58,7 @@
 7. **命名**：中国厂尽量用中文名（「中文 English」式，如「库卡游戏 Qookka」「游族 YOOZOO」）。
 8. **negative finding 戳记**：调研验证「无关系/无母体」也是结果。用 `【调研负面发现 YYYY-MM-DD】` 或 `【复查 negative YYYY-MM-DD】` 追加到 brief 锁死研究分支，下次别再回头查（抽屉里会折叠到「调研历史 N」）。
 
-## 当前资本集团速览（2026-06-30；~107 实体 / 30 忽略 / **iOS 雷达 64 账号 + GP 雷达 32 账号**；tier_primary 103/107）
+## 当前资本集团速览（2026-06-30；~107 实体 / 32 忽略 / **iOS 雷达 64 账号 + GP 雷达 32 账号**；tier_primary 103/107）
 
 > 雷达 2026-06-30 一轮核查后：iOS 59→64（接 6waves/gumi/星辉Rastar/英雄互娱/Rudel）、GP 28→32（接安卓-only 真 SLG：EasyTech/LIGHTNING/iFun/Immersive）。深圳九九（Falcon Poker，扑克误标）已改 `is_slg=false` + 删错 pin，不在 SLG 口径。
 
@@ -87,7 +87,7 @@
 - **安卓包名钉慎用**：若该包在 game_rankings 是未富化行（name/publisher 空），钉它会在产品抽屉顶出一条空名 $0 裸行；优先用 alias，iOS 用数字 id 钉。
 - **`app_id pin` = 产品级 SLG 标记，独立于 `entity.is_slg`（反直觉，#165）**：`load_index_from_db` 把**全部** alias/app_id 灌进 is_slg 内存索引，**不按 `entity.is_slg` 门控**——这是**故意的**。多品类巨头（KOEI/华纳/万代，`entity.is_slg=false`）钉特定 app_id 来标「这一款是真 SLG」（光荣三國志），运行时 `is_slg(app_id)` 据此返回 True。**推论**：要让某个误标产品不再算 SLG（如深圳九九的扑克 Falcon Poker 被新品监测误建档+误钉），正解是**删那个错 pin**，不是改 loader（改 loader 会误伤巨头的合法产品级 pin），也不是只改 `entity.is_slg`（光改 entity flag 不动 pin，运行时 is_slg 仍 True）。
 - **巨头多主体扫描结论**：策略榜未归属的高收入发行商绝大多数是**非 SLG**（Niantic/Supercell/Chess.com/EA/PUBG/NetEase 荒野/KRAFTON/KONAMI/Cygames/Wizards/Voodoo/Highbrow 等），勿误归。
-- **App Store「전략/Strategy」标签是缺口 + 新品噪声主因**：2026-06-22 把最后 9 条缺口全部三角化清零——8 行经验证是误挂 strategy 标签的非 SLG（社交推理 Mafia42 标 strategy+board / 合成·roguelike RPG / 挂机 RPG / 麻将雀魂 / 回合制收集 Summoners War），全部 publisher 粒度忽略；唯一真策略是 Asobism 城とドラゴン（已建档）。**判 genre 别信 App Store 单一 strategy 标签，看 `genres` 全列 + 实际玩法**（iTunes lookup `genres` 字段 + 旗下产品名最准；宝可梦对战/Order of Kings/Infinity Kingdom **全标 genre=Strategy**，genre 字段不可用于区分）。5minlab 是 Krafton 全资子（2022 收购）但旗下是合成/roguelike RPG 非 SLG，**母体大不等于产品是 SLG**。
+- **App Store「전략/Strategy」标签是缺口 + 新品噪声主因**：2026-06-22 把最后 9 条缺口全部三角化清零——8 行经验证是误挂 strategy 标签的非 SLG（社交推理 Mafia42 标 strategy+board / 合成·roguelike RPG / 挂机 RPG / 麻将雀魂 / 回合制收集 Summoners War），全部 publisher 粒度忽略；唯一真策略是 Asobism 城とドラゴン（已建档）。**判 genre 别信 App Store 单一 strategy 标签，看 `genres` 全列 + 实际玩法**（iTunes lookup `genres` 字段 + 旗下产品名最准；宝可梦对战/Order of Kings/Infinity Kingdom **全标 genre=Strategy**，genre 字段不可用于区分）。5minlab 是 Krafton 全资子（2022 收购）但旗下是合成/roguelike RPG 非 SLG，**母体大不等于产品是 SLG**。**2026-06-30 又裁两条缺口（同款噪声、publisher 粒度忽略 id=31/32）**：**Snowprint Studios AB**（Warhammer 40K: Tacticus＝回合制小队战棋 hex 格+gacha，非 4X 建国；母体 MTG 已在库，→InnoGames/Plarium）＋ **Darkwinter Software Co., Ltd.**（少女前线2:追放＝回合制战棋 RPG+gacha；散爆 Sunborn 发行子公司，旗下少前/云图计划均无 4X SLG）——均非核心 SLG 且资本系已被覆盖，建档零收益。
 - **新品监测复用同一忽略名单过滤噪声（2026-06-22，PR #99 已部署）**：`detect_newcomers`/digest 接 `publisher_ignores`（与 /gaps 同口径）剔除确认非 SLG（宝可梦对战刷屏/扑克/塔防），**但不按 is_slg 白名单过滤**——白名单滞后会误杀真新厂。范例：**DEQU《Order of Kings》就是新品监测以 is_slg=false 浮现、人工溯源确认是真出海 RTS-SLG 后建档的**（详见 [`ARCHITECTURE.md` § 缺口忽略名单过滤](ARCHITECTURE.md)）。给新品打 is_slg=false ≠ 非 SLG，可能是「未识别的真新厂」线索。
 - **`market_newcomer_log.is_slg` 列是检出时点快照、永不回写（结构性坑，#168）**：行入库时按当时索引算一次 is_slg 存档，**之后建档/pin app_id/加 alias 都不回写历史行**。所以同一 app 不同行 is_slg 可能不一致（free 榜早检出=false、建档后 grossing 榜检出=true）。**凡是直读这个存档列判「是否已收录」的代码都要警惕陈旧**，正确做法是叠加**读时归属**（`_load_entity_matchers`+`resolve_entity`，app_id pin 或 publisher 命中 alias）活算。已知踩坑：`/download-leads` 端点曾只读存档列，导致已 pin 的 `com.more.lastshelter.gp`（龙创悦动 IM30）在新品监测页显示「已归属」、却仍出现在「待建档新厂线索」——#168 给端点补上读时归属修掉。**digest 的同名「待建档新厂线索」段无此坑**：它走 `detect_newcomers` 实时 `is_slg()` 算、不读存档列。
 - **跨平台 sibling 去重**（PR #88 初版，#91/#92 修「同 publisher」判定）：iOS+Android 同款合并成一行 product。**两个去重入口口径不同**：
