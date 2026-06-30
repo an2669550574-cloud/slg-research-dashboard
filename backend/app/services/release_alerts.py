@@ -388,19 +388,50 @@ def _name_matches(name: str, text: str) -> bool:
     return nm in text
 
 
+# 新品的四层来源：收入榜（市场/厂商）+ 下载榜（市场/厂商）。搜关键词与文章回挂都要
+# 覆盖全四层——否则下载榜新品「搜了却挂不上」（曾漏 free 两层，下载榜 SLG 新品永远无文章）。
+_NEWCOMER_SOURCE_KEYS = ("market", "publisher", "free_market", "free_publisher")
+
+
+def _newcomer_search_keywords(per_combo: list[dict], max_n: int) -> list[str]:
+    """从当日新品（收入榜 + 下载榜两层）挑搜文章关键词，按优先级排序后截断。
+
+    治三个坑：① set 截断非确定（`list(set)[:N]` 受 hash 随机化，每次跑搜的不是同一批）；
+    ② 无优先级（核心 SLG/头部名次该先搜）；③ reentry 占额（回归老游戏挤掉真首发）。
+    优先级：SLG（is_slg 或已归属主体）> 非回归 > 名次靠前；同级按 per_combo 出现序稳定。
+    reentry 仍收但排末位、配额紧时先被截掉。返回去重后的前 max_n 个**游戏名**。"""
+    best: dict[str, tuple] = {}
+    for c in per_combo:
+        for key in _NEWCOMER_SOURCE_KEYS:
+            for n in ((c.get(key) or {}).get("newcomers") or []):
+                nm = n.get("name")
+                if not nm:
+                    continue
+                pk = (0 if (n.get("is_slg") or n.get("entity_id")) else 1,
+                      1 if n.get("is_reentry") else 0,
+                      n.get("rank") or 9999)
+                if nm not in best or pk < best[nm]:
+                    best[nm] = pk
+    return [nm for nm, _ in sorted(best.items(), key=lambda kv: kv[1])][:max_n]
+
+
 def _match_articles_to_apps(per_combo: list[dict], article_list: list) -> dict:
     """搜到的文章 → 按「标题/摘要含新品名」聚合到 app_id：{app_id: [WechatArticle]}。
 
     用 (c.get("market") or {}) 而非 c.get("market", {})——entry 的 market/publisher
     初始为 None，后者在 key 存在时返回 None 会 AttributeError（曾导致整段静默失效）。
 
+    覆盖**全四层**新品来源（收入榜 + 下载榜市场/厂商）——下载榜新品名同样进了搜索关键词，
+    回挂也必须含 free 两层，否则【下载榜新品】行永远拿不到 📰（F1：搜了却挂不上）。
+
     名 ↔ 文匹配走 _name_matches（词边界 / 最小名长），治裸 substring 的短名/通用名
     误挂 + 拉丁名大小写漏挂。
     """
     name_to_apps: dict[str, list[str]] = {}
     for c in per_combo:
-        rows = ((c.get("market") or {}).get("newcomers") or []) + \
-               ((c.get("publisher") or {}).get("newcomers") or [])
+        rows = []
+        for key in _NEWCOMER_SOURCE_KEYS:
+            rows += (c.get(key) or {}).get("newcomers") or []
         for n in rows:
             nm, aid = n.get("name"), n.get("app_id")
             if nm and aid:
@@ -984,7 +1015,8 @@ async def send_daily_digest() -> bool:
 
     today = utcnow_naive().strftime("%Y-%m-%d")
     per_combo: list[dict] = []
-    all_newcomer_names: set[str] = set()  # 收集所有新品名称，用于批量搜微信文章
+    # 搜文章关键词改 post-loop 从 per_combo 统一挑（_newcomer_search_keywords，按优先级
+    # 确定性截断），不再循环里往 set 里塞——治 set 截断非确定 + reentry 占额。
     # 跨 combo 共享的两份只读数据，循环外预加载一次：忽略名单（市场新面孔过滤用）+
     # 主体归属匹配器（厂商新品归属 + 下方异动/市场行中文归属共用）。原本每 combo 各自
     # 重查（10 combo × ignores 1 + matchers 3 ≈ 40 次冗余小查询，matchers 还在末尾再加载
@@ -1019,20 +1051,12 @@ async def send_daily_digest() -> bool:
                     entry["enrich"] = {l.app_id: {
                         "genre": l.genre, "price": l.price, "release_date": l.release_date,
                     } for l in logs}
-                # 收集新品名称用于搜文章
-                for n in (market.get("newcomers") or []):
-                    if n.get("name"):
-                        all_newcomer_names.add(n["name"])
             if publisher.get("as_of") == today:
                 # 真实上架日门控：剔除老产品（本地"首次出现"≠ 真新品）——与 /publishers
                 # 端点同一 helper、同口径，避免 2013–2017 老 SLG 被当新品推给领导。
                 publisher["newcomers"] = await gate_publisher_newcomers_by_release_date(
                     publisher.get("newcomers") or [], country, platform)
                 entry["publisher"] = publisher
-                # 收集厂商新品名称
-                for n in (publisher.get("newcomers") or []):
-                    if n.get("name"):
-                        all_newcomer_names.add(n["name"])
             # 下载榜（ADR 0001 切片 2）：仅开了该 combo 的额外检测一轮 free 榜；只在
             # 当期榜 as_of==today 时纳入（与收入榜同闸门）。build_free_newcomer_lines
             # 再按 is_slg 门控钉钉推送。
@@ -1044,26 +1068,22 @@ async def send_daily_digest() -> bool:
                                                                chart_type=CHART_FREE)
                 if f_market.get("as_of") == today:
                     entry["free_market"] = f_market
-                    for n in (f_market.get("newcomers") or []):
-                        if n.get("name"):
-                            all_newcomer_names.add(n["name"])
                 if f_publisher.get("as_of") == today:
                     f_publisher["newcomers"] = await gate_publisher_newcomers_by_release_date(
                         f_publisher.get("newcomers") or [], country, platform)
                     entry["free_publisher"] = f_publisher
-                    for n in (f_publisher.get("newcomers") or []):
-                        if n.get("name"):
-                            all_newcomer_names.add(n["name"])
         except Exception:
             logger.exception("daily digest detection failed for %s/%s", country, platform)
         per_combo.append(entry)
 
-    # 批量搜索微信文章（用新品名 + 厂商名）
+    # 批量搜微信文章：关键词 = 当日新品（收入榜 + 下载榜两层）**游戏名**，按优先级确定性
+    # 截断（_newcomer_search_keywords）。只用游戏名不用厂商名——文章回挂走 _name_matches
+    # 按游戏名匹配，厂商名搜来的文章除非含游戏名否则挂不上，拿厂商名当词只会烧配额搜回不来。
     articles_by_app: dict = {}
-    if all_newcomer_names and settings.WECHAT_ENABLED and not settings.USE_MOCK_DATA:
+    keywords = _newcomer_search_keywords(per_combo, settings.WECHAT_MAX_KEYWORDS)
+    if keywords and settings.WECHAT_ENABLED and not settings.USE_MOCK_DATA:
         try:
             from app.services.wechat_articles import search_multi_keywords
-            keywords = list(all_newcomer_names)[:settings.WECHAT_MAX_KEYWORDS]
             article_list = await search_multi_keywords(keywords, limit=20)
             articles_by_app = _match_articles_to_apps(per_combo, article_list)
         except Exception:

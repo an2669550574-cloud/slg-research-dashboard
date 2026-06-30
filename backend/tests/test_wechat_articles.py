@@ -235,6 +235,41 @@ def test_match_articles_latin_case_insensitive():
     assert set(out.keys()) == {"a1"}
 
 
+def test_match_articles_covers_free_chart_sources():
+    """F1：下载榜新品（free_market/free_publisher）的名字也进搜索关键词，回挂必须同样覆盖
+    这两层——否则【下载榜新品】行永远拿不到文章（搜了却挂不上）。"""
+    per_combo = [{
+        "market": None, "publisher": None,
+        "free_market": {"newcomers": [{"name": "末日方舟", "app_id": "fm1"}]},
+        "free_publisher": {"newcomers": [{"name": "Frontier City", "app_id": "fp1"}]},
+    }]
+    arts = [_art("末日方舟海外测评"), _art("Frontier City 上线买量复盘")]
+    out = _match_articles_to_apps(per_combo, arts)
+    assert "fm1" in out and "fp1" in out   # 下载榜两层都回挂得上
+
+
+def test_newcomer_search_keywords_priority_and_determinism():
+    """F2：关键词按 SLG>非回归>名次 优先级**确定性**截断；reentry 排末位、配额紧先截。"""
+    from app.services.release_alerts import _newcomer_search_keywords
+    per_combo = [{
+        "market": {"newcomers": [
+            {"name": "非SLG深位", "app_id": "m1", "is_slg": False, "rank": 40},
+            {"name": "SLG头部", "app_id": "m2", "is_slg": True, "rank": 3},
+            {"name": "SLG回归", "app_id": "m3", "is_slg": True, "is_reentry": True, "rank": 2},
+        ]},
+        "publisher": {"newcomers": [  # 已归属主体（无 is_slg 字段）→ 也算 SLG 优先级
+            {"name": "已归属新品", "app_id": "p1", "entity_id": 8, "rank": 20},
+        ]},
+        "free_market": None, "free_publisher": None,
+    }]
+    # max_n=2：应取「SLG头部(rank3)」+「已归属新品(rank20)」——非SLG 与 SLG回归 被截掉
+    top2 = _newcomer_search_keywords(per_combo, 2)
+    assert top2 == ["SLG头部", "已归属新品"]
+    # 全量顺序确定：SLG 非回归(按名次) > SLG 回归 > 非 SLG
+    assert _newcomer_search_keywords(per_combo, 10) == [
+        "SLG头部", "已归属新品", "SLG回归", "非SLG深位"]
+
+
 def test_articles_suffix_sanitizes_title():
     """标题里的 ] | 换行会破坏钉钉 markdown 链接/分隔，必须清洗。"""
     a = _art("标题[含]特殊|字符\n换行", link="https://mp.weixin.qq.com/s/y")
