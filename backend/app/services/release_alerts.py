@@ -544,6 +544,29 @@ def build_free_newcomer_lines(market: dict, publisher: dict,
     return lines
 
 
+def collect_lead_candidates(per_combo: list[dict]) -> dict[str, dict]:
+    """从 free 榜新品收集「待建档新厂线索」候选（方案①），按 app_id 去重留首见。
+
+    入选条件：is_slg=false（白名单未收录）+ 非回归 + **未归属任何已建档主体**。
+    最后一条是关键：`detect_publisher_newcomers` 产出的 free_publisher 行**已归属**
+    （带 `entity_id`），按定义绝不是「待建档新厂线索」——但其 `_row_dict` 不含 is_slg
+    字段，`not n.get("is_slg")` 对它恒为真，故必须再用 `not n.get("entity_id")` 排掉，
+    否则已建档主体的新品（如 Camel Games 的 Frontier City、Larks Holding 的 Last Siren）
+    会同时出现在「厂商新品」段和「待建档」段（症状：digest 把已归属产品当新厂线索推）。
+    genre 初筛由调用方按 free 行 genre 另行压休闲噪声。纯函数、零查询。"""
+    cand: dict[str, dict] = {}
+    for c in per_combo:
+        for key in ("free_market", "free_publisher"):
+            for n in ((c.get(key) or {}).get("newcomers") or []):
+                aid = n.get("app_id")
+                if (aid and not n.get("is_slg") and not n.get("is_reentry")
+                        and not n.get("entity_id") and aid not in cand):
+                    cand[aid] = {"app_id": aid, "name": n.get("name"),
+                                 "publisher": n.get("publisher"), "rank": n.get("rank"),
+                                 "country": c["country"], "platform": c["platform"]}
+    return cand
+
+
 def build_lead_newcomer_lines(lead_items: list[dict]) -> list[str]:
     """下载榜 is_slg=false 但 genre=Strategy 的新品 → 「待建档新厂线索」行（方案①）。
 
@@ -1116,16 +1139,7 @@ async def send_daily_digest() -> bool:
     # 忽略名单已在 detect_newcomers 滤过；这里查 free 行 genre 再压掉休闲噪声。零配额。
     lead_items: list[dict] = []
     try:
-        cand: dict[str, dict] = {}
-        for c in per_combo:
-            for key in ("free_market", "free_publisher"):
-                for n in ((c.get(key) or {}).get("newcomers") or []):
-                    aid = n.get("app_id")
-                    if (aid and not n.get("is_slg") and not n.get("is_reentry")
-                            and aid not in cand):
-                        cand[aid] = {"app_id": aid, "name": n.get("name"),
-                                     "publisher": n.get("publisher"), "rank": n.get("rank"),
-                                     "country": c["country"], "platform": c["platform"]}
+        cand = collect_lead_candidates(per_combo)
         if cand:
             from app.models.newcomer import MarketNewcomerLog
             async with AsyncSessionLocal() as db:
