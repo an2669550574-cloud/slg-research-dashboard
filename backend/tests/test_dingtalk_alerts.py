@@ -703,8 +703,9 @@ def test_digest_escapes_game_name_no_broken_markdown():
 # ── P0-1/P0-4: 领导卡受众剥离 + 双发路由 + 主卡失败升 Sentry ────────────────────
 
 def test_digest_leader_audience_strips_maintainer_noise():
-    """领导卡剥离维护者杂讯（榜单异动整段/待建档段/建议建档尾标/TLDR 异动+待建档计数），
-    但保留竞品新品情报。"""
+    """领导卡剥离维护者杂讯（待建档段 / 建议建档尾标 / TL;DR 待建档计数 / is_slg=false
+    待识别新厂），但保留竞品新品情报 + **【榜单异动】**（2026-06-30 加回，撤 #164 剥离——
+    异动是已识别 SLG 老熟人进退，对领导是有效竞品动态）。"""
     from app.services.release_alerts import build_daily_digest
     movement = {"new_entrants": [], "surges": [], "revenue_spikes": [],
                 "drops": [{"app_id": "d1", "name": "老游戏跌出", "prev_rank": 18,
@@ -723,8 +724,9 @@ def test_digest_leader_audience_strips_maintainer_noise():
     assert "榜单异动" in m_text and "老游戏跌出" in m_text and "📊 异动" in m_text
     assert "待建档新厂线索" in m_text and "建议建档" in m_text and "🔍 待建档" in m_text
     assert "陌生新游" in m_text
-    # leader：榜单异动整段 + 维护者杂讯全剥离（含 TL;DR 异动计数）
-    assert "榜单异动" not in l_text and "老游戏跌出" not in l_text and "📊 异动" not in l_text
+    # leader：【榜单异动】两卡都含（#164 剥离已于 2026-06-30 撤回）——正文段 + TL;DR 异动计数都在
+    assert "榜单异动" in l_text and "老游戏跌出" in l_text and "📊 异动" in l_text
+    # leader：其余维护者杂讯仍剥离（待建档段 / 建议建档尾标）
     assert "待建档新厂线索" not in l_text
     assert "建议建档" not in l_text
     assert "🔍 待建档" not in l_text

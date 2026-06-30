@@ -805,8 +805,10 @@ def build_daily_digest(per_combo: list[dict], today: str,
     entities: {app_id: 中文厂商主体}（市场新面孔 / 异动行补中文归属）
     own_matches: {app_id: 我方产品名}（对标我方哪款，命中给该竞品行打「⚔️《X》同赛道」+ TL;DR 计数）
     audience: "maintainer"（默认，全量卡）/ "leader"（领导卡）。领导卡剥离维护者杂讯：
-    剥离【榜单异动】整段（movement=老游戏排名进退，竞品监控视角）、跳过「待建档新厂线索」
-    整段、新品行不拼「建议建档」尾标、TL;DR 不计「异动 N / 待建档 N」、只看 SLG 产品。
+    跳过「待建档新厂线索」整段、新品行不拼「建议建档」尾标、TL;DR 不计「待建档 N」、
+    只看 SLG 产品（market 层 is_slg=false 待识别新厂剥离）。**【榜单异动】两卡都含**
+    （2026-06-30 应要求加回，撤 #164 的剥离——movement 本就只含已识别 SLG 老熟人的排名
+    进退，对领导是有效竞品动态；正文段 / 今日要闻 / TL;DR 异动计数随之三处统一回来）。
     检测数据两个 audience 共用一份（send_daily_digest 渲染两遍），零额外 ST。
     """
     is_leader = audience == "leader"
@@ -815,13 +817,11 @@ def build_daily_digest(per_combo: list[dict], today: str,
     # publisher 新品 + free(已 is_slg 门控) 保留。在此**一处**过滤，正文/TL;DR/今日要闻/按钮
     # 所有出口统一从过滤后 per_combo 取，避免逐出口判漏。维护者卡(全量 + 建档线索)不过滤。
     # 不 mutate 入参（浅拷副本：换掉 combo 的 market.newcomers，原入参不动）。
+    # 注：【榜单异动】两卡都含——2026-06-30 应要求加回（撤 #164 的 movement=None 剥离）。
+    # movement 只含已识别 SLG 老熟人的排名进退，是有效竞品动态，不再对领导卡置 None。
     if is_leader:
         _filtered = []
         for _c in per_combo:
-            # 领导卡剥离【榜单异动】：老游戏排名进退（含进出 Top20）是维护者/竞品监控视角，
-            # 领导只看「新品上架 + 竞品新动作」。movement 置 None → 正文段 / 今日要闻 /
-            # TL;DR 异动计数 所有出口统一不含（与下方「只看 SLG」同一处过滤哲学）。
-            _c = {**_c, "movement": None}
             _mk = _c.get("market")
             if _mk and _mk.get("newcomers"):
                 _c = {**_c, "market": {**_mk,
