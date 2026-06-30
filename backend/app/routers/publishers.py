@@ -965,6 +965,12 @@ async def list_download_leads(
     ignore_app_ids = {ig.value for ig in ignores if ig.kind == "app_id"}
     ignore_pub_keys = {ig.value for ig in ignores if ig.kind == "publisher"}
 
+    # 读时归属（与新品监测页同口径）：存档 is_slg 是检出时点快照，app 先在 free 榜检出
+    # （is_slg=false 落库）后才建档/pin app_id 的，存档不回写仍是 false，会永远赖在「待建档」
+    # 里。活算归属把已归属已建档主体的 app（app_id pin 或 publisher 命中 alias）排除掉。
+    from app.services.newcomers import _load_entity_matchers, resolve_entity
+    matchers = await _load_entity_matchers()
+
     # 跨市场同 app 收敛成一行：留最新检出做展示锚（市场/名次/时间），富化字段（genre/摘要/
     # 图标/商店）从任意有值的行回填——同 app 不同区富化可能有缺。rows 已按检出时间倒序。
     by_app: dict[str, dict] = {}
@@ -989,6 +995,8 @@ async def list_download_leads(
             continue
         if corp_squash(_toks(r.publisher)) in ignore_pub_keys:
             continue
+        if resolve_entity(r.app_id, r.publisher, matchers):
+            continue  # 已归属已建档主体（新品监测页显示「已归属 X」）→ 不再是待建档线索
         out.append(PublisherDownloadLeadOut(
             app_id=r.app_id, name=r.name, publisher=r.publisher, genre=rep["genre"],
             summary_cn=rep["summary_cn"], icon_url=rep["icon_url"], store_url=rep["store_url"],
