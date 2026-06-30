@@ -1260,43 +1260,92 @@ async def send_daily_digest() -> bool:
 
 # ── 微信公众号登录过期提醒 ─────────────────────────────────────────────────
 
-_WECHAT_RELOGIN_HINT = (
-    "重新扫码登录：终端跑 `ssh -L 5050:127.0.0.1:5000 hk-prod`，"
-    "再浏览器打开 http://localhost:5050/login.html 用微信扫码。"
+# ssh 隧道兜底（手机端外网受限、按钮打不开时改用电脑）；按钮才是主路径（看板登录页，
+# 开页即实时二维码、免隧道）。保留 login.html 链接是有意的——按钮不可达时的退路。
+_WECHAT_RELOGIN_FALLBACK = (
+    "> 按钮打不开（手机端外网受限）？改用电脑：终端跑 "
+    "`ssh -L 5050:127.0.0.1:5000 hk-prod`，再浏览器开 http://localhost:5050/login.html 扫码。"
 )
 
 
-def build_wechat_expiry_alert(status, now_ts: float, warn_days: int) -> Optional[tuple[str, str]]:
-    """微信登录状态 → (title, markdown) 提醒，或 None（健康 / 服务连不上时不提醒）。
+def _wechat_login_btns() -> list[tuple[str, str]]:
+    """「扫码续期」按钮 → 看板登录页（开页即实时二维码）。未配 DASHBOARD_BASE_URL 则无按钮
+    （send_action_card 自动降级 markdown，仅留 ssh 兜底文案）。"""
+    base = (settings.DASHBOARD_BASE_URL or "").rstrip("/")
+    return [("🔑 点此扫码续期", f"{base}/wechat-login")] if base else []
 
+
+def _wechat_alert_tier(status, now_ts: float, warn_days: int) -> Optional[str]:
+    """登录态 → 提醒档位：expired（已失效）/ warn12（≤12h）/ warn24（≤warn_days*24h）/ None。
+    纯函数，供去重判级用（与 build_wechat_expiry_alert 同口径）。"""
+    if status is None:
+        return None
+    if not status.logged_in or status.is_expired:
+        return "expired"
+    if status.expire_time_ms:
+        hours_left = (status.expire_time_ms / 1000 - now_ts) / 3600
+        if hours_left <= 12:
+            return "warn12"
+        if hours_left <= warn_days * 24:
+            return "warn24"
+    return None
+
+
+def build_wechat_expiry_alert(status, now_ts: float, warn_days: int) -> Optional[tuple[str, str, list]]:
+    """微信登录状态 → (title, markdown, btns) 提醒，或 None（健康 / 服务连不上时不提醒）。
+
+    btns 带「扫码续期」按钮直达看板登录页（开页即实时二维码、免 ssh）；text 附 ssh 兜底行。
     status=None 表示 wechat-api 连不上——那是另一类问题，不误报「登录过期」。
     """
     if status is None:
         return None
+    btns = _wechat_login_btns()
     if not status.logged_in or status.is_expired:
         text = ("### ⚠️ 微信公众号登录已失效\n\n"
-                "新品监测日报将**暂停附带行业文章**（其余情报照常）。\n\n" + _WECHAT_RELOGIN_HINT)
-        return "微信公众号登录已失效", text
+                "新品监测日报将**暂停附带行业文章**（其余情报照常）。\n\n"
+                "**点下方「🔑 扫码续期」**打开看板登录页，用微信扫一扫即可恢复。\n\n"
+                + _WECHAT_RELOGIN_FALLBACK)
+        return "微信公众号登录已失效", text, btns
     if status.expire_time_ms:
-        days_left = (status.expire_time_ms / 1000 - now_ts) / 86400
-        if days_left <= warn_days:
-            text = (f"### ⏰ 微信公众号登录将在约 {max(0, round(days_left))} 天后过期\n\n"
-                    f"账号：{status.nickname or '—'}。请尽快重新扫码，避免日报断档。\n\n" + _WECHAT_RELOGIN_HINT)
-            return "微信公众号登录即将过期", text
+        hours_left = (status.expire_time_ms / 1000 - now_ts) / 3600
+        if hours_left <= warn_days * 24:
+            text = (f"### ⏰ 微信公众号登录将在约 {max(0, round(hours_left))} 小时后过期\n\n"
+                    f"账号：{status.nickname or '—'}。**点下方「🔑 扫码续期」**提前续期，避免日报断档。\n\n"
+                    + _WECHAT_RELOGIN_FALLBACK)
+            return "微信公众号登录即将过期", text, btns
     return None
 
 
+# 提醒去重状态（内存，重启重置——至多多推一条，可接受）：同一登录态（expire_ms）下，
+# 同档/更轻的档不重复推；续期后 expire_ms 变 → 重置，重新按档推。
+_TIER_RANK = {"warn24": 1, "warn12": 2, "expired": 3}
+_wechat_alert_state: dict = {"expire_ms": None, "tier": None}
+
+
 async def alert_wechat_login_if_needed() -> bool:
-    """每日检查 wechat 登录状态，失效/将过期则推钉钉。未启用 / 未配 webhook → 不发。"""
+    """检查 wechat 登录状态，失效/将过期（24h/12h 两档）则推钉钉带「扫码续期」按钮。
+    未启用 / 未配 webhook → 不发。按档去重避免每次检查刷屏。钉死 maintainer 群、永不进领导群。"""
     if not (settings.WECHAT_ENABLED and dingtalk.is_enabled()):
         return False
     from app.services.wechat_articles import get_login_status
     status = await get_login_status()
-    built = build_wechat_expiry_alert(status, time.time(), settings.WECHAT_EXPIRY_WARN_DAYS)
+    now = time.time()
+    tier = _wechat_alert_tier(status, now, settings.WECHAT_EXPIRY_WARN_DAYS)
+    if tier is None:
+        return False
+    cur_exp = status.expire_time_ms if status else None
+    st = _wechat_alert_state
+    if st["expire_ms"] != cur_exp:      # 新登录态（含续期后）→ 重置已推档
+        st["expire_ms"], st["tier"] = cur_exp, None
+    if st["tier"] is not None and _TIER_RANK[tier] <= _TIER_RANK[st["tier"]]:
+        return False                    # 同档/更轻，已推过、不重复
+    built = build_wechat_expiry_alert(status, now, settings.WECHAT_EXPIRY_WARN_DAYS)
     if not built:
         return False
-    # 维护者运维提醒（含 ssh 重扫码指令）——钉死 maintainer 群，永不进领导群。
-    return await dingtalk.send_markdown(*built, target="maintainer")
+    sent = await dingtalk.send_action_card(*built, target="maintainer")
+    if sent:
+        st["tier"] = tier
+    return sent
 
 
 # ── 应用商店雷达（iOS + GP 清单 diff，每轮检出即推） ────────────────────────

@@ -104,6 +104,24 @@ api.interceptors.response.use(
   }
 )
 
+// 微信公众号扫码续期：透传 wechat-api 登录流（后端 /api/wechat-login/* 反代）。
+// withCredentials 让微信会话 cookie 在看板同源下随请求流转（后端双向转发 Set-Cookie）。
+export const wechatLoginApi = {
+  status: () =>
+    api.get('/wechat-login/status', { withCredentials: true }).then(r => r.data),
+  session: (sid: string) =>
+    api.post(`/wechat-login/session/${sid}`, null, { withCredentials: true }).then(r => r.data),
+  qrcodeBlob: (rnd: number): Promise<Blob> =>
+    api.get('/wechat-login/getqrcode', { params: { rnd }, responseType: 'blob', withCredentials: true })
+      .then(r => r.data as Blob),
+  scan: () =>
+    api.get('/wechat-login/scan', { withCredentials: true }).then(r => r.data),
+  bizlogin: () =>
+    api.post('/wechat-login/bizlogin', null, {
+      headers: { 'Content-Type': 'application/json' }, withCredentials: true,
+    }).then(r => r.data),
+}
+
 export interface GameListParams {
   platform?: string
   country?: string

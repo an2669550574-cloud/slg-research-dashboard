@@ -47,6 +47,71 @@ def test_wechat_alert_expiring_soon_within_warn_days():
     assert out is not None and "过期" in out[0]
 
 
+def test_wechat_alert_has_scan_button(monkeypatch):
+    """配了 DASHBOARD_BASE_URL → 提醒带「扫码续期」按钮直达看板登录页（开页即实时二维码）。"""
+    # patch release_alerts 实际用的 settings 对象（不走 app.config.settings 字符串路径——
+    # 跨测试若有人整体替换/重载 settings 会让字符串路径指向另一个实例，导致漏改）。
+    import app.services.release_alerts as ra
+    monkeypatch.setattr(ra.settings, "DASHBOARD_BASE_URL", "https://board.example.com")
+    st = WechatLoginStatus(logged_in=True, is_expired=True)
+    # 用 ra.build_*（当前模块）而非顶部 import 的旧引用——client fixture 会 del sys.modules
+    # 重导入 app.*，旧引用读旧 settings、与所 patch 的 ra.settings 不是同一对象。
+    _, _, btns = ra.build_wechat_expiry_alert(st, _NOW, 1)
+    assert len(btns) == 1
+    assert "续期" in btns[0][0] and btns[0][1] == "https://board.example.com/wechat-login"
+
+
+def test_wechat_alert_no_button_without_base_url(monkeypatch):
+    """未配 DASHBOARD_BASE_URL → 无按钮（send_action_card 会自动降级 markdown，仅留 ssh 兜底）。"""
+    import app.services.release_alerts as ra
+    monkeypatch.setattr(ra.settings, "DASHBOARD_BASE_URL", "")
+    st = WechatLoginStatus(logged_in=True, is_expired=True)
+    _, text, btns = ra.build_wechat_expiry_alert(st, _NOW, 1)
+    assert btns == [] and "login.html" in text   # ssh 兜底仍在
+
+
+def test_wechat_alert_tier_thresholds():
+    """档位判定：≤12h=warn12 / ≤warn_days*24h=warn24 / 已失效=expired / 健康远期=None。"""
+    from app.services.release_alerts import _wechat_alert_tier
+    mk = lambda h: WechatLoginStatus(logged_in=True, is_expired=False,
+                                     expire_time_ms=int(_NOW * 1000) + int(h * 3600 * 1000))
+    assert _wechat_alert_tier(mk(6), _NOW, 1) == "warn12"
+    assert _wechat_alert_tier(mk(20), _NOW, 1) == "warn24"
+    assert _wechat_alert_tier(mk(40), _NOW, 1) is None        # 超 24h 不报
+    assert _wechat_alert_tier(WechatLoginStatus(logged_in=True, is_expired=True), _NOW, 1) == "expired"
+    assert _wechat_alert_tier(None, _NOW, 1) is None
+
+
+@pytest.mark.asyncio
+async def test_wechat_alert_dedup_by_tier(monkeypatch):
+    """同一登录态（expire_ms 固定、now 推进）下：同档不重复推、升档（24h→12h）才再推。
+    真实场景是同一 session 随时间从 warn24 滑到 warn12，故固定 expire、用 time.time 模拟时间走。"""
+    import app.services.release_alerts as ra
+    from app.config import settings
+    monkeypatch.setattr(settings, "WECHAT_ENABLED", True)
+    monkeypatch.setattr(settings, "WECHAT_EXPIRY_WARN_DAYS", 1)
+    monkeypatch.setattr(ra.dingtalk, "is_enabled", lambda target="maintainer": True)
+    sent = []
+    async def fake_card(title, text, btns=None, target="maintainer", critical=False):
+        sent.append(title); return True
+    monkeypatch.setattr(ra.dingtalk, "send_action_card", fake_card)
+    ra._wechat_alert_state.update({"expire_ms": None, "tier": None})  # 干净起点
+
+    expire_ms = int(_NOW * 1000) + 24 * 3600 * 1000   # 固定：T0 + 24h 过期
+    st = WechatLoginStatus(logged_in=True, is_expired=False, expire_time_ms=expire_ms)
+    async def fake_status(): return st
+    monkeypatch.setattr("app.services.wechat_articles.get_login_status", fake_status)
+
+    clock = {"now": _NOW + 4 * 3600}      # T0+4h → 剩 20h → warn24
+    monkeypatch.setattr(ra.time, "time", lambda: clock["now"])
+    assert await ra.alert_wechat_login_if_needed() is True       # 首次 warn24 → 推
+    clock["now"] = _NOW + 6 * 3600         # 剩 18h，仍 warn24
+    assert await ra.alert_wechat_login_if_needed() is False      # 同档 → 不重复
+    clock["now"] = _NOW + 14 * 3600        # 剩 10h → 升 warn12
+    assert await ra.alert_wechat_login_if_needed() is True       # 升档 → 再推
+    assert len(sent) == 2
+
+
 def _art(title, link="https://mp.weixin.qq.com/s/x", digest=""):
     return WechatArticle(title=title, link=link, digest=digest, author="游戏葡萄")
 

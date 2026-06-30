@@ -369,11 +369,12 @@ def start_scheduler() -> None:
         misfire_grace_time=3600,
     )
 
-    # 微信公众号登录过期提醒：每日 02:55 UTC（日报前 5 分钟），失效/将过期才发。
-    # 任务自带 enabled/webhook/连通性护栏，未启用时空跑无害。
+    # 微信公众号登录过期提醒：每 6h（02:55 起：02:55/08:55/14:55/20:55 UTC）。
+    # session ~4 天，要稳抓「≤24h」和「≤12h」两档就得比每日更密——daily 只够抓一档。
+    # 任务按档去重（同登录态同档不重复推），且自带 enabled/webhook/连通性护栏，空跑无害。
     scheduler.add_job(
         _run_wechat_login_check,
-        CronTrigger(hour=2, minute=55, timezone="UTC"),
+        CronTrigger(hour="2,8,14,20", minute=55, timezone="UTC"),
         id="wechat_login_check",
         replace_existing=True,
         misfire_grace_time=3600,
