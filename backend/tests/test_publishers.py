@@ -630,6 +630,46 @@ async def test_download_leads_filters_dedups_and_excludes(client):
 
 
 @pytest.mark.asyncio
+async def test_download_leads_excludes_rows_attributed_to_built_entity(client):
+    """存档 is_slg 是检出时点快照：app 先在 free 榜检出（is_slg=false 落库），主体随后建档
+    并 pin 该 app_id —— 存档不回写仍是 false。下载榜信号必须与新品监测页同口径**读时归属**，
+    把已归属已建档主体的 app 排除掉，否则同一款已建档产品会永远赖在「待建档新厂线索」里
+    （prod 真实案例：com.more.lastshelter.gp / 龙创悦动 IM30）。app_id pin 与 publisher
+    alias 两条归属路径都要排除。"""
+    from app.database import AsyncSessionLocal
+    from app.models.newcomer import MarketNewcomerLog
+
+    def mk(**kw):
+        base = dict(country="US", platform="android", as_of="2026-06-29",
+                    chart_type="free", is_slg=False, is_reentry=False, genre="Strategy")
+        base.update(kw)
+        return MarketNewcomerLog(**base)
+
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            # 已 pin 到主体的 app（存档 is_slg=false 是检出时点旧值）→ 必须排除
+            mk(app_id="com.more.lastshelter.gp", name="Last Shelter", publisher="LAST ORIGIN STUDIO LIMITED", rank=44),
+            # publisher 命中主体 alias（app_id 未 pin）→ 也必须排除
+            mk(app_id="pinless.alias.app", name="别名命中", publisher="LAST ORIGIN STUDIO LIMITED", rank=50),
+            # 真·未建档新厂线索 → 保留
+            mk(app_id="genuine.lead", name="真新厂", publisher="Brand New Co", rank=60),
+        ])
+        await db.commit()
+    # 建档：pin app_id + alias，复刻 prod 的「龙创悦动 IM30」配置
+    await client.post("/api/publishers/", json={
+        "name": "龙创悦动 IM30",
+        "aliases": [{"keyword": "last origin studio"}],
+        "app_ids": [{"app_id": "com.more.lastshelter.gp"}],
+    })
+
+    leads = (await client.get("/api/publishers/download-leads")).json()
+    app_ids = {l["app_id"] for l in leads}
+    assert "com.more.lastshelter.gp" not in app_ids  # app_id pin 反解 → 已归属，排除
+    assert "pinless.alias.app" not in app_ids         # publisher alias 反解 → 已归属，排除
+    assert "genuine.lead" in app_ids                  # 未建档真线索保留
+
+
+@pytest.mark.asyncio
 async def test_sibling_dedup_collapses_ios_android_same_game(client):
     """同 publisher + 名字 prefix 匹配的 iOS+Android 同款 → 合并为 1 个 product，
     收入/下载求和；product_count + top_products + /products 三处口径一致。"""
