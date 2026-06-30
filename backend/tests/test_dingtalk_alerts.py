@@ -387,6 +387,31 @@ def test_dashboard_focus_link_omitted_when_unset(monkeypatch):
 
 # ── 方案①：下载榜 is_slg=false 真新厂「待建档线索」段 ─────────────────────────
 
+def test_collect_lead_candidates_excludes_attributed_publisher_newcomers():
+    """已归属主体的 free_publisher 新品（detect_publisher_newcomers 产出，带 entity_id、
+    _row_dict 不含 is_slg 字段）绝不进「待建档新厂线索」候选——否则已建档产品（如 Camel
+    Games 的 Frontier City / Larks Holding 的 Last Siren）会同时进「厂商新品」段和「待建档」
+    段。未归属的 free_market is_slg=false 新品仍入选。"""
+    from app.services.release_alerts import collect_lead_candidates
+    per_combo = [{
+        "country": "US", "platform": "android",
+        # 真·未建档新厂线索（未归属 + is_slg=false）→ 保留
+        "free_market": {"newcomers": [
+            {"app_id": "genuine.new", "name": "真新厂", "publisher": "Unknown Studio",
+             "rank": 20, "is_slg": False, "is_reentry": False},
+        ]},
+        # 已归属 Camel Games（带 entity_id，无 is_slg 字段——复刻 _row_dict 真实形状）→ 排除
+        "free_publisher": {"newcomers": [
+            {"app_id": "com.camelgames.xcity", "name": "Frontier City",
+             "publisher": "CamelStudio", "rank": 167, "is_reentry": False,
+             "entity_id": 8, "entity_name": "壳木游戏 Camel Games", "matched_by": "alias"},
+        ]},
+    }]
+    cand = collect_lead_candidates(per_combo)
+    assert "com.camelgames.xcity" not in cand   # 已归属主体 → 不是待建档线索
+    assert "genuine.new" in cand                 # 未归属真线索 → 保留
+
+
 def test_lead_newcomer_lines_render_and_dedup(monkeypatch):
     """待建档线索行：含名次/中文genre/发行商/看板核查链接 + 中文摘要(#147)，按 app_id 去重；
     市场标签用下载榜语境（不带「畅销榜」后缀，与 _combo_label 区分）。"""
