@@ -280,6 +280,8 @@ digest 给新品行附行业公众号文章（`_match_articles_to_apps`）。匹
 
 **两侧「国家」口径不对称（钉钉卡片文案别误读）**：iOS 走 `itunes lookup?country=<sf>`，`country` 是硬过滤——只返回该 storefront **真能搜到/下到**的 app，逐区轮询，`storefronts` 列即真实可见区（卡片显示「可见区 US」「⚠️ 仅 JP 可见」可信）。GP 走开发者主页 `/store/apps/dev?id=...&gl=us`，这页本质是**该开发者全量目录**，`gl=us` 只影响语言/货币、对逐国过滤很弱，`storefronts` 列恒为 `gp`。故 GP **无可靠逐国信号**，卡片只标「🤖 Google Play · 美区视角」（= 我们从美区查到的口径），**不等于美区在架**——别把它当真实上架国去「修」成具体国家。
 
+**判「新上架」的老品门控（两侧不对称，#176）**：非首同步首次见到的 app，老品要静默入基线不刷屏。**iOS 双保险**：① iTunes lookup 单次返全目录（`limit=200`）→ 首同步即完整基线，无漏抓；② 有真实 `releaseDate` → `_is_old_release`（早于 `ITUNES_RELEASES_OLD_RELEASE_DAYS`=180d 静默入基线）。**GP 侧 `release_date` 页面永远拿不到** → `_is_old_release(NULL)` 失效，且开发者页**分页**，首同步漏抓的老包下轮现身会被误报「新上架」（真实样本 EasyTech **World Conqueror 2**，十年老游戏 6.5 万评价）。修法 = `release_date` 缺失时退回**评价数代理** `_is_established`（≥ `ITUNES_RELEASES_ESTABLISHED_RATING_COUNT`=10000 静默入基线；评价数随详情页 JSON-LD 免费抓到，是「存量用户」代理）。**仅 `release_date` 缺失时启用故 iOS 零影响**（有真实上架日就信它，不误杀首月冲高评价的爆款）；评价数缺失/低仍按「新」处理不丢信号。**残留**：GP JSON-LD 解析失败降级为纯包名记录时无评价数 → 该老品仍可能漏（接受，不丢信号优先）。改阈值后 `compose up -d backend` 重读。
+
 ### 榜类型 chart_type（ADR 0001，alembic 0026）
 
 `game_rankings` 有 `chart_type` 维度（`'grossing'` 收入榜 / `'free'` 下载榜），唯一约束含 chart_type（五元组）。**改任何读 `game_rankings` 的查询必看**：所有「收入榜口径」读路径（今日榜 / 详情趋势 / movement / 厂商聚合 / sibling）都**显式过滤 `chart_type='grossing'`**（用 `app.models.game.CHART_GROSSING` 常量），两榜不得混入同一趋势/聚合。下载榜采集由 `FREE_CHART_COMBOS`（空=全关，默认关）门控、`with_sales=False`、`board='free'`，与收入榜同 cadence。
