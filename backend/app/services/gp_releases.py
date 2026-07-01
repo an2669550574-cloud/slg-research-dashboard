@@ -14,8 +14,10 @@ Top King 只在 GP），iOS-only 清单结构性看不见。数据源 = Google P
 
 diff / 基线 / 告警语义完全复用 itunes_releases.ingest_artist_apps（同一张
 publisher_itunes_apps 表）：首次同步入基线不报新；GP 行 track_id=包名、
-storefronts 固定 'gp'；release_date 页面拿不到记 NULL（_is_old_release 对
-NULL 按"新"处理，不丢信号）。
+storefronts 固定 'gp'；release_date 页面拿不到记 NULL。**GP 老品门控靠评价数**：
+release_date 缺失时 ingest 退回 _is_established(rating_count) 判老（GP 开发者页
+分页、首同步漏抓的老游戏下轮现身，评价数一眼是老品——如 EasyTech 的
+World Conqueror 2），评价数缺失/低仍按"新"处理不丢信号。
 """
 import asyncio
 import json

@@ -10,6 +10,9 @@ GET https://itunes.apple.com/lookup?id=<artistId>&entity=software&country=<sf>&l
 - 新 track_id 且 release_date 在 ITUNES_RELEASES_OLD_RELEASE_DAYS 内 → 新上架；
 - 新 track_id 但 release_date 太老 → 静默入基线（新增扫描区首轮的历史区域
   限定 app / 重新上架的老包，不是"新品"，不刷屏）；
+- release_date 缺失（GP 侧页面拿不到）→ 退回评价数代理：超
+  ITUNES_RELEASES_ESTABLISHED_RATING_COUNT → 静默入基线（GP 开发者页分页、首同步
+  漏抓的老游戏下轮现身，评价数一眼是老品）；评价数缺失/低仍按新处理不丢信号；
 - 已有非基线行**新增**了可见区 → 「扩区上线」（软启动 → 更大范围/美区），
   随同轮 digest 一并推送。
 
@@ -188,6 +191,15 @@ def _is_old_release(release_date: Optional[str]) -> bool:
     return release_date < cutoff.strftime("%Y-%m-%d")
 
 
+def _is_established(rating_count: Optional[int]) -> bool:
+    """评价数超阈值 = 明显有大量存量用户的老 app，非新上架。GP 侧详情页拿不到
+    release_date（_is_old_release 全失效），评价数是唯一免费的「老品」代理（随 JSON-LD
+    同响应抓到、零增量请求）。评价数缺失/低 = 真软启动新品，不抑制（不丢信号，与
+    _is_old_release 缺失按新处理同哲学）。阈值 <=0 关闭该守卫。"""
+    threshold = settings.ITUNES_RELEASES_ESTABLISHED_RATING_COUNT
+    return threshold > 0 and rating_count is not None and rating_count >= threshold
+
+
 async def sync_itunes_releases() -> dict:
     """对全部已挂账号跑一轮多区清单 diff。
 
@@ -288,9 +300,13 @@ async def ingest_artist_apps(artist_row_id: int, apps: list[dict]) -> dict:
                         out["enriched"] += 1
                 continue
 
-            # 基线之后首次见到、但上架日期太老 → 静默入基线（新增扫描区首轮的
-            # 历史区域限定 app / 重新上架的老包，不是"新品"）。
-            silent_old = (not first_sync) and _is_old_release(f["release_date"])
+            # 基线之后首次见到、但已是老 app → 静默入基线（新增扫描区首轮的历史区域限定
+            # app / 重新上架的老包 / GP 分页漏抓的老游戏，不是"新品"）。有 release_date
+            # （iOS 常态）就信真实上架日；缺失（GP 常态，页面拿不到）退回评价数作老品代理，
+            # 避免误杀首月冲高评价的真爆款新 iOS 游戏。
+            rd = f["release_date"]
+            silent_old = (not first_sync) and (
+                _is_old_release(rd) if rd else _is_established(f["rating_count"]))
             new_row = PublisherItunesApp(
                 entity_id=artist.entity_id, artist_row_id=artist_row_id,
                 is_baseline=first_sync or silent_old,

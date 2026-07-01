@@ -214,6 +214,13 @@ class Settings(BaseSettings):
     # 区域变体/死掉的测试包），不是"新品"，不该刷屏；②防止下架老 app 重新上架
     # 被误报。N 天内的才是真新品。
     ITUNES_RELEASES_OLD_RELEASE_DAYS: int = 180
+    # GP 侧「老品」兜底：Google Play 开发者页拿不到可靠 release_date（页面结构里没有），
+    # 上面的上架日门控对 GP 全失效——GP 开发者页分页，首同步没抓全的老包（如 EasyTech
+    # 的 World Conqueror 2，6.5 万评价、十年老游戏）下轮才现身会被误报"新上架"。评价数
+    # 是随详情页 JSON-LD 免费抓到的「存量用户」代理：超过该阈值 = 明显是有大量用户的老
+    # app，非新上架 → 静默入基线。仅在 release_date 缺失时启用（iOS 有真实上架日就信它，
+    # 避免误杀首月冲高评价的真爆款新游）。评价数缺失/低 = 真软启动，不抑制。<=0 = 关闭。
+    ITUNES_RELEASES_ESTABLISHED_RATING_COUNT: int = 10000
 
     # ── 钉钉告警（自定义群机器人 webhook）────────────────────────────────
     # 不配 URL = 整体关闭（所有发送静默 no-op）。值放 backend/.env，不进 git。
