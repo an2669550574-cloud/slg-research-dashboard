@@ -252,6 +252,48 @@ async def test_old_release_silently_baselined(client):
 
 
 @pytest.mark.asyncio
+async def test_established_app_silently_baselined_when_no_release_date(client):
+    """release_date 缺失（GP 侧常态，页面拿不到）时用评价数判老：评价数超阈值的老 app
+    静默入基线，评价数缺失/低的真软启动仍报新。治 GP 开发者页分页、首同步漏抓的老游戏
+    下轮现身被误报"新上架"（真实样本：EasyTech 的 World Conqueror 2，6.5 万评价）。"""
+    from app.services.itunes_releases import ingest_artist_apps
+    _entity, artist = await _mk_entity_with_artist(client)
+    await ingest_artist_apps(artist["id"], [_app(800, "口袋奇兵")])
+
+    def _gp(track_id, name, rating_count):
+        r = _app(track_id, name, storefronts={"gp"})
+        r.pop("releaseDate")            # GP 详情页拿不到上架日 → release_date NULL
+        r["userRatingCount"] = rating_count
+        return r
+
+    r = await ingest_artist_apps(artist["id"], [
+        _app(800, "口袋奇兵"),
+        _gp(801, "World Conqueror 2", 65521),  # 老品：评价数超阈值 → 静默入基线
+        _gp(802, "真软启动：极地征服", 3),        # 真新品：评价数极低 → 报新
+        _gp(803, "评价数缺失新游", None),         # 评价数缺失 → 按新处理不丢信号
+    ])
+    assert _counts(r) == {"baselined": 0, "new_apps": 2, "backfilled_old": 1, "expanded": 0}
+
+    resp = await client.get("/api/newcomers/appstore")
+    names = {i["name"] for i in resp.json()["items"]}
+    assert names == {"真软启动：极地征服", "评价数缺失新游"}  # 老品 World Conqueror 2 不出现
+
+
+@pytest.mark.asyncio
+async def test_recent_ios_app_with_high_ratings_still_new(client):
+    """回归护栏：iOS 有真实 release_date 时评价数守卫不介入——首月冲高评价的真爆款新游
+    （release_date 近 + 评价数超阈值）仍报"新上架"，不被误当老品静默掉。"""
+    from app.services.itunes_releases import ingest_artist_apps
+    _entity, artist = await _mk_entity_with_artist(client)
+    await ingest_artist_apps(artist["id"], [_app(810, "口袋奇兵")])
+
+    hit = _app(811, "爆款新游：寒霜纪元", release_date="2026-06-20")
+    hit["userRatingCount"] = 50000  # 上架仅 11 天却冲到 5 万评价，仍是新品
+    r = await ingest_artist_apps(artist["id"], [_app(810, "口袋奇兵"), hit])
+    assert _counts(r) == {"baselined": 0, "new_apps": 1, "backfilled_old": 0, "expanded": 0}
+
+
+@pytest.mark.asyncio
 async def test_storefront_expansion_detected(client):
     """非基线行新增可见区 = 扩区上线；基线行扩区只刷新不报。"""
     from app.services.itunes_releases import ingest_artist_apps
