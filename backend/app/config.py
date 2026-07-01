@@ -207,6 +207,10 @@ class Settings(BaseSettings):
     # 触发**维护者卡**兜底填充（SLG 行业动态段等），补次市场非同步日 + 美区平淡时的稀薄卡。
     # 仅核心 US/iOS 已同步（真平淡、非管道故障）时才填。<=0 = 关闭兜底。
     DIGEST_QUIET_THRESHOLD: int = 6
+    # 平淡日兜底之一：把商店雷达（itunes/gp 清单 diff，6h 级独立推送）近 N 天的非基线新上架
+    # 折进 digest 一段，给平淡日一个「近期雷达catch」的日级汇总视图。仅维护者卡、仅平淡日。
+    # 零 ST（纯本地 publisher_itunes_apps 读）。<=0 = 关闭该段。
+    DIGEST_RADAR_RECENT_DAYS: int = 2
 
     # ── App Store 清单雷达（免费 iTunes lookup，零 ST 配额）──────────────
     # 每轮对每个开发者账号扫这些 storefront（逗号小写）。SLG 几乎都先软启动：

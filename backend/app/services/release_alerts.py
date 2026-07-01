@@ -697,6 +697,36 @@ def build_industry_lines(articles: list, cap: int) -> list[str]:
     return out
 
 
+async def _recent_radar_arrivals(days: int, cap: int = 8) -> list[dict]:
+    """商店雷达近 days 天的非基线新上架（publisher_itunes_apps，零 ST）→ 紧凑 dict 列表。
+    平淡日维护者卡兜底段用；按 first_seen_at 倒序、封顶 cap。_platform_tag/_sf_text 在下方
+    「应用商店雷达」节定义（模块级，call-time 解析，前引无碍）。"""
+    from datetime import timedelta
+    cutoff = utcnow_naive() - timedelta(days=days)
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(
+            select(PublisherItunesApp, PublisherEntity.name)
+            .join(PublisherEntity, PublisherEntity.id == PublisherItunesApp.entity_id)
+            .where(PublisherItunesApp.is_baseline.is_(False),
+                   PublisherItunesApp.first_seen_at >= cutoff)
+            .order_by(PublisherItunesApp.first_seen_at.desc())
+            .limit(cap)
+        )).all()
+    return [{"name": app.name, "entity": entity_name, "platform_tag": _platform_tag(app),
+             "genre": app.genre or "", "sf": _sf_text(app)} for app, entity_name in rows]
+
+
+def build_radar_recent_lines(items: list[dict], cap: int) -> list[str]:
+    """商店雷达近期新上架 → 紧凑行（平淡日维护者卡兜底段）。是厂商开发者账号清单 diff 的
+    catch，非我方 tracked 竞品排名动态，故独立段 + 明确标注。"""
+    out: list[str] = []
+    for it in items[:cap]:
+        genre = f" · {it['genre']}" if it.get("genre") else ""
+        out.append(f"🛒 **{_md_name(it['name'])}** — {_md_name(it['entity'])}"
+                   f"（{it['platform_tag']}）{genre}{it.get('sf') or ''}")
+    return out
+
+
 def _digest_tldr(per_combo: list[dict], version_changes, region_changes,
                  video_items, lead_items, own_match_count: int = 0) -> str:
     """开头一句话总览（TL;DR）：让领导打开卡片先有「今天整体什么情况」的锚点，不用读完
@@ -865,7 +895,8 @@ def build_daily_digest(per_combo: list[dict], today: str,
                        lead_items: Optional[list[dict]] = None,
                        audience: str = "maintainer",
                        own_matches: Optional[dict] = None,
-                       industry_articles: Optional[list] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
+                       industry_articles: Optional[list] = None,
+                       radar_items: Optional[list] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
     """全 combo 检测结果 → (title, markdown, btns)。全空 → None（不发）。
 
     per_combo: [{country, platform, movement: dict|None, market: dict|None, publisher: dict|None}]
@@ -967,6 +998,15 @@ def build_daily_digest(per_combo: list[dict], today: str,
             sections.append(
                 "【🔍 待建档新厂线索】（下载榜疑似 SLG、白名单未收录 → 请人工核查建档）"
                 "\n\n" + "\n\n".join(lead_lines))
+    # 平淡日兜底段之一：商店雷达近期新上架（见 send_daily_digest 平淡日闸门）。厂商开发者
+    # 账号清单 diff 的 catch，**仅维护者卡**（建档/软启动线索，对领导是杂讯）。放行业段之前。
+    if radar_items and not is_leader:
+        radar_lines = build_radar_recent_lines(radar_items, cap)
+        if radar_lines:
+            total += len(radar_lines)
+            sections.append(
+                "【🛒 商店雷达 · 近期新上架】（厂商开发者账号清单 diff · 含软启动）"
+                "\n\n" + "\n\n".join(radar_lines))
     # 平淡日「SLG 行业动态」兜底段（公众号广搜，见 send_daily_digest 的平淡日闸门）：
     # **非我方追踪竞品**的行业面背景，故独立段 + 明确标注、**仅维护者卡**（领导卡保持已核实
     # 竞品口径）。放全卡最后（补充性质，不与竞品数据抢眼球）。
@@ -1290,26 +1330,34 @@ async def send_daily_digest() -> bool:
         return True
 
     # 平淡日兜底填充（仅维护者卡）：当日竞品实质信号 < DIGEST_QUIET_THRESHOLD **且核心已同步**
-    # （真平淡、非管道故障）→ 行业关键词广搜公众号补「SLG 行业动态」段。gate 在 _core_synced 上
-    # 是关键：否则同步故障日会被行业文章填成非空卡、掩盖『数据未就位』告警。零 ST；未启用/连不上
-    # 优雅降级空。跨天重复靠 WECHAT_INDUSTRY_DAYS 时窗控（v1 无持久去重）。
+    # （真平淡、非管道故障）→ 补 C 商店雷达近期段（本地库，零 ST）+ A 行业动态段（公众号广搜，
+    # 零 ST）。gate 在 _core_synced 上是关键：否则同步故障日会被填成非空卡、掩盖『数据未就位』。
     industry_articles: list = []
-    if (settings.DIGEST_QUIET_THRESHOLD > 0
-            and _primary_item_count(per_combo, version_changes, region_changes)
-                < settings.DIGEST_QUIET_THRESHOLD
-            and settings.WECHAT_INDUSTRY_ENABLED and settings.WECHAT_ENABLED
-            and not settings.USE_MOCK_DATA and _core_synced()):
-        try:
-            from app.services.wechat_articles import search_multi_keywords
-            ind_kws = [k.strip() for k in settings.WECHAT_INDUSTRY_KEYWORDS.split(",") if k.strip()]
-            if ind_kws:
-                raw = await search_multi_keywords(ind_kws, limit=settings.WECHAT_INDUSTRY_MAX,
-                                                  days=settings.WECHAT_INDUSTRY_DAYS)
-                # 去掉已按新品名精确挂上的文章（免与新品行 📰 重复）。
-                shown = {a.link for arts in articles_by_app.values() for a in arts}
-                industry_articles = [a for a in raw if a.link not in shown][:settings.WECHAT_INDUSTRY_MAX]
-        except Exception:
-            logger.warning("wechat industry search (quiet-day filler) failed", exc_info=True)
+    radar_items: list = []
+    is_quiet = (settings.DIGEST_QUIET_THRESHOLD > 0
+                and _primary_item_count(per_combo, version_changes, region_changes)
+                    < settings.DIGEST_QUIET_THRESHOLD
+                and not settings.USE_MOCK_DATA and _core_synced())
+    if is_quiet:
+        # C：商店雷达近期新上架（本地 publisher_itunes_apps，零 ST）。
+        if settings.DIGEST_RADAR_RECENT_DAYS > 0:
+            try:
+                radar_items = await _recent_radar_arrivals(settings.DIGEST_RADAR_RECENT_DAYS)
+            except Exception:
+                logger.warning("radar recent arrivals (quiet-day filler) failed", exc_info=True)
+        # A：SLG 行业动态（公众号广搜，零 ST；未启用/连不上降级空）。跨天重复靠时窗控。
+        if settings.WECHAT_INDUSTRY_ENABLED and settings.WECHAT_ENABLED:
+            try:
+                from app.services.wechat_articles import search_multi_keywords
+                ind_kws = [k.strip() for k in settings.WECHAT_INDUSTRY_KEYWORDS.split(",") if k.strip()]
+                if ind_kws:
+                    raw = await search_multi_keywords(ind_kws, limit=settings.WECHAT_INDUSTRY_MAX,
+                                                      days=settings.WECHAT_INDUSTRY_DAYS)
+                    # 去掉已按新品名精确挂上的文章（免与新品行 📰 重复）。
+                    shown = {a.link for arts in articles_by_app.values() for a in arts}
+                    industry_articles = [a for a in raw if a.link not in shown][:settings.WECHAT_INDUSTRY_MAX]
+            except Exception:
+                logger.warning("wechat industry search (quiet-day filler) failed", exc_info=True)
 
     def _render(audience):
         return build_daily_digest(per_combo, today, articles=articles_by_app,
@@ -1317,7 +1365,7 @@ async def send_daily_digest() -> bool:
                                   video_items=video_items, region_changes=region_changes,
                                   summaries=summaries_by_app, lead_items=lead_items,
                                   audience=audience, own_matches=own_matches,
-                                  industry_articles=industry_articles)
+                                  industry_articles=industry_articles, radar_items=radar_items)
 
     sent_any = False
     msg_m = _render("maintainer")

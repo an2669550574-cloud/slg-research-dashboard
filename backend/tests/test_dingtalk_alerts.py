@@ -1147,3 +1147,33 @@ def test_primary_item_count():
     # 2 movement + 2 newcomers + 1 version + 0 region = 5
     assert _primary_item_count(per_combo, [{"x": 1}], []) == 5
     assert _primary_item_count([], [], []) == 0
+
+
+# ── 平淡日「商店雷达 · 近期新上架」兜底段（C）───────────────────────────────
+
+def test_radar_recent_lines_render():
+    """build_radar_recent_lines：紧凑 🛒 行，genre/可见区尾标可选。"""
+    from app.services.release_alerts import build_radar_recent_lines
+    items = [
+        {"name": "Frost Siege", "entity": "Century Games", "platform_tag": "🍎 App Store",
+         "genre": "Strategy", "sf": " · 可见区 US"},
+        {"name": "军团纪元", "entity": "网易", "platform_tag": "🤖 Google Play · 美区视角",
+         "genre": "", "sf": ""},
+    ]
+    lines = build_radar_recent_lines(items, cap=10)
+    assert lines[0] == "🛒 **Frost Siege** — Century Games（🍎 App Store） · Strategy · 可见区 US"
+    assert lines[1] == "🛒 **军团纪元** — 网易（🤖 Google Play · 美区视角）"
+
+
+def test_digest_radar_section_maintainer_only():
+    """商店雷达兜底段只进维护者卡，领导卡剥离。"""
+    from app.services.release_alerts import build_daily_digest
+    items = [{"name": "Frost Siege", "entity": "Century Games", "platform_tag": "🍎 App Store",
+              "genre": "Strategy", "sf": ""}]
+    ver = [{"app_id": "1", "name": "万国觉醒", "old": "1.0", "new": "1.1", "date": "2026-07-01"}]
+    _, body_m, _ = build_daily_digest([], "2026-07-01", version_changes=ver,
+                                      radar_items=items, audience="maintainer")
+    assert "商店雷达 · 近期新上架" in body_m and "Frost Siege" in body_m
+    _, body_l, _ = build_daily_digest([], "2026-07-01", version_changes=ver,
+                                      radar_items=items, audience="leader")
+    assert "商店雷达" not in body_l and "Frost Siege" not in body_l
