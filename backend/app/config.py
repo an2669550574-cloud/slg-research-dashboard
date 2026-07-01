@@ -203,6 +203,14 @@ class Settings(BaseSettings):
     # 注意：与此分支无关的「核心 US/iOS 今日无快照」(同步未就位) 始终升 logger.error→Sentry
     # + 发克制维护者兜底卡，不受本开关控制——那是管道故障告警，不是平淡日心跳。
     DIGEST_HEARTBEAT_ENABLED: bool = False
+    # 平淡日阈值：当日竞品实质信号（异动 + 四层新品 + 版本 + 新区）少于此数 → 判「平淡日」，
+    # 触发**维护者卡**兜底填充（SLG 行业动态段等），补次市场非同步日 + 美区平淡时的稀薄卡。
+    # 仅核心 US/iOS 已同步（真平淡、非管道故障）时才填。<=0 = 关闭兜底。
+    DIGEST_QUIET_THRESHOLD: int = 6
+    # 平淡日兜底之一：把商店雷达（itunes/gp 清单 diff，6h 级独立推送）近 N 天的非基线新上架
+    # 折进 digest 一段，给平淡日一个「近期雷达catch」的日级汇总视图。仅维护者卡、仅平淡日。
+    # 零 ST（纯本地 publisher_itunes_apps 读）。<=0 = 关闭该段。
+    DIGEST_RADAR_RECENT_DAYS: int = 2
 
     # ── App Store 清单雷达（免费 iTunes lookup，零 ST 配额）──────────────
     # 每轮对每个开发者账号扫这些 storefront（逗号小写）。SLG 几乎都先软启动：
@@ -306,6 +314,19 @@ class Settings(BaseSettings):
     # 登录 session 剩余 ≤ 此天数 → 提前预警；已过期/未登录则直接提醒。微信 MP
     # session 本就短（~4 天），预警设 1 天（仅最后一天提醒）避免天天刷屏。
     WECHAT_EXPIRY_WARN_DAYS: int = 1
+    # ── 平淡日「SLG 行业动态」兜底段（公众号广搜，仅维护者卡）──────────────
+    # 与「按新品名精确回挂文章」互补：那个把文章挂到当日检出新品，这个是**无检出/信号
+    # 稀薄时**用行业关键词广搜订阅号，补一段近期 SLG 行业/新品动态。仅 DIGEST_QUIET_THRESHOLD
+    # 判定的平淡日 + 核心已同步时触发。零 ST（走 wechat-api）。领导卡不加（保持已核实竞品口径）。
+    WECHAT_INDUSTRY_ENABLED: bool = True
+    # 受控关键词表（偏新品动态；覆盖 新品/首发/上线 + 出海/海外 + 版号/厂商/投融资 + 买量/素材
+    # 四类）。逗号分隔，可在 backend/.env 覆盖。空 = 关闭该段。宁少而准，别用光秃秃「SLG」招噪。
+    WECHAT_INDUSTRY_KEYWORDS: str = (
+        "SLG 新游,策略新游 上线,SLG 首发,SLG 出海,策略手游 海外,SLG 版号,SLG 投融资,SLG 买量 素材")
+    # 只取最近 N 天的文章（"动态"要新；窗口越窄跨天重复越少——v1 靠时窗控重复，暂无持久去重）。
+    WECHAT_INDUSTRY_DAYS: int = 3
+    # 行业段最多展示几条。
+    WECHAT_INDUSTRY_MAX: int = 4
 
     # ── 新品实机玩法视频自动搜集（YouTube Data API · ADR 0002）──────────────
     # 竞品新品检出后按「游戏名 + gameplay」搜 YouTube 实机玩法视频候选。YT 独立

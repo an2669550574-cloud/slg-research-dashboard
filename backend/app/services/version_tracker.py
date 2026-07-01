@@ -24,9 +24,48 @@ from app.config import settings
 from app.database import AsyncSessionLocal, utcnow_naive
 from app.models.game import Game
 from app.models.history import GameHistory
+from app.services import llm_gateway
 from app.services.appstore import fetch_apps_bulk
 
 logger = logging.getLogger(__name__)
+
+_NOTES_PROMPT = """你是手游竞品调研助手。下面是某竞品游戏一次版本更新的更新说明（release notes）。\
+用一句简体中文提炼**对玩家 / 竞品分析有意义的实质变化**（新赛季 / 新玩法 / 新英雄 / 新地图 / \
+大型活动 / 付费点 / 平衡性调整等），不超过 30 字，不带书名号、不带引号。若更新说明只是 \
+bug 修复 / 性能优化 / 常规维护这类无实质内容，只输出四个字：例行更新。只输出这一句话本身。
+
+游戏：{name}
+版本：{old} → {new}
+更新说明：
+{notes}"""
+
+
+async def _summarize_notes(name: str, old_v: str, new_v: str, notes: str) -> str | None:
+    """版本 release notes → 一句中文实质变化（新赛季 / 玩法 / 付费点…）。无 notes / 无 key /
+    mock / 失败 / 纯 bugfix → None（digest 优雅降级为只显版本号）。走太石网关便宜文本模型，
+    版本变更本就稀少故 cost 可忽略。"""
+    if settings.USE_MOCK_DATA or not settings.TAISHI_API_KEY:
+        return None
+    notes = (notes or "").strip()
+    if not notes:
+        return None
+    prompt = _NOTES_PROMPT.format(name=name or "", old=old_v, new=new_v, notes=notes[:1200])
+    try:
+        client = llm_gateway.get_client()
+        resp = await client.chat.completions.create(
+            model=settings.TAISHI_TEXT_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=120, temperature=0.2,
+        )
+        content = (resp.choices[0].message.content or "").strip() if resp.choices else ""
+    except Exception:
+        logger.warning("version notes summarize failed for %s", name, exc_info=True)
+        return None
+    # 单行化 + 去引号/书名号包裹；纯 bugfix（LLM 返回「例行更新」）→ None 不渲染子行。
+    content = content.replace("\n", " ").strip().strip('"“”「」').strip()
+    if not content or content == "例行更新":
+        return None
+    return content[:60]
 
 
 def _numeric(app_id: str) -> str:
@@ -75,15 +114,20 @@ async def check_tracked_versions() -> list[dict]:
                 continue
             if new_v != g.version:
                 old_v = g.version
+                notes = cur.get("release_notes") or ""
                 db.add(GameHistory(
                     app_id=g.app_id, event_date=new_d, event_type="version",
                     title=f"版本更新 {old_v} → {new_v}",
-                    description=(cur.get("release_notes") or "")[:1000] or None,
+                    description=notes[:1000] or None,
                     source="appstore"))
                 g.version, g.version_date = new_v, new_d
-                changes.append({"app_id": g.app_id, "name": g.name,
-                                "old": old_v, "new": new_v, "date": new_d})
+                changes.append({"app_id": g.app_id, "name": g.name, "old": old_v,
+                                "new": new_v, "date": new_d, "_notes": notes})
         await db.commit()
+    # LLM 一句话提炼更新实质（放 DB 会话外，不占连接等 LLM）。变更稀少故每条一次调用
+    # 可接受；无 notes / 无 key / mock / 纯 bugfix → notes_cn=None，digest 只显版本号。
+    for c in changes:
+        c["notes_cn"] = await _summarize_notes(c["name"], c["old"], c["new"], c.pop("_notes", ""))
     if changes:
         logger.info("version tracker: %d change(s): %s",
                     len(changes), [c["app_id"] for c in changes])

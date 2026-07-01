@@ -50,6 +50,7 @@ async def test_version_change_writes_history_and_updates(app, monkeypatch):
     from app.models.history import GameHistory
     from app.services import version_tracker as vt
     monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
+    monkeypatch.setattr(settings, "TAISHI_API_KEY", "")  # 隔离 LLM 摘要，本测试只验版本检测/history
 
     async def fake_bulk(ids, country="us"):
         return {"111": {"version": "2.1.0", "current_version_date": "2026-06-26", "release_notes": "新赛季开启"}}
@@ -175,3 +176,55 @@ def test_digest_renders_version_section():
     _, body, _ = res
     assert "版本更新" in body
     assert "万国觉醒" in body and "2.0.1 → 2.1.0" in body
+
+
+@pytest.mark.asyncio
+async def test_version_change_includes_notes_summary(app, monkeypatch):
+    """版本变更带 LLM 一句话实质摘要（E）→ changes[].notes_cn 有值、原始 notes 拿得到、
+    中转键 _notes 不泄漏，digest 渲染 📝 子行。"""
+    from app.config import settings
+    from app.services import version_tracker as vt
+    from app.services.release_alerts import build_daily_digest
+    monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
+
+    async def fake_bulk(ids, country="us"):
+        return {"111": {"version": "2.1.0", "current_version_date": "2026-06-26",
+                        "release_notes": "全新赛季『冰封王座』开启，新增 3 名英雄"}}
+
+    async def fake_sum(name, old_v, new_v, notes):
+        assert name == "万国觉醒" and (old_v, new_v) == ("2.0.1", "2.1.0")
+        assert "冰封王座" in notes           # 拿到原始 release_notes
+        return "新赛季冰封王座 + 3 英雄"
+    monkeypatch.setattr(vt, "fetch_apps_bulk", fake_bulk)
+    monkeypatch.setattr(vt, "_summarize_notes", fake_sum)
+
+    await _add_game("111", "万国觉醒", version="2.0.1", version_date="2026-06-20")
+    changes = await vt.check_tracked_versions()
+    assert changes[0]["notes_cn"] == "新赛季冰封王座 + 3 英雄"
+    assert "_notes" not in changes[0]        # 中转键不泄漏进返回结构
+
+    _, body, _ = build_daily_digest([], "2026-06-26", version_changes=changes)
+    assert "📝 新赛季冰封王座 + 3 英雄" in body
+
+
+@pytest.mark.asyncio
+async def test_summarize_notes_noop_without_key(monkeypatch):
+    """无 TAISHI_API_KEY → _summarize_notes 直接 None（不打网关），digest 优雅降级只显版本号。"""
+    from app.config import settings
+    from app.services import version_tracker as vt
+    monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
+    monkeypatch.setattr(settings, "TAISHI_API_KEY", "")
+    assert await vt._summarize_notes("万国觉醒", "2.0", "2.1", "新赛季开启") is None
+
+
+def test_version_lines_render_notes_subline():
+    """build_version_lines：notes_cn 有值补 📝 子行；无则只显版本号不加噪。"""
+    from app.services.release_alerts import build_version_lines
+    lines = build_version_lines([
+        {"name": "万国觉醒", "old": "2.0.1", "new": "2.1.0", "date": "2026-06-26",
+         "notes_cn": "新赛季冰封王座"},
+        {"name": "口袋奇兵", "old": "1.0", "new": "1.1", "date": "2026-06-26"},  # 无 notes_cn
+    ], cap=10)
+    assert len(lines) == 2
+    assert "🆙 **万国觉醒**" in lines[0] and "\n   📝 新赛季冰封王座" in lines[0]
+    assert "📝" not in lines[1]   # 无摘要不加子行

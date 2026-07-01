@@ -638,14 +638,21 @@ def build_lead_newcomer_lines(lead_items: list[dict]) -> list[str]:
 
 
 def build_version_lines(changes: list[dict], cap: int) -> list[str]:
-    """版本变更 → 人读行（需求② / ADR 0003）。changes: [{name, old, new, date}]。
+    """版本变更 → 人读行（需求② / ADR 0003）。changes: [{name, old, new, date, notes_cn?}]。
 
     全局段（跨 combo），tracked iOS 竞品版本更新。封顶 cap 防极端日刷屏。
+    notes_cn（版本更新说明的 LLM 一句话实质摘要，见 version_tracker._summarize_notes）
+    有值时补一条 📝 子行——把「1.1.8 → 1.1.9」这种纯版本号变成「新赛季 X / 平衡调整」可读情报；
+    纯 bugfix / 无 notes 时 notes_cn=None，只显版本号不加噪。
     """
     out: list[str] = []
     for c in changes[:cap]:
         date = f"（{c['date']}）" if c.get("date") else ""
-        out.append(f"🆙 **{_md_name(c['name'])}**：{_md_name(c['old'], maxlen=None)} → {_md_name(c['new'], maxlen=None)}{date}")
+        line = f"🆙 **{_md_name(c['name'])}**：{_md_name(c['old'], maxlen=None)} → {_md_name(c['new'], maxlen=None)}{date}"
+        notes_cn = (c.get("notes_cn") or "").strip()
+        if notes_cn:
+            line += f"\n   📝 {_md_name(notes_cn, maxlen=60)}"
+        out.append(line)
     return out
 
 
@@ -658,6 +665,65 @@ def build_region_launch_lines(changes: list[dict], cap: int) -> list[str]:
     for c in changes[:cap]:
         date = f"（{c['date']}）" if c.get("date") else ""
         out.append(f"🌍 **{_md_name(c['name'])}**：新进 {c['country']} 区{date}")
+    return out
+
+
+def _primary_item_count(per_combo: list[dict], version_changes, region_changes) -> int:
+    """当日『竞品实质信号』计数：异动 + 四层新品 + 版本 + 新区（不含待建档/兜底填充段）。
+    用于判『平淡日』→ 触发维护者卡兜底填充（SLG 行业动态段）。"""
+    n = 0
+    for c in per_combo:
+        mv = c.get("movement") or {}
+        for k in ("new_entrants", "surges", "drops", "revenue_spikes"):
+            n += len(mv.get(k) or [])
+        for key in ("market", "publisher", "free_market", "free_publisher"):
+            n += len((c.get(key) or {}).get("newcomers") or [])
+    return n + len(version_changes or []) + len(region_changes or [])
+
+
+def build_industry_lines(articles: list, cap: int) -> list[str]:
+    """平淡日「SLG 行业动态」段：公众号广搜的近期行业/新品文章 → 链接行。**非我方追踪
+    竞品**的行业面背景（区别于按新品名精确回挂的 📰），故独立段 + 明确标注、仅维护者卡。"""
+    out: list[str] = []
+    for a in articles[:cap]:
+        link = getattr(a, "link", "") or ""
+        title = " ".join(((getattr(a, "title", "") or "")
+                          .replace("[", "(").replace("]", ")").replace("|", "/")).split())
+        if not link or not title:
+            continue
+        author = getattr(a, "author", "") or ""
+        src = f" · {_md_name(author)}" if author else ""
+        out.append(f"📰 [{title}]({link}){src}")
+    return out
+
+
+async def _recent_radar_arrivals(days: int, cap: int = 8) -> list[dict]:
+    """商店雷达近 days 天的非基线新上架（publisher_itunes_apps，零 ST）→ 紧凑 dict 列表。
+    平淡日维护者卡兜底段用；按 first_seen_at 倒序、封顶 cap。_platform_tag/_sf_text 在下方
+    「应用商店雷达」节定义（模块级，call-time 解析，前引无碍）。"""
+    from datetime import timedelta
+    cutoff = utcnow_naive() - timedelta(days=days)
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(
+            select(PublisherItunesApp, PublisherEntity.name)
+            .join(PublisherEntity, PublisherEntity.id == PublisherItunesApp.entity_id)
+            .where(PublisherItunesApp.is_baseline.is_(False),
+                   PublisherItunesApp.first_seen_at >= cutoff)
+            .order_by(PublisherItunesApp.first_seen_at.desc())
+            .limit(cap)
+        )).all()
+    return [{"name": app.name, "entity": entity_name, "platform_tag": _platform_tag(app),
+             "genre": app.genre or "", "sf": _sf_text(app)} for app, entity_name in rows]
+
+
+def build_radar_recent_lines(items: list[dict], cap: int) -> list[str]:
+    """商店雷达近期新上架 → 紧凑行（平淡日维护者卡兜底段）。是厂商开发者账号清单 diff 的
+    catch，非我方 tracked 竞品排名动态，故独立段 + 明确标注。"""
+    out: list[str] = []
+    for it in items[:cap]:
+        genre = f" · {it['genre']}" if it.get("genre") else ""
+        out.append(f"🛒 **{_md_name(it['name'])}** — {_md_name(it['entity'])}"
+                   f"（{it['platform_tag']}）{genre}{it.get('sf') or ''}")
     return out
 
 
@@ -828,7 +894,9 @@ def build_daily_digest(per_combo: list[dict], today: str,
                        summaries: Optional[dict] = None,
                        lead_items: Optional[list[dict]] = None,
                        audience: str = "maintainer",
-                       own_matches: Optional[dict] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
+                       own_matches: Optional[dict] = None,
+                       industry_articles: Optional[list] = None,
+                       radar_items: Optional[list] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
     """全 combo 检测结果 → (title, markdown, btns)。全空 → None（不发）。
 
     per_combo: [{country, platform, movement: dict|None, market: dict|None, publisher: dict|None}]
@@ -930,6 +998,25 @@ def build_daily_digest(per_combo: list[dict], today: str,
             sections.append(
                 "【🔍 待建档新厂线索】（下载榜疑似 SLG、白名单未收录 → 请人工核查建档）"
                 "\n\n" + "\n\n".join(lead_lines))
+    # 平淡日兜底段之一：商店雷达近期新上架（见 send_daily_digest 平淡日闸门）。厂商开发者
+    # 账号清单 diff 的 catch，**仅维护者卡**（建档/软启动线索，对领导是杂讯）。放行业段之前。
+    if radar_items and not is_leader:
+        radar_lines = build_radar_recent_lines(radar_items, cap)
+        if radar_lines:
+            total += len(radar_lines)
+            sections.append(
+                "【🛒 商店雷达 · 近期新上架】（厂商开发者账号清单 diff · 含软启动）"
+                "\n\n" + "\n\n".join(radar_lines))
+    # 平淡日「SLG 行业动态」兜底段（公众号广搜，见 send_daily_digest 的平淡日闸门）：
+    # **非我方追踪竞品**的行业面背景，故独立段 + 明确标注、**仅维护者卡**（领导卡保持已核实
+    # 竞品口径）。放全卡最后（补充性质，不与竞品数据抢眼球）。
+    if industry_articles and not is_leader:
+        ind_lines = build_industry_lines(industry_articles, cap)
+        if ind_lines:
+            total += len(ind_lines)
+            sections.append(
+                "【📰 SLG 行业动态】（公众号近期 · 行业面背景，非我方追踪竞品）"
+                "\n\n" + "\n\n".join(ind_lines))
     if not sections:
         return None
     head = f"### 📡 SLG 每日情报 · {today}"
@@ -1232,21 +1319,53 @@ async def send_daily_digest() -> bool:
     # - leader 卡（剥离维护者杂讯）→ 领导群，**仅当独立配了 leader webhook** 才发
     #   （未配则只发 maintainer，维持今天的单卡行为，不把领导版卡重发进维护者群）。
     # critical=True：主卡是「每日必达」，终态失败升 Sentry ERROR 让维护者立刻补。
-    def _render(audience):
-        return build_daily_digest(per_combo, today, articles=articles_by_app,
-                                  entities=entities_by_app, version_changes=version_changes,
-                                  video_items=video_items, region_changes=region_changes,
-                                  summaries=summaries_by_app, lead_items=lead_items,
-                                  audience=audience, own_matches=own_matches)
-
     # 硬锚核心 US/iOS：区分『真平淡日』(已同步、确无事) vs『数据未就位』(今日无快照=同步可能失败)。
     # detect_movement 仅在 today 未缺数据时赋值 entry["movement"]（today_missing 闸门），故它非 None
     # 或 market.as_of==today 即核心 combo 今日有新快照。找不到该 combo（理论不应）→ 保守按已就位、不误报。
+    # （定义提前：平淡日兜底闸门要用它，确保填充不掩盖『数据未就位』。）
     def _core_synced() -> bool:
         for c in per_combo:
             if c["country"] == "US" and c["platform"] == "ios":
                 return c.get("movement") is not None or (c.get("market") or {}).get("as_of") == today
         return True
+
+    # 平淡日兜底填充（仅维护者卡）：当日竞品实质信号 < DIGEST_QUIET_THRESHOLD **且核心已同步**
+    # （真平淡、非管道故障）→ 补 C 商店雷达近期段（本地库，零 ST）+ A 行业动态段（公众号广搜，
+    # 零 ST）。gate 在 _core_synced 上是关键：否则同步故障日会被填成非空卡、掩盖『数据未就位』。
+    industry_articles: list = []
+    radar_items: list = []
+    is_quiet = (settings.DIGEST_QUIET_THRESHOLD > 0
+                and _primary_item_count(per_combo, version_changes, region_changes)
+                    < settings.DIGEST_QUIET_THRESHOLD
+                and not settings.USE_MOCK_DATA and _core_synced())
+    if is_quiet:
+        # C：商店雷达近期新上架（本地 publisher_itunes_apps，零 ST）。
+        if settings.DIGEST_RADAR_RECENT_DAYS > 0:
+            try:
+                radar_items = await _recent_radar_arrivals(settings.DIGEST_RADAR_RECENT_DAYS)
+            except Exception:
+                logger.warning("radar recent arrivals (quiet-day filler) failed", exc_info=True)
+        # A：SLG 行业动态（公众号广搜，零 ST；未启用/连不上降级空）。跨天重复靠时窗控。
+        if settings.WECHAT_INDUSTRY_ENABLED and settings.WECHAT_ENABLED:
+            try:
+                from app.services.wechat_articles import search_multi_keywords
+                ind_kws = [k.strip() for k in settings.WECHAT_INDUSTRY_KEYWORDS.split(",") if k.strip()]
+                if ind_kws:
+                    raw = await search_multi_keywords(ind_kws, limit=settings.WECHAT_INDUSTRY_MAX,
+                                                      days=settings.WECHAT_INDUSTRY_DAYS)
+                    # 去掉已按新品名精确挂上的文章（免与新品行 📰 重复）。
+                    shown = {a.link for arts in articles_by_app.values() for a in arts}
+                    industry_articles = [a for a in raw if a.link not in shown][:settings.WECHAT_INDUSTRY_MAX]
+            except Exception:
+                logger.warning("wechat industry search (quiet-day filler) failed", exc_info=True)
+
+    def _render(audience):
+        return build_daily_digest(per_combo, today, articles=articles_by_app,
+                                  entities=entities_by_app, version_changes=version_changes,
+                                  video_items=video_items, region_changes=region_changes,
+                                  summaries=summaries_by_app, lead_items=lead_items,
+                                  audience=audience, own_matches=own_matches,
+                                  industry_articles=industry_articles, radar_items=radar_items)
 
     sent_any = False
     msg_m = _render("maintainer")
