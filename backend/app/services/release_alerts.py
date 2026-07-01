@@ -638,14 +638,21 @@ def build_lead_newcomer_lines(lead_items: list[dict]) -> list[str]:
 
 
 def build_version_lines(changes: list[dict], cap: int) -> list[str]:
-    """版本变更 → 人读行（需求② / ADR 0003）。changes: [{name, old, new, date}]。
+    """版本变更 → 人读行（需求② / ADR 0003）。changes: [{name, old, new, date, notes_cn?}]。
 
     全局段（跨 combo），tracked iOS 竞品版本更新。封顶 cap 防极端日刷屏。
+    notes_cn（版本更新说明的 LLM 一句话实质摘要，见 version_tracker._summarize_notes）
+    有值时补一条 📝 子行——把「1.1.8 → 1.1.9」这种纯版本号变成「新赛季 X / 平衡调整」可读情报；
+    纯 bugfix / 无 notes 时 notes_cn=None，只显版本号不加噪。
     """
     out: list[str] = []
     for c in changes[:cap]:
         date = f"（{c['date']}）" if c.get("date") else ""
-        out.append(f"🆙 **{_md_name(c['name'])}**：{_md_name(c['old'], maxlen=None)} → {_md_name(c['new'], maxlen=None)}{date}")
+        line = f"🆙 **{_md_name(c['name'])}**：{_md_name(c['old'], maxlen=None)} → {_md_name(c['new'], maxlen=None)}{date}"
+        notes_cn = (c.get("notes_cn") or "").strip()
+        if notes_cn:
+            line += f"\n   📝 {_md_name(notes_cn, maxlen=60)}"
+        out.append(line)
     return out
 
 
