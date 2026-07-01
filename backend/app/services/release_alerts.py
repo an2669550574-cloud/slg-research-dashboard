@@ -668,6 +668,35 @@ def build_region_launch_lines(changes: list[dict], cap: int) -> list[str]:
     return out
 
 
+def _primary_item_count(per_combo: list[dict], version_changes, region_changes) -> int:
+    """当日『竞品实质信号』计数：异动 + 四层新品 + 版本 + 新区（不含待建档/兜底填充段）。
+    用于判『平淡日』→ 触发维护者卡兜底填充（SLG 行业动态段）。"""
+    n = 0
+    for c in per_combo:
+        mv = c.get("movement") or {}
+        for k in ("new_entrants", "surges", "drops", "revenue_spikes"):
+            n += len(mv.get(k) or [])
+        for key in ("market", "publisher", "free_market", "free_publisher"):
+            n += len((c.get(key) or {}).get("newcomers") or [])
+    return n + len(version_changes or []) + len(region_changes or [])
+
+
+def build_industry_lines(articles: list, cap: int) -> list[str]:
+    """平淡日「SLG 行业动态」段：公众号广搜的近期行业/新品文章 → 链接行。**非我方追踪
+    竞品**的行业面背景（区别于按新品名精确回挂的 📰），故独立段 + 明确标注、仅维护者卡。"""
+    out: list[str] = []
+    for a in articles[:cap]:
+        link = getattr(a, "link", "") or ""
+        title = " ".join(((getattr(a, "title", "") or "")
+                          .replace("[", "(").replace("]", ")").replace("|", "/")).split())
+        if not link or not title:
+            continue
+        author = getattr(a, "author", "") or ""
+        src = f" · {_md_name(author)}" if author else ""
+        out.append(f"📰 [{title}]({link}){src}")
+    return out
+
+
 def _digest_tldr(per_combo: list[dict], version_changes, region_changes,
                  video_items, lead_items, own_match_count: int = 0) -> str:
     """开头一句话总览（TL;DR）：让领导打开卡片先有「今天整体什么情况」的锚点，不用读完
@@ -835,7 +864,8 @@ def build_daily_digest(per_combo: list[dict], today: str,
                        summaries: Optional[dict] = None,
                        lead_items: Optional[list[dict]] = None,
                        audience: str = "maintainer",
-                       own_matches: Optional[dict] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
+                       own_matches: Optional[dict] = None,
+                       industry_articles: Optional[list] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
     """全 combo 检测结果 → (title, markdown, btns)。全空 → None（不发）。
 
     per_combo: [{country, platform, movement: dict|None, market: dict|None, publisher: dict|None}]
@@ -937,6 +967,16 @@ def build_daily_digest(per_combo: list[dict], today: str,
             sections.append(
                 "【🔍 待建档新厂线索】（下载榜疑似 SLG、白名单未收录 → 请人工核查建档）"
                 "\n\n" + "\n\n".join(lead_lines))
+    # 平淡日「SLG 行业动态」兜底段（公众号广搜，见 send_daily_digest 的平淡日闸门）：
+    # **非我方追踪竞品**的行业面背景，故独立段 + 明确标注、**仅维护者卡**（领导卡保持已核实
+    # 竞品口径）。放全卡最后（补充性质，不与竞品数据抢眼球）。
+    if industry_articles and not is_leader:
+        ind_lines = build_industry_lines(industry_articles, cap)
+        if ind_lines:
+            total += len(ind_lines)
+            sections.append(
+                "【📰 SLG 行业动态】（公众号近期 · 行业面背景，非我方追踪竞品）"
+                "\n\n" + "\n\n".join(ind_lines))
     if not sections:
         return None
     head = f"### 📡 SLG 每日情报 · {today}"
@@ -1239,21 +1279,45 @@ async def send_daily_digest() -> bool:
     # - leader 卡（剥离维护者杂讯）→ 领导群，**仅当独立配了 leader webhook** 才发
     #   （未配则只发 maintainer，维持今天的单卡行为，不把领导版卡重发进维护者群）。
     # critical=True：主卡是「每日必达」，终态失败升 Sentry ERROR 让维护者立刻补。
-    def _render(audience):
-        return build_daily_digest(per_combo, today, articles=articles_by_app,
-                                  entities=entities_by_app, version_changes=version_changes,
-                                  video_items=video_items, region_changes=region_changes,
-                                  summaries=summaries_by_app, lead_items=lead_items,
-                                  audience=audience, own_matches=own_matches)
-
     # 硬锚核心 US/iOS：区分『真平淡日』(已同步、确无事) vs『数据未就位』(今日无快照=同步可能失败)。
     # detect_movement 仅在 today 未缺数据时赋值 entry["movement"]（today_missing 闸门），故它非 None
     # 或 market.as_of==today 即核心 combo 今日有新快照。找不到该 combo（理论不应）→ 保守按已就位、不误报。
+    # （定义提前：平淡日兜底闸门要用它，确保填充不掩盖『数据未就位』。）
     def _core_synced() -> bool:
         for c in per_combo:
             if c["country"] == "US" and c["platform"] == "ios":
                 return c.get("movement") is not None or (c.get("market") or {}).get("as_of") == today
         return True
+
+    # 平淡日兜底填充（仅维护者卡）：当日竞品实质信号 < DIGEST_QUIET_THRESHOLD **且核心已同步**
+    # （真平淡、非管道故障）→ 行业关键词广搜公众号补「SLG 行业动态」段。gate 在 _core_synced 上
+    # 是关键：否则同步故障日会被行业文章填成非空卡、掩盖『数据未就位』告警。零 ST；未启用/连不上
+    # 优雅降级空。跨天重复靠 WECHAT_INDUSTRY_DAYS 时窗控（v1 无持久去重）。
+    industry_articles: list = []
+    if (settings.DIGEST_QUIET_THRESHOLD > 0
+            and _primary_item_count(per_combo, version_changes, region_changes)
+                < settings.DIGEST_QUIET_THRESHOLD
+            and settings.WECHAT_INDUSTRY_ENABLED and settings.WECHAT_ENABLED
+            and not settings.USE_MOCK_DATA and _core_synced()):
+        try:
+            from app.services.wechat_articles import search_multi_keywords
+            ind_kws = [k.strip() for k in settings.WECHAT_INDUSTRY_KEYWORDS.split(",") if k.strip()]
+            if ind_kws:
+                raw = await search_multi_keywords(ind_kws, limit=settings.WECHAT_INDUSTRY_MAX,
+                                                  days=settings.WECHAT_INDUSTRY_DAYS)
+                # 去掉已按新品名精确挂上的文章（免与新品行 📰 重复）。
+                shown = {a.link for arts in articles_by_app.values() for a in arts}
+                industry_articles = [a for a in raw if a.link not in shown][:settings.WECHAT_INDUSTRY_MAX]
+        except Exception:
+            logger.warning("wechat industry search (quiet-day filler) failed", exc_info=True)
+
+    def _render(audience):
+        return build_daily_digest(per_combo, today, articles=articles_by_app,
+                                  entities=entities_by_app, version_changes=version_changes,
+                                  video_items=video_items, region_changes=region_changes,
+                                  summaries=summaries_by_app, lead_items=lead_items,
+                                  audience=audience, own_matches=own_matches,
+                                  industry_articles=industry_articles)
 
     sent_any = False
     msg_m = _render("maintainer")

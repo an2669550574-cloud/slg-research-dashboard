@@ -1103,3 +1103,47 @@ async def test_send_daily_digest_data_not_ready_alarms(client, monkeypatch, capl
     assert any("数据未就位" in title for title, _ in md_sent)
     assert any("core US/iOS snapshot missing" in r.getMessage()
                for r in caplog.records if r.levelno == logging.ERROR)
+
+
+# ── 平淡日「SLG 行业动态」兜底段（A）─────────────────────────────────────────
+
+def test_industry_lines_render():
+    """build_industry_lines：公众号文章 → 📰 链接行；无标题/无链接的跳过；作者做来源尾标。"""
+    from types import SimpleNamespace as NS
+    from app.services.release_alerts import build_industry_lines
+    arts = [
+        NS(title=" 2026 SLG 出海新品盘点 ", link="https://mp.weixin.qq.com/s/abc", author="游戏葡萄"),
+        NS(title="", link="https://x", author="X"),          # 无标题 → 跳过
+        NS(title="策略新游首发", link="", author="Y"),          # 无链接 → 跳过
+    ]
+    lines = build_industry_lines(arts, cap=10)
+    assert lines == ["📰 [2026 SLG 出海新品盘点](https://mp.weixin.qq.com/s/abc) · 游戏葡萄"]
+
+
+def test_digest_industry_section_maintainer_only():
+    """行业动态段只进维护者卡，领导卡剥离（保持已核实竞品口径）。"""
+    from types import SimpleNamespace as NS
+    from app.services.release_alerts import build_daily_digest
+    arts = [NS(title="SLG 出海月报", link="https://mp.weixin.qq.com/s/z", author="游戏陀螺")]
+    ver = [{"app_id": "1", "name": "万国觉醒", "old": "1.0", "new": "1.1", "date": "2026-07-01"}]
+
+    _, body_m, _ = build_daily_digest([], "2026-07-01", version_changes=ver,
+                                      industry_articles=arts, audience="maintainer")
+    assert "SLG 行业动态" in body_m and "SLG 出海月报" in body_m
+
+    _, body_l, _ = build_daily_digest([], "2026-07-01", version_changes=ver,
+                                      industry_articles=arts, audience="leader")
+    assert "SLG 行业动态" not in body_l and "SLG 出海月报" not in body_l
+
+
+def test_primary_item_count():
+    """平淡日判定计数：异动 + 四层新品 + 版本 + 新区（不含待建档/填充段）。"""
+    from app.services.release_alerts import _primary_item_count
+    per_combo = [{
+        "movement": {"new_entrants": [{}], "surges": [], "drops": [{}], "revenue_spikes": []},
+        "market": {"newcomers": [{}, {}]}, "publisher": None,
+        "free_market": None, "free_publisher": None,
+    }]
+    # 2 movement + 2 newcomers + 1 version + 0 region = 5
+    assert _primary_item_count(per_combo, [{"x": 1}], []) == 5
+    assert _primary_item_count([], [], []) == 0
