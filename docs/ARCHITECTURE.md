@@ -162,6 +162,19 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 - **数据未就位**（核心 US/iOS 今日无快照）：`logger.error`→Sentry + 发克制维护者兜底卡（`build_data_not_ready_card`）。**不受开关控制**——这是管道故障告警。次市场双周非同步日不会误触发（US/iOS 每日有数据 → 卡非空 → 根本不进此分支）；仅「全卡空 + US/iOS 今日无快照」= 真故障时触发。
 - **真平淡日**（核心已同步、确无事）：默认静默；`DIGEST_HEARTBEAT_ENABLED`(默认 False) 开才发「今日平静」心跳卡（`build_heartbeat_card`，两群同发）。**推领导群后再开**——领导看不到卡会误读「是不是坏了」；测试群只有本人、天天收无聊心跳没意义。
 
+### 平淡日兜底填充：E 版本摘要 / A 行业动态 / C 雷达近期（#178，2026-07-01）
+
+US-only 非次市场同步日 + 美区平淡时维护者卡很薄（实测某日仅 2 异动 + 2 版本）。三个**零 ST** 增量提升信息密度，**仅维护者卡**（领导卡保持已核实竞品口径，不掺行业/雷达杂讯）：
+
+- **E 版本更新 changelog LLM 摘要**（每天见效，非仅平淡日）：`releaseNotes` 本就在 iTunes lookup 响应里（零增量 ST）、`check_tracked_versions` 已落 `GameHistory` 但**没透传给 digest**——过去 `1.1.8→1.1.9` 只有版本号无情报量。现透传 raw notes + `version_tracker._summarize_notes` 走太石网关一句话中文提炼（新赛季/玩法/新英雄/付费点/平衡），`build_version_lines` 渲 📝 子行。**纯 bugfix / 无 notes / 无 key / mock → notes_cn=None 不加子行**（不制造噪声）。LLM 调用**在 DB 会话外**（不占连接等 LLM），变更稀少故 cost 可忽略。
+- **A 平淡日「SLG 行业动态」公众号广搜**：与「按新品名精确回挂文章」（见「微信文章匹配」节）互补——那个挂到当日检出新品，这个是**无检出/信号稀薄时**用 `WECHAT_INDUSTRY_KEYWORDS`（新品/首发/出海/版号/买量四类，`.env` 可覆盖）广搜订阅号补一段。去重 vs 已挂新品文章、`WECHAT_INDUSTRY_DAYS`=3 时窗控跨天重复（v1 无持久去重）。零 ST（走 wechat-api），连不上/未启用优雅降级空。
+- **C 商店雷达近期新上架折进平淡日**：`_recent_radar_arrivals(DIGEST_RADAR_RECENT_DAYS=2)` 把商店雷达（清单 diff，6h 独立推送）近 N 天非基线新上架折进日级汇总，纯本地 `publisher_itunes_apps` 读、零 ST。
+- **共享闸门（关键护栏）**：三段都只在 `is_quiet && _core_synced()` 触发——`is_quiet` = `_primary_item_count`（异动 + 四层新品 + 版本 + 新区，不含待建档/填充段）< `DIGEST_QUIET_THRESHOLD`(默认 6)。**gate 在 `_core_synced` 上是关键**：否则同步故障日会被行业/雷达填成非空卡、掩盖上一节的「数据未就位」告警。
+
+### 领导群每天最多推一次（幂等守卫，#179，alembic 0037）
+
+`daily_alert_digest` 的 `misfire_grace_time=3600` 是**故意保留**的（容器若在 03:00 UTC 刚好重启，1h 内回来仍能补发当日必达 digest，别删）——但副作用是**容器在 03:00–04:00 UTC 重启会 misfire 补跑 → 领导群重复收卡**。不动 grace，改加幂等：新表 `leader_digest_send`（`send_date` UTC 唯一），领导卡发送前查当天有无标记 → 有则跳过（`_leader_digest_sent_today`）；**发送成功后**才落标记（`_mark_leader_digest_sent`，失败不落、下轮可重试）。**仅领导群**（维护者群运维向、重发无碍、不设限）；覆盖主卡 + 心跳两个 leader 出口；持久化在 DB 是必须的——misfire 正是**重启**触发，内存标记会丢。`send_date` 唯一约束天然兜并发/竞态（理论 `max_instances=1` 无并发）。
+
 ### 缺口忽略名单过滤（2026-06-22）
 
 全市场新品（`detect_newcomers`）+ 检出沉淀 + digest 复用 `publisher_ignores`（与 [`/gaps`](PUBLISHERS.md) **同一名单同一口径** `_tokens`+`corp_squash`），剔除**人工逐条确认的非 SLG 噪声**——误挂 App Store「strategy」标签的麻将 / 扑克 / 塔防 / 宝可梦对战等。
