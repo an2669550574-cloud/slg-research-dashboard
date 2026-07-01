@@ -1177,3 +1177,43 @@ def test_digest_radar_section_maintainer_only():
     _, body_l, _ = build_daily_digest([], "2026-07-01", version_changes=ver,
                                       radar_items=items, audience="leader")
     assert "商店雷达" not in body_l and "Frost Siege" not in body_l
+
+
+# ── 领导群每日一次幂等守卫（防 misfire 补跑重复推领导群）────────────────────
+
+@pytest.mark.asyncio
+async def test_leader_digest_send_marker_helpers(client):
+    """领导群幂等标记 helper：写后 sent_today 为真、跨天为假、同日重复写不抛（唯一约束兜底）。"""
+    from app.services.release_alerts import _leader_digest_sent_today, _mark_leader_digest_sent
+    assert await _leader_digest_sent_today("2026-07-01") is False
+    await _mark_leader_digest_sent("2026-07-01", "内容 A")
+    assert await _leader_digest_sent_today("2026-07-01") is True
+    assert await _leader_digest_sent_today("2026-07-02") is False
+    await _mark_leader_digest_sent("2026-07-01", "内容 B")  # 同日重复插入 → IntegrityError 吞掉
+    assert await _leader_digest_sent_today("2026-07-01") is True
+
+
+@pytest.mark.asyncio
+async def test_leader_digest_once_per_day(client, monkeypatch):
+    """领导群每天最多推一次：同日第二次跑（模拟 misfire 补跑）跳过领导群，维护者群照发。"""
+    import importlib
+    from collections import Counter
+    ra = importlib.import_module("app.services.release_alerts")
+    dt = importlib.import_module("app.services.dingtalk")
+    from app.config import settings
+    monkeypatch.setattr(settings, "DINGTALK_WEBHOOK_URL", "https://example.com/maintainer")
+    monkeypatch.setattr(settings, "DINGTALK_WEBHOOK_URL_LEADER", "https://example.com/leader", raising=False)
+    monkeypatch.setattr(settings, "SYNC_RANKING_COMBOS", "US:ios")
+    monkeypatch.setattr(ra, "build_daily_digest",
+                        lambda *a, audience="maintainer", **k: ("t", f"CARD::{audience}", []))
+    sent = []
+    async def fake_card(title, text, btns=None, target="maintainer", critical=False):
+        sent.append(target)
+        return True
+    monkeypatch.setattr(dt, "send_action_card", fake_card)
+
+    assert await ra.send_daily_digest() is True    # 第一次：两群都发
+    assert await ra.send_daily_digest() is True     # 第二次（同日补跑）：领导群跳过
+    c = Counter(sent)
+    assert c["maintainer"] == 2   # 维护者群不设限，两次都发
+    assert c["leader"] == 1       # 领导群当天只发一次

@@ -22,10 +22,12 @@ from typing import Optional
 from urllib.parse import quote
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.database import AsyncSessionLocal, utcnow_naive
 from app.models.publisher import PublisherEntity, PublisherItunesApp, PublisherItunesArtist
+from app.models.digest import LeaderDigestSend
 from app.models.game import CHART_FREE
 from app.services import dingtalk
 
@@ -1059,6 +1061,28 @@ def build_data_not_ready_card(today: str) -> tuple[str, str]:
     return "每日情报 · 数据未就位", text
 
 
+async def _leader_digest_sent_today(date: str) -> bool:
+    """领导群今日 digest 是否已发（幂等标记，防 misfire 补跑重复推领导群）。date=UTC 日。"""
+    async with AsyncSessionLocal() as db:
+        row = (await db.execute(
+            select(LeaderDigestSend.id).where(LeaderDigestSend.send_date == date)
+        )).first()
+    return row is not None
+
+
+async def _mark_leader_digest_sent(date: str, content: str) -> None:
+    """领导群发送**成功后**落幂等标记（失败不落，下轮可重试）。send_date 唯一约束兜并发/
+    竞态（理论 max_instances=1 无并发）：重复插入 IntegrityError 吞掉即可。"""
+    import hashlib
+    h = hashlib.sha256((content or "").encode("utf-8")).hexdigest()[:32]
+    async with AsyncSessionLocal() as db:
+        db.add(LeaderDigestSend(send_date=date, content_hash=h))
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+
+
 async def send_daily_digest() -> bool:
     """日级 job 入口：对全部已配置 combo 重跑检测，拼一张卡发一次。
 
@@ -1382,18 +1406,28 @@ async def send_daily_digest() -> bool:
         if settings.DIGEST_HEARTBEAT_ENABLED:
             hb = build_heartbeat_card(today)
             sent_any = await dingtalk.send_markdown(*hb, target="maintainer") or sent_any
-            if dingtalk.leader_target_configured():
-                sent_any = await dingtalk.send_markdown(*hb, target="leader") or sent_any
+            # 领导群每天最多推一次（含心跳）：misfire 补跑当天已发则跳过。
+            if dingtalk.leader_target_configured() and not await _leader_digest_sent_today(today):
+                if await dingtalk.send_markdown(*hb, target="leader"):
+                    await _mark_leader_digest_sent(today, hb[1])
+                    sent_any = True
             return sent_any
         logger.info("daily digest: nothing to report for %s (core synced, quiet day)", today)
         return sent_any
     sent_any = await dingtalk.send_action_card(*msg_m, target="maintainer",
                                                critical=True) or sent_any
     if dingtalk.leader_target_configured():
-        msg_l = _render("leader")
-        if msg_l is not None:
-            sent_any = await dingtalk.send_action_card(*msg_l, target="leader",
-                                                       critical=True) or sent_any
+        # 领导群每天最多推一次：misfire 补跑（容器在 03:00–04:00 UTC 重启触发 daily_alert_digest
+        # 重跑）当天已发就跳过，不重复推领导群。维护者群不设限（上面已发、运维向重发无碍）。
+        # 标记在**发送成功后**才落（失败不落、下轮可重试）。
+        if await _leader_digest_sent_today(today):
+            logger.info("daily digest: leader already pushed for %s, skip duplicate (misfire re-run?)", today)
+        else:
+            msg_l = _render("leader")
+            if msg_l is not None and await dingtalk.send_action_card(
+                    *msg_l, target="leader", critical=True):
+                await _mark_leader_digest_sent(today, msg_l[1])
+                sent_any = True
     return sent_any
 
 
