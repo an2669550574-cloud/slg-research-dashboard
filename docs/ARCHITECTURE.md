@@ -155,6 +155,14 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 
 `detect_movement` 加一道历史窗：上一可用日**之前** `COMPETITOR_REENTRY_WINDOW_DAYS`(默认 30) 天内曾在 Top20 的 app_id → new_entrant 打 `is_reentry=True`（每 combo 多一条本地查询，零 ST；窗口取 `[cutoff, prev_date)` 避开当期对比日；`=0` 关此判定；只看 `rank<=topn` 的历史，仅榜尾出现过不算回归）。渲染层（`release_alerts.py`）：文案「🆕 空降」→「🔄 重回」（`build_movement_lines` + `_highlight_line` 两处），重要度 ×`_REENTRY_PENALTY`(0.4) **降权**——高名次回归仍可冒头、不硬排除，但不再压过真首发污染今日要闻。surge/drop/revenue_spike 无回归概念、不受影响。
 
+### 连涨趋势（sustained climb，第五类 movement，#184）
+
+surge（窜升）比对 today vs **上一可用日**单日名次跳 ≥ `COMPETITOR_RANK_JUMP`(10)，结构性漏掉「每天涨一点、单日够不到阈值、但多日累计可观」的稳步爬升（真实样本 War and Order `#40→#38→#35→#28`，5 天累计升 12、单日最多才 7）。`_sustained_climbs` 补此盲区：第五类 movement `climb`，零 ST 纯读 `game_rankings` 窗口历史。
+
+**判定（全部满足）**：今日名次 ≤ `COMPETITOR_CLIMB_TOPN`(40，刻意比 surge 的 Top20 宽——US/iOS Top20 被头部 SLG 霸榜极稳、真连涨发生在中段向上) + `is_slg` + 未被今日空降/窜升占用（去重） + 窗口 `[today-COMPETITOR_CLIMB_WINDOW_DAYS(5), today]` 内 ≥ `COMPETITOR_CLIMB_MIN_SNAPSHOTS`(3) 个快照（数据充分性，次市场双周同步快照不足 → **结构性只对日更市场生效**） + 累计升幅 `start_rank - cur_rank` ≥ `COMPETITOR_CLIMB_MIN_DROP`(10，与 RANK_JUMP 对称：单日跳≥10=surge，多日累计≥10 且无单日 surge=连涨) + 今日为窗口新高（`cur_rank ≤ min(ranks)`，排除爬到高位又回落的伪连涨) + 起点即窗口最差（`start_rank == max(ranks)`，单调守卫，排除先跌破起点再净回升的 V 形/震荡) + **无任何单日 surge**（相邻快照升幅全 < RANK_JUMP → 与 surge 段零重叠、不重报已被当日窜升报过的大跳)。
+
+渲染 `↗️ …连涨 #40 → #28（N天累计 ↑X）`（区别 📈 单日窜升；`span_days` 用**日历跨度** start_date→today、非快照数，漏同步天不失真），第五类 `climb` 对称接进 `_MOVEMENT_KINDS` + 打分 `_event_score` + 今日要闻 + 平淡日计数 + TL;DR + 同赛道 + 厂商归属。**校准**（HK prod US/iOS 15 天真实轨迹）：命中约 2/20 天（War and Order + Z Route），高信号低噪。**设计取舍（勿当漏洞回头改）**：无单日 surge 门控会漏掉「含单日大跳的多日大爬」= 故意（那天已被 surge 报过，避免重报，精度优先）；climb + revenue_spike 可同报 = 与既有 surge + revenue 同轴独立、一致。**前端 movements 页暂不展示**（`_flatten` 忽略新键、`MovementKind` 仍 4 类，本切片只做 digest；若接前端需同步改 router `_impact` kind_pri + 前端 `types.ts` + `TodayMovements` KIND_META，否则 KeyError 500）。
+
 ### 空卡分支：平淡日心跳 vs 数据未就位告警（P1.1）
 
 `send_daily_digest` 原本 maintainer 卡为空时只 `logger.info` 静默——掩盖了「同步烧穿/失败导致全卡空」与「真平淡日」的本质区别。现以**硬锚核心 US/iOS**（`_core_synced`：该 combo `movement` 非 None 或 `market.as_of==today` = 今日有新快照）二分：
@@ -167,7 +175,7 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 US-only 非次市场同步日 + 美区平淡时卡很薄（实测某日仅 2 异动 + 2 版本）。三个**零 ST** 增量提升信息密度。受众：**E 版本摘要两卡都发**（版本更新是已核实竞品动态）；**A 行业动态 / C 雷达** #178 上线时仅维护者卡，**2026-07-03 应领导反馈「卡太薄」放开为两卡都发**（A 段头「非我方追踪竞品」标注保留，口径边界靠标注而非删段；**待建档新厂线索仍仅维护者卡**——建档是维护者动作）。
 
 - **E 版本更新 changelog LLM 摘要**（每天见效，非仅平淡日）：`releaseNotes` 本就在 iTunes lookup 响应里（零增量 ST）、`check_tracked_versions` 已落 `GameHistory` 但**没透传给 digest**——过去 `1.1.8→1.1.9` 只有版本号无情报量。现透传 raw notes + `version_tracker._summarize_notes` 走太石网关一句话中文提炼（新赛季/玩法/新英雄/付费点/平衡），`build_version_lines` 渲 📝 子行。**纯 bugfix / 无 notes / 无 key / mock → notes_cn=None 不加子行**（不制造噪声）。LLM 调用**在 DB 会话外**（不占连接等 LLM），变更稀少故 cost 可忽略。**坑（#182，2026-07-03 修）**：太石网关文本模型 `gemini-*-preview` 是**思考型模型，reasoning token 计入 `max_tokens`**——原 `max_tokens=120` 被 reasoning 烧光 → `finish_reason='length'` + 空 content → 静默当「无摘要」，**📝 自 #178 上线起从未渲染过**。修=120→**1024**（留 reasoning 余量）+ 空 content 打 warning（不再静默）。**给思考型模型设 max_tokens 必须留内部推理余量，别只按答案长度估。**
-- **A 平淡日「SLG 行业动态」公众号广搜**：与「按新品名精确回挂文章」（见「微信文章匹配」节）互补——那个挂到当日检出新品，这个是**无检出/信号稀薄时**用 `WECHAT_INDUSTRY_KEYWORDS`（新品/首发/出海/版号/买量四类，`.env` 可覆盖）广搜订阅号补一段。去重 vs 已挂新品文章、`WECHAT_INDUSTRY_DAYS`=3 时窗控跨天重复（v1 无持久去重）。零 ST（走 wechat-api），连不上/未启用优雅降级空。
+- **A 平淡日「SLG 行业动态」公众号广搜**：与「按新品名精确回挂文章」（见「微信文章匹配」节）互补——那个挂到当日检出新品，这个是**无检出/信号稀薄时**用 `WECHAT_INDUSTRY_KEYWORDS`（新品/首发/出海/版号/买量四类，`.env` 可覆盖）广搜订阅号补一段。去重两道：① vs 已挂新品文章（同卡）；② **`wechat_article_sent` 台账持久跨天去重**（#185，alembic 0038）——卡发送成功后落已推文章 link，后续广搜过滤台账里已推的 link → 领导群每天见没推过的（`WECHAT_INDUSTRY_DAYS`=3 只控搜索时窗、不再是唯一防重手段）；`link` 唯一（幂等、保留首推日），落库顺手 prune 超 `WECHAT_ARTICLE_SENT_RETENTION_DAYS`(30) 天老行，`WECHAT_ARTICLE_DEDUP_ENABLED=False` 退回旧时窗行为。零 ST（走 wechat-api），连不上/未启用优雅降级空。**注**：新品行的 📰 文章**不进此台账**——「新品」是一次性事件（次日进 baseline 不再检出），其文章天然不跨天重复，全局台账反会误伤同一篇周报隔天匹配不同新品。
 - **C 商店雷达近期新上架折进平淡日**：`_recent_radar_arrivals(DIGEST_RADAR_RECENT_DAYS=2)` 把商店雷达（清单 diff，6h 独立推送）近 N 天非基线新上架折进日级汇总，纯本地 `publisher_itunes_apps` 读、零 ST。
 - **共享闸门（关键护栏）**：三段都只在 `is_quiet && _core_synced()` 触发——`is_quiet` = `_primary_item_count`（异动 + 四层新品 + 版本 + 新区，不含待建档/填充段）< `DIGEST_QUIET_THRESHOLD`(默认 6)。**gate 在 `_core_synced` 上是关键**：否则同步故障日会被行业/雷达填成非空卡、掩盖上一节的「数据未就位」告警。
 
