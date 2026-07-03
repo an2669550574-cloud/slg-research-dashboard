@@ -1149,8 +1149,9 @@ def test_industry_lines_render():
     assert lines == ["📰 [2026 SLG 出海新品盘点](https://mp.weixin.qq.com/s/abc) · 游戏葡萄"]
 
 
-def test_digest_industry_section_maintainer_only():
-    """行业动态段只进维护者卡，领导卡剥离（保持已核实竞品口径）。"""
+def test_digest_industry_section_both_audiences():
+    """行业动态段两卡都发（#178 上线时仅维护者卡；2026-07-03 应领导反馈「卡太单薄」
+    放开）。段头「非我方追踪竞品」标注保留，口径边界靠标注。"""
     from types import SimpleNamespace as NS
     from app.services.release_alerts import build_daily_digest
     arts = [NS(title="SLG 出海月报", link="https://mp.weixin.qq.com/s/z", author="游戏陀螺")]
@@ -1162,7 +1163,8 @@ def test_digest_industry_section_maintainer_only():
 
     _, body_l, _ = build_daily_digest([], "2026-07-01", version_changes=ver,
                                       industry_articles=arts, audience="leader")
-    assert "SLG 行业动态" not in body_l and "SLG 出海月报" not in body_l
+    assert "SLG 行业动态" in body_l and "SLG 出海月报" in body_l
+    assert "非我方追踪竞品" in body_l                       # 口径标注在领导卡保留
 
 
 def test_primary_item_count():
@@ -1194,8 +1196,8 @@ def test_radar_recent_lines_render():
     assert lines[1] == "🛒 **军团纪元** — 网易（🤖 Google Play · 美区视角）"
 
 
-def test_digest_radar_section_maintainer_only():
-    """商店雷达兜底段只进维护者卡，领导卡剥离。"""
+def test_digest_radar_section_both_audiences():
+    """商店雷达兜底段两卡都发（#178 上线时仅维护者卡；2026-07-03 应领导反馈放开）。"""
     from app.services.release_alerts import build_daily_digest
     items = [{"name": "Frost Siege", "entity": "Century Games", "platform_tag": "🍎 App Store",
               "genre": "Strategy", "sf": ""}]
@@ -1205,7 +1207,7 @@ def test_digest_radar_section_maintainer_only():
     assert "商店雷达 · 近期新上架" in body_m and "Frost Siege" in body_m
     _, body_l, _ = build_daily_digest([], "2026-07-01", version_changes=ver,
                                       radar_items=items, audience="leader")
-    assert "商店雷达" not in body_l and "Frost Siege" not in body_l
+    assert "商店雷达 · 近期新上架" in body_l and "Frost Siege" in body_l
 
 
 # ── 领导群每日一次幂等守卫（防 misfire 补跑重复推领导群）────────────────────
