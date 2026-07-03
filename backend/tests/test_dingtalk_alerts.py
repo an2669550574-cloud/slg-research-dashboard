@@ -1251,6 +1251,68 @@ async def test_leader_digest_send_marker_helpers(client):
     assert await _leader_digest_sent_today("2026-07-01") is True
 
 
+# ── 行业动态段跨天去重（已推 link 台账）────────────────────────────────────
+
+def _art(link, title):
+    """WechatArticle 替身（_mark/_load 只读 .link/.title）。标题用中文（CJK 硬规则）。"""
+    from types import SimpleNamespace as NS
+    return NS(link=link, title=title, digest="", author="某公众号", publish_time=None)
+
+
+@pytest.mark.asyncio
+async def test_wechat_article_ledger_roundtrip_and_idempotent(client):
+    """已推 link 台账：落库后 _load 含该 link；跨天同链接重复落不抛、仍单条（唯一约束兜底）。"""
+    from app.services.release_alerts import _load_sent_article_links, _mark_articles_sent
+    assert await _load_sent_article_links() == set()
+    await _mark_articles_sent([_art("https://mp.weixin.qq.com/s/aaa", "SLG 新游首发"),
+                               _art("https://mp.weixin.qq.com/s/bbb", "策略手游出海观察")], "2026-07-03")
+    links = await _load_sent_article_links()
+    assert links == {"https://mp.weixin.qq.com/s/aaa", "https://mp.weixin.qq.com/s/bbb"}
+    # 次日同一篇再次搜到 → 重复落库吞掉、保留首推日、不产生第二行
+    await _mark_articles_sent([_art("https://mp.weixin.qq.com/s/aaa", "SLG 新游首发（转载）")], "2026-07-04")
+    from app.database import AsyncSessionLocal
+    from app.models.digest import WechatArticleSent
+    from sqlalchemy import select, func
+    async with AsyncSessionLocal() as db:
+        n = (await db.execute(select(func.count()).select_from(WechatArticleSent)
+                              .where(WechatArticleSent.link == "https://mp.weixin.qq.com/s/aaa"))).scalar()
+        first_date = (await db.execute(select(WechatArticleSent.first_sent_date)
+                      .where(WechatArticleSent.link == "https://mp.weixin.qq.com/s/aaa"))).scalar()
+    assert n == 1 and first_date == "2026-07-03", "重复落库保留首推日、不新增行"
+
+
+@pytest.mark.asyncio
+async def test_wechat_article_ledger_prunes_old(client):
+    """落库时 prune 掉超 retention 天的老行（防表膨胀），近的保留。"""
+    from app.services.release_alerts import _load_sent_article_links, _mark_articles_sent
+    from app.database import AsyncSessionLocal
+    from app.models.digest import WechatArticleSent
+    async with AsyncSessionLocal() as db:  # 直接塞一条远古行（半年前）
+        db.add(WechatArticleSent(link="https://mp.weixin.qq.com/s/old", title="陈年旧文",
+                                 first_sent_date="2026-01-01"))
+        await db.commit()
+    # 今日推一篇新的（默认 retention=30 → cutoff 2026-06-03，远古行 < cutoff 被 prune）
+    await _mark_articles_sent([_art("https://mp.weixin.qq.com/s/new", "近期 SLG 版号")], "2026-07-03")
+    links = await _load_sent_article_links()
+    assert "https://mp.weixin.qq.com/s/new" in links
+    assert "https://mp.weixin.qq.com/s/old" not in links, "超 retention 老行应被 prune"
+
+
+@pytest.mark.asyncio
+async def test_wechat_article_dedup_disabled(client, monkeypatch):
+    """WECHAT_ARTICLE_DEDUP_ENABLED=False → _load 恒空、_mark no-op（退回仅时窗控重复）。"""
+    from app.services import release_alerts as ra
+    monkeypatch.setattr(ra.settings, "WECHAT_ARTICLE_DEDUP_ENABLED", False)
+    await ra._mark_articles_sent([_art("https://mp.weixin.qq.com/s/x", "标题")], "2026-07-03")
+    assert await ra._load_sent_article_links() == set()
+    from app.database import AsyncSessionLocal
+    from app.models.digest import WechatArticleSent
+    from sqlalchemy import select, func
+    async with AsyncSessionLocal() as db:
+        n = (await db.execute(select(func.count()).select_from(WechatArticleSent))).scalar()
+    assert n == 0, "关开关时不落库"
+
+
 @pytest.mark.asyncio
 async def test_leader_digest_once_per_day(client, monkeypatch):
     """领导群每天最多推一次：同日第二次跑（模拟 misfire 补跑）跳过领导群，维护者群照发。"""
