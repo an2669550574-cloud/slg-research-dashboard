@@ -217,6 +217,35 @@ async def test_summarize_notes_noop_without_key(monkeypatch):
     assert await vt._summarize_notes("万国觉醒", "2.0", "2.1", "新赛季开启") is None
 
 
+@pytest.mark.asyncio
+async def test_summarize_notes_empty_content_warns_not_silent(monkeypatch, caplog):
+    """LLM 返回空内容（真实故障：思考型模型 reasoning 烧光 max_tokens →
+    finish_reason='length' + content=''，prod 2026-07-03 实测）→ 返回 None 且**打
+    warning**，不再静默伪装成「无摘要」。"""
+    import logging
+    from types import SimpleNamespace as NS
+    from app.config import settings
+    from app.services import version_tracker as vt
+    monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
+    monkeypatch.setattr(settings, "TAISHI_API_KEY", "test-key")
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            # 复刻 prod 故障响应形状：choices 有、content 空、finish_reason=length。
+            return NS(choices=[NS(finish_reason="length",
+                                  message=NS(content=""))])
+
+    fake_client = NS(chat=NS(completions=FakeCompletions()))
+    monkeypatch.setattr(vt.llm_gateway, "get_client", lambda: fake_client)
+
+    with caplog.at_level(logging.WARNING, logger="app.services.version_tracker"):
+        out = await vt._summarize_notes("Lords Mobile", "2.196", "2.197",
+                                        "Football fever has gripped the Kingdoms")
+    assert out is None
+    assert any("summarize empty" in r.message and "length" in r.message
+               for r in caplog.records)   # 静默失败必须可见
+
+
 def test_version_lines_render_notes_subline():
     """build_version_lines：notes_cn 有值补 📝 子行；无则只显版本号不加噪。"""
     from app.services.release_alerts import build_version_lines

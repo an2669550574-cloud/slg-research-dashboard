@@ -1001,8 +1001,9 @@ def build_daily_digest(per_combo: list[dict], today: str,
                 "【🔍 待建档新厂线索】（下载榜疑似 SLG、白名单未收录 → 请人工核查建档）"
                 "\n\n" + "\n\n".join(lead_lines))
     # 平淡日兜底段之一：商店雷达近期新上架（见 send_daily_digest 平淡日闸门）。厂商开发者
-    # 账号清单 diff 的 catch，**仅维护者卡**（建档/软启动线索，对领导是杂讯）。放行业段之前。
-    if radar_items and not is_leader:
+    # 账号清单 diff 的 catch。#178 上线时仅维护者卡；2026-07-03 应领导反馈「卡太单薄」
+    # 改为**两卡都发**（平淡日才触发，正常日不占领导注意力）。
+    if radar_items:
         radar_lines = build_radar_recent_lines(radar_items, cap)
         if radar_lines:
             total += len(radar_lines)
@@ -1010,9 +1011,10 @@ def build_daily_digest(per_combo: list[dict], today: str,
                 "【🛒 商店雷达 · 近期新上架】（厂商开发者账号清单 diff · 含软启动）"
                 "\n\n" + "\n\n".join(radar_lines))
     # 平淡日「SLG 行业动态」兜底段（公众号广搜，见 send_daily_digest 的平淡日闸门）：
-    # **非我方追踪竞品**的行业面背景，故独立段 + 明确标注、**仅维护者卡**（领导卡保持已核实
-    # 竞品口径）。放全卡最后（补充性质，不与竞品数据抢眼球）。
-    if industry_articles and not is_leader:
+    # **非我方追踪竞品**的行业面背景，故独立段 + 明确标注。#178 上线时仅维护者卡（领导卡
+    # 保持已核实竞品口径）；2026-07-03 应领导反馈「卡太单薄」改为**两卡都发**——段头
+    # 「非我方追踪竞品」标注保留，口径边界靠标注而非删段。放全卡最后。
+    if industry_articles:
         ind_lines = build_industry_lines(industry_articles, cap)
         if ind_lines:
             total += len(ind_lines)
@@ -1353,7 +1355,8 @@ async def send_daily_digest() -> bool:
                 return c.get("movement") is not None or (c.get("market") or {}).get("as_of") == today
         return True
 
-    # 平淡日兜底填充（仅维护者卡）：当日竞品实质信号 < DIGEST_QUIET_THRESHOLD **且核心已同步**
+    # 平淡日兜底填充（两卡都发，2026-07-03 起；#178 上线时仅维护者卡）：当日竞品实质信号
+    # < DIGEST_QUIET_THRESHOLD **且核心已同步**
     # （真平淡、非管道故障）→ 补 C 商店雷达近期段（本地库，零 ST）+ A 行业动态段（公众号广搜，
     # 零 ST）。gate 在 _core_synced 上是关键：否则同步故障日会被填成非空卡、掩盖『数据未就位』。
     industry_articles: list = []
