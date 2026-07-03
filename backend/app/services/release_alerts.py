@@ -198,9 +198,10 @@ def _video_seg(videos: Optional[dict], app_id: Optional[str]) -> str:
 # （市场权重，只需 US>次市场、与量级无关）保证，与此处区间大小解耦。
 _MARKET_WEIGHT = {"us": 1.5, "cn": 1.2, "jp": 1.15, "kr": 1.1, "tw": 1.05, "de": 1.05, "gb": 1.05}
 _PLATFORM_WEIGHT = {"ios": 1.0, "android": 0.9}
-# movement 四类 → (kind, summary 字段名)，多处复用（行渲染排序 / 今日要闻收集）。
+# movement 五类 → (kind, summary 字段名)，多处复用（行渲染排序 / 今日要闻收集 / 平淡日计数）。
 _MOVEMENT_KINDS = (("new_entrant", "new_entrants"), ("surge", "surges"),
-                   ("drop", "drops"), ("revenue_spike", "revenue_spikes"))
+                   ("drop", "drops"), ("revenue_spike", "revenue_spikes"),
+                   ("climb", "climbs"))
 # new_entrant 命中「回归」(is_reentry) 时的强度乘数：老 SLG 短暂跌出 TopN 又回来 ≠ 真首发，
 # 新闻性远低，乘此系数压低分——既改文案「🔄 重回」又**降权今日要闻**（高名次回归仍可冒头，
 # 不硬排除）。0.4 让 #1 回归(≈4.8) 仍高于榜尾长尾、却低于真·头部空降(≈12)/高名次收入异动。
@@ -230,6 +231,11 @@ def _event_score(kind: str, e: dict) -> float:
     if kind == "surge":
         jump = max(0, (e.get("prev_rank") or 0) - (e.get("cur_rank") or 0))
         return 3 + 4 * _rank_height(e.get("cur_rank")) + min(jump, 40) * 0.15
+    if kind == "climb":
+        # 连涨比单日 surge 温和（渐进 ≠ 突发），基分略低；且多止步中段，_rank_height 天然偏低，
+        # 不会盖过头部空降/高名次收入异动，也不刷屏今日要闻。
+        drop = max(0, (e.get("start_rank") or 0) - (e.get("cur_rank") or 0))
+        return 2.5 + 4 * _rank_height(e.get("cur_rank")) + min(drop, 40) * 0.12
     if kind == "drop":
         return 2 + 4 * _rank_height(e.get("prev_rank"))
     if kind == "revenue_spike":
@@ -331,6 +337,10 @@ def build_movement_lines(s: dict, entities: Optional[dict] = None,
     for e in s["surges"]:
         scored.append((_event_score("surge", e),
                        f"📈 **{_md_name(e['name'])}** #{e['prev_rank']} → **#{e['cur_rank']}**（↑{e['prev_rank'] - e['cur_rank']}）" + _tag(e) + _meta(e)))
+    for e in s.get("climbs", []):
+        # ↗️ 连涨（区别 📈 单日窜升）：多日稳步爬升，标注跨度天数让领导看清「持续动量」而非一日抖动。
+        scored.append((_event_score("climb", e),
+                       f"↗️ **{_md_name(e['name'])}** 连涨 #{e['start_rank']} → **#{e['cur_rank']}**（{e['span_days']}天累计 ↑{e['start_rank'] - e['cur_rank']}）" + _tag(e) + _meta(e)))
     for e in s["drops"]:
         to = "榜外" if e["cur_rank"] is None else f"#{e['cur_rank']}"
         scored.append((_event_score("drop", e),
@@ -676,7 +686,7 @@ def _primary_item_count(per_combo: list[dict], version_changes, region_changes) 
     n = 0
     for c in per_combo:
         mv = c.get("movement") or {}
-        for k in ("new_entrants", "surges", "drops", "revenue_spikes"):
+        for k in ("new_entrants", "surges", "drops", "revenue_spikes", "climbs"):
             n += len(mv.get(k) or [])
         for key in ("market", "publisher", "free_market", "free_publisher"):
             n += len((c.get(key) or {}).get("newcomers") or [])
@@ -739,7 +749,7 @@ def _digest_tldr(per_combo: list[dict], version_changes, region_changes,
     for c in per_combo:
         mv = c.get("movement") or {}
         move += sum(len(mv.get(k) or []) for k in
-                    ("new_entrants", "surges", "drops", "revenue_spikes"))
+                    ("new_entrants", "surges", "drops", "revenue_spikes", "climbs"))
         for key in ("market", "publisher", "free_market", "free_publisher"):
             for x in ((c.get(key) or {}).get("newcomers") or []):
                 if not x.get("is_reentry") and x.get("app_id"):
@@ -813,6 +823,8 @@ def _highlight_line(item: dict, own_matches: Optional[dict] = None) -> str:
         return f"{mkt} {ico} **{_md_name(e['name'])}** {verb} #{e['cur_rank']}{own}"
     if kind == "surge":
         return f"{mkt} 📈 **{_md_name(e['name'])}** #{e['prev_rank']} → #{e['cur_rank']}{own}"
+    if kind == "climb":
+        return f"{mkt} ↗️ **{_md_name(e['name'])}** 连涨 #{e['start_rank']} → #{e['cur_rank']}（{e['span_days']}天）{own}"
     if kind == "drop":
         to = "榜外" if e.get("cur_rank") is None else f"#{e['cur_rank']}"
         return f"{mkt} 📉 **{_md_name(e['name'])}** 跌出 Top（#{e['prev_rank']} → {to}）{own}"
@@ -1219,7 +1231,7 @@ async def send_daily_digest() -> bool:
         for c in per_combo:
             mv = c.get("movement") or {}
             rows = list((c.get("market") or {}).get("newcomers") or [])
-            for k in ("new_entrants", "surges", "drops", "revenue_spikes"):
+            for k in ("new_entrants", "surges", "drops", "revenue_spikes", "climbs"):
                 rows += mv.get(k) or []
             for n in rows:
                 aid = n.get("app_id")
@@ -1317,7 +1329,7 @@ async def send_daily_digest() -> bool:
                         if n.get("app_id"):
                             cand_ids.add(n["app_id"])
                 mv = c.get("movement") or {}
-                for k in ("new_entrants", "surges", "drops", "revenue_spikes"):
+                for k in ("new_entrants", "surges", "drops", "revenue_spikes", "climbs"):
                     for e in (mv.get(k) or []):
                         if e.get("app_id"):
                             cand_ids.add(e["app_id"])
@@ -1341,7 +1353,7 @@ async def send_daily_digest() -> bool:
                             if (m := _match_own_product(text, subgenre_by_app.get(aid), own_products)):
                                 own_matches[aid] = m[0]
                 mv = c.get("movement") or {}
-                for k in ("new_entrants", "surges", "drops", "revenue_spikes"):
+                for k in ("new_entrants", "surges", "drops", "revenue_spikes", "climbs"):
                     for e in (mv.get(k) or []):
                         aid = e.get("app_id")
                         if aid and aid not in own_matches:

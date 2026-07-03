@@ -38,6 +38,8 @@ async def detect_movement(country: str, platform: str, today: str) -> dict:
         "today_missing": False,
         "new_entrants": [], "surges": [],
         "drops": [], "revenue_spikes": [],
+        # 连涨趋势（sustained climb）：多日稳步累计爬升，补 surge 单日阈值盲区（见 _sustained_climbs）。
+        "climbs": [],
     }
     if not settings.COMPETITOR_ALERT_ENABLED:
         return summary
@@ -150,7 +152,97 @@ async def detect_movement(country: str, platform: str, today: str) -> dict:
                 "publisher": p.publisher, "revenue": src.revenue, "downloads": src.downloads,
             })
 
+    # 连涨趋势：另开一轮窗口历史查询（今日快照已确认非缺失，可安全对比）。已被今日「空降/
+    # 窜升」占用的 app 排除——同一竞品不在两段各报一遍。
+    exclude = ({e["app_id"] for e in summary["new_entrants"]}
+               | {e["app_id"] for e in summary["surges"]})
+    summary["climbs"] = await _sustained_climbs(
+        country, platform, today, exclude=exclude, cur=cur)
+
     return summary
+
+
+async def _sustained_climbs(country: str, platform: str, today: str, *,
+                            exclude: set[str], cur: dict) -> list[dict]:
+    """连涨趋势检测：窗口内**稳步累计爬升**的 SLG 竞品——补 surge「今日 vs 上一可用日」单日
+    阈值的盲区（#40→#38→#35→#28，单日最多升 7、够不到 RANK_JUMP=10，被日间 diff 漏掉，
+    但 5 天累计升 12 有意义）。零 ST，纯读 game_rankings 窗口历史。
+
+    判定（全部满足）：
+    - 今日名次 ≤ CLIMB_TOPN（比 surge 的 TopN 宽：中段向上爬才是连涨主场）；
+    - is_slg；未被今日空降/窜升占用（exclude，去重）；
+    - 窗口 [today-WINDOW, today] 内 ≥ MIN_SNAPSHOTS 个快照（数据充分性：稀疏市场自动跳过）；
+    - 累计升幅 start_rank - cur_rank ≥ MIN_DROP；
+    - 今日是窗口新高（cur_rank ≤ 窗口内最好名次）——排除「曾爬到高位又回落」的伪连涨；
+    - **起点即窗口最差**（start_rank == 窗口内最差名次）——排除「先跌破起点再净回升」的 V 形/
+      震荡（净上行但非稳步爬升，「连涨」文案会误导）；真实样本 Z Route 的内部小抖动仍 ≤ 起点、放行；
+    - **无任何单日 surge**（相邻快照升幅全 < RANK_JUMP）——保证与 surge 段零重叠、不重报
+      已被当日窜升报过的大跳。
+    """
+    if not settings.COMPETITOR_CLIMB_ENABLED:
+        return []
+    win_days = settings.COMPETITOR_CLIMB_WINDOW_DAYS
+    min_drop = settings.COMPETITOR_CLIMB_MIN_DROP
+    if win_days <= 0 or min_drop <= 0:
+        return []
+    climb_topn = settings.COMPETITOR_CLIMB_TOPN
+    min_snaps = settings.COMPETITOR_CLIMB_MIN_SNAPSHOTS
+    jump = settings.COMPETITOR_RANK_JUMP
+
+    # 今日 TopN_climb 内、SLG、未被空降/窜升占用的候选（cur 已是今日行，含 is_slg 所需 publisher）。
+    cands = {aid: r for aid, r in cur.items()
+             if r.rank is not None and r.rank <= climb_topn
+             and aid not in exclude and is_slg(r.app_id, r.publisher)}
+    if not cands:
+        return []
+
+    cutoff = (datetime.strptime(today, "%Y-%m-%d")
+              - timedelta(days=win_days)).strftime("%Y-%m-%d")
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(
+            select(GameRanking.app_id, GameRanking.date, GameRanking.rank).where(
+                GameRanking.country == country,
+                GameRanking.platform == platform,
+                GameRanking.chart_type == CHART_GROSSING,
+                GameRanking.app_id.in_(list(cands)),
+                GameRanking.rank.is_not(None),
+                GameRanking.date >= cutoff,
+                GameRanking.date <= today,
+            )
+        )).all()
+
+    hist: dict[str, list[tuple[str, int]]] = {}
+    for aid, d, rk in rows:
+        hist.setdefault(aid, []).append((d, rk))
+
+    climbs: list[dict] = []
+    for aid, r in cands.items():
+        seq = sorted(hist.get(aid, []))           # 按日期升序（含今日）
+        if len(seq) < min_snaps:
+            continue
+        ranks = [rk for _, rk in seq]
+        start_rank, cur_rank = ranks[0], r.rank
+        if start_rank - cur_rank < min_drop:      # 累计升幅不足
+            continue
+        if cur_rank > min(ranks):                 # 今日非窗口新高 → 已回落，不算「正在连涨」
+            continue
+        if start_rank != max(ranks):              # 起点非窗口最差 → 中途曾跌破起点（V 形/震荡），非稳步
+            continue
+        if any((ranks[i] - ranks[i + 1]) >= jump  # 含单日 surge → 已被 surge 段报过，不重复
+               for i in range(len(ranks) - 1)):
+            continue
+        # span_days 用**日历跨度**（start_date→today）而非 len(seq)：渲染文案是「N天累计」，
+        # 若某几天漏同步（scheduler 可能漏过几天），快照数会少于真实天数，「N天」就失真。
+        # 日历跨度对漏同步天鲁棒；无漏同步时与快照数一致（既有测试值不变）。min_snaps 仍用快照数。
+        span_days = ((datetime.strptime(today, "%Y-%m-%d")
+                      - datetime.strptime(seq[0][0], "%Y-%m-%d")).days + 1)
+        climbs.append({
+            "app_id": aid, "name": r.name or aid, "icon_url": r.icon_url,
+            "start_rank": start_rank, "cur_rank": cur_rank,
+            "start_date": seq[0][0], "span_days": span_days,
+            "publisher": r.publisher, "revenue": r.revenue, "downloads": r.downloads,
+        })
+    return climbs
 
 
 async def detect_and_alert_movement(country: str, platform: str, today: str) -> dict:
@@ -169,6 +261,8 @@ def _format_parts(s: dict) -> list[str]:
         parts.append(f"[NEW] {e['name']} 新进Top榜 ({frm}->#{e['cur_rank']})")
     for e in s["surges"]:
         parts.append(f"[UP] {e['name']} #{e['prev_rank']}->#{e['cur_rank']} (升{e['prev_rank'] - e['cur_rank']})")
+    for e in s.get("climbs", []):
+        parts.append(f"[CLIMB] {e['name']} 连涨 #{e['start_rank']}->#{e['cur_rank']} ({e['span_days']}天累计升{e['start_rank'] - e['cur_rank']})")
     for e in s["drops"]:
         to = "榜外" if e["cur_rank"] is None else f"#{e['cur_rank']}"
         parts.append(f"[DOWN] {e['name']} 跌出Top榜 (#{e['prev_rank']}->{to})")

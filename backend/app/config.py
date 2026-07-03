@@ -149,6 +149,27 @@ class Settings(BaseSettings):
     # 渲染「🔄 重回」+ 重要度降权、不污染今日要闻。纯本地多一条窗口查询，零 ST。0=关回归判定。
     COMPETITOR_REENTRY_WINDOW_DAYS: int = 30
 
+    # ── 连涨趋势（sustained climb）：补 surge 单日阈值的盲区 ─────────────
+    # surge 靠「今日 vs 上一可用日」单日名次跳 ≥ COMPETITOR_RANK_JUMP，抓不到「每天涨一点、
+    # 单日够不到阈值、但多日累计很可观」的稳步爬升（真实样本 War and Order #40→#38→#35→#28，
+    # 5 天累计升 12、单日最多才 7，被日间 diff 漏掉）。连涨 = 窗口内 SLG 竞品累计升幅达标、
+    # 今日处窗口新高、且**无任何单日 surge**（每步 < RANK_JUMP，故与 surge 段零重叠、不重报）。
+    # 纯读 game_rankings 窗口历史，零 ST。<=0（WINDOW 或 MIN_DROP）关此检测。
+    COMPETITOR_CLIMB_ENABLED: bool = True
+    # 回看窗口（天）。取 5 天：既够沉淀多日趋势，又短到 dense 日更市场才攒够快照——次市场
+    # （双周同步）窗口内快照 < MIN_SNAPSHOTS 会被自动跳过（连涨只对 US/iOS 这类日更市场有意义）。
+    COMPETITOR_CLIMB_WINDOW_DAYS: int = 5
+    # 窗口内累计升幅（start_rank - cur_rank）≥ 该值才算连涨。与 RANK_JUMP 对称取 10：单日跳
+    # ≥10=surge；多日累计 ≥10 且无单日 surge=连涨。真实校准：10 抓到 War and Order + Z Route
+    # 两例稳步爬（20 天 2 例，高信号低噪），12 只剩 1 例。
+    COMPETITOR_CLIMB_MIN_DROP: int = 10
+    # 今日名次 ≤ 该值才纳入连涨候选。刻意比 surge 的 TopN(20) 宽——US/iOS top20 被头部 SLG
+    # 霸榜极稳，真正的稳步爬升发生在中段向上（#40→#28），top20 内几乎无连涨信号。
+    COMPETITOR_CLIMB_TOPN: int = 40
+    # 窗口内至少 N 个快照才判连涨（baseline 充分性）。< N = 数据太稀疏（次市场/冷启动），
+    # 跳过不误报。日更市场 5 天窗口天然满足，双周市场天然不足 → 结构性只对日更市场生效。
+    COMPETITOR_CLIMB_MIN_SNAPSHOTS: int = 3
+
     # ── 新品监测（newcomers）：本地零配额「新面孔」检测 ─────────────────
     # 「新面孔」= 某 app_id 在过去 NEWCOMER_WINDOW 个同步快照里从没出现过、却在
     # 最近一次同步进入 Top NEWCOMER_TOPN 的产品。纯读 game_rankings，零 ST 配额。
