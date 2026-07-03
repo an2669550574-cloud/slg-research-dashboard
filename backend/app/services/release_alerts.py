@@ -17,17 +17,17 @@ digest 构建是纯函数，单测直接断言 markdown 文本。
 import logging
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from urllib.parse import quote
 
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.database import AsyncSessionLocal, utcnow_naive
 from app.models.publisher import PublisherEntity, PublisherItunesApp, PublisherItunesArtist
-from app.models.digest import LeaderDigestSend
+from app.models.digest import LeaderDigestSend, WechatArticleSent
 from app.models.game import CHART_FREE
 from app.services import dingtalk
 
@@ -1097,6 +1097,42 @@ async def _mark_leader_digest_sent(date: str, content: str) -> None:
             await db.rollback()
 
 
+async def _load_sent_article_links() -> set[str]:
+    """行业动态段跨天去重：台账里已推过的文章 link 集合（全量，prune 已控表规模）。
+    关开关（WECHAT_ARTICLE_DEDUP_ENABLED=False）→ 空集，退回仅时窗控重复的旧行为。"""
+    if not settings.WECHAT_ARTICLE_DEDUP_ENABLED:
+        return set()
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(select(WechatArticleSent.link))).scalars().all()
+    return set(rows)
+
+
+async def _mark_articles_sent(articles: list, today: str) -> None:
+    """行业动态段**发送成功后**把本次展示的文章 link 落台账（跨天去重），并 prune 掉超
+    retention 天的老行。link 唯一：已存在的重复插入吞掉、保留首推日。today=UTC 日。"""
+    if not settings.WECHAT_ARTICLE_DEDUP_ENABLED or not articles:
+        return
+    async with AsyncSessionLocal() as db:
+        for a in articles:
+            link = getattr(a, "link", None)
+            if not link:
+                continue
+            db.add(WechatArticleSent(link=link,
+                                     title=(getattr(a, "title", "") or "")[:300],
+                                     first_sent_date=today))
+            try:
+                await db.commit()
+            except IntegrityError:
+                await db.rollback()   # link 已在台账（同篇文章前几天推过）→ 保留首推日
+        days = settings.WECHAT_ARTICLE_SENT_RETENTION_DAYS
+        if days > 0:
+            cutoff = (datetime.strptime(today, "%Y-%m-%d")
+                      - timedelta(days=days)).strftime("%Y-%m-%d")
+            await db.execute(delete(WechatArticleSent)
+                             .where(WechatArticleSent.first_sent_date < cutoff))
+            await db.commit()
+
+
 async def send_daily_digest() -> bool:
     """日级 job 入口：对全部已配置 combo 重跑检测，拼一张卡发一次。
 
@@ -1402,9 +1438,12 @@ async def send_daily_digest() -> bool:
                 if ind_kws:
                     raw = await search_multi_keywords(ind_kws, limit=settings.WECHAT_INDUSTRY_MAX,
                                                       days=settings.WECHAT_INDUSTRY_DAYS)
-                    # 去掉已按新品名精确挂上的文章（免与新品行 📰 重复）。
+                    # 去掉①已按新品名精确挂上的文章（免与新品行 📰 重复，同卡内）+ ②往日已推过的
+                    # 文章（跨天去重台账，让领导群每天见到没推过的）。
                     shown = {a.link for arts in articles_by_app.values() for a in arts}
-                    industry_articles = [a for a in raw if a.link not in shown][:settings.WECHAT_INDUSTRY_MAX]
+                    sent_before = await _load_sent_article_links()
+                    industry_articles = [a for a in raw if a.link not in shown
+                                         and a.link not in sent_before][:settings.WECHAT_INDUSTRY_MAX]
             except Exception:
                 logger.warning("wechat industry search (quiet-day filler) failed", exc_info=True)
 
@@ -1453,6 +1492,10 @@ async def send_daily_digest() -> bool:
                     *msg_l, target="leader", critical=True):
                 await _mark_leader_digest_sent(today, msg_l[1])
                 sent_any = True
+    # 行业动态段跨天去重：卡发出去了（任一群成功）就把本次展示的行业文章 link 落台账，
+    # 下次广搜过滤掉。仅平淡日非空；发送失败(sent_any=False)不落，下轮还能展示。
+    if sent_any and industry_articles:
+        await _mark_articles_sent(industry_articles, today)
     return sent_any
 
 

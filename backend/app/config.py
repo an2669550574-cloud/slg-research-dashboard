@@ -338,16 +338,25 @@ class Settings(BaseSettings):
     # ── 平淡日「SLG 行业动态」兜底段（公众号广搜，仅维护者卡）──────────────
     # 与「按新品名精确回挂文章」互补：那个把文章挂到当日检出新品，这个是**无检出/信号
     # 稀薄时**用行业关键词广搜订阅号，补一段近期 SLG 行业/新品动态。仅 DIGEST_QUIET_THRESHOLD
-    # 判定的平淡日 + 核心已同步时触发。零 ST（走 wechat-api）。领导卡不加（保持已核实竞品口径）。
+    # 判定的平淡日 + 核心已同步时触发。零 ST（走 wechat-api）。#182 起**两卡都发**（段头标注
+    # 「非我方追踪竞品·行业面背景」划清口径边界，靠标注而非删段）；跨天去重见下方台账。
     WECHAT_INDUSTRY_ENABLED: bool = True
     # 受控关键词表（偏新品动态；覆盖 新品/首发/上线 + 出海/海外 + 版号/厂商/投融资 + 买量/素材
     # 四类）。逗号分隔，可在 backend/.env 覆盖。空 = 关闭该段。宁少而准，别用光秃秃「SLG」招噪。
     WECHAT_INDUSTRY_KEYWORDS: str = (
         "SLG 新游,策略新游 上线,SLG 首发,SLG 出海,策略手游 海外,SLG 版号,SLG 投融资,SLG 买量 素材")
-    # 只取最近 N 天的文章（"动态"要新；窗口越窄跨天重复越少——v1 靠时窗控重复，暂无持久去重）。
+    # 只取最近 N 天的文章（"动态"要新）。跨天重复由下方「已推 link 台账」持久去重兜底，时窗
+    # 只控搜索范围（不再是唯一防重手段）。
     WECHAT_INDUSTRY_DAYS: int = 3
     # 行业段最多展示几条。
     WECHAT_INDUSTRY_MAX: int = 4
+    # 行业动态段跨天去重：发过的文章 link 落 wechat_article_sent 台账，后续广搜结果里已推的
+    # link 全过滤掉，让领导群每天见到没推过的文章（此前只靠 WECHAT_INDUSTRY_DAYS 时窗，连续
+    # 平淡日会重复推同一篇）。零 ST（纯本地表读写）。False = 退回旧的「仅时窗控重复」行为。
+    WECHAT_ARTICLE_DEDUP_ENABLED: bool = True
+    # 已推 link 台账保留天数：只增不减会膨胀，落库时 prune 掉 first_sent_date 早于 N 天前的行。
+    # 30 天足够（一篇文章不会 30 天后还被当「近期动态」搜出来）。<=0 = 关 prune（永久保留）。
+    WECHAT_ARTICLE_SENT_RETENTION_DAYS: int = 30
 
     # ── 新品实机玩法视频自动搜集（YouTube Data API · ADR 0002）──────────────
     # 竞品新品检出后按「游戏名 + gameplay」搜 YouTube 实机玩法视频候选。YT 独立
