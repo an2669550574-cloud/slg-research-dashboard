@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from app.config import settings
 from app.database import AsyncSessionLocal, utcnow_naive
 from app.models.newcomer import MarketNewcomerLog, NewcomerVideo, NewcomerVideoSearch
+from app.services.slg_publishers import is_slg
 from app.services.youtube_search import evaluate_search_gate, search_gameplay_videos
 
 logger = logging.getLogger(__name__)
@@ -48,17 +49,32 @@ async def sync_newcomer_videos(daily_cap: int | None = None,
             select(NewcomerVideoSearch.app_id))).scalars().all())
 
         # 待搜：近 lookback 天检出、未搜过的 app（去重、新到旧）。lookback<=0 = 不限。
-        q = select(MarketNewcomerLog.app_id, MarketNewcomerLog.name).order_by(
+        q = select(MarketNewcomerLog.app_id, MarketNewcomerLog.name,
+                   MarketNewcomerLog.publisher).order_by(
             MarketNewcomerLog.first_detected_at.desc())
         if lookback and lookback > 0:
             q = q.where(MarketNewcomerLog.first_detected_at >= now - timedelta(days=lookback))
         rows = (await db.execute(q)).all()
 
+        # SLG 门控（ADR 0002 范围 = 竞品 SLG 新品）：只对 SLG 新品搜视频，砍掉非 SLG
+        # 新品（足球/扑克/纸牌/塔防等）的噪声召回 + 省 YT 每日配额。信号双取：
+        #  ① 实时 is_slg()（厂商主体内存索引；用 live 而非 log 存档列——存档列是检出
+        #     时点快照、永不回写，新接入的 SLG 厂商在旧行会漏，同 #168/#171 陷阱）；
+        #  ② subgenre_cn 题材含 'SLG'（LLM 题材分类），救「非追踪厂商但题材确是 SLG」的
+        #     真竞品（如 Stronghold Kingdoms / My Lands，is_slg=0 但确是 SLG 游戏）。
+        # subgenre_cn 稀疏、可能只标在某一行 → 按 app_id 聚合成集合，而非取 dedup 行的值。
+        slg_subgenre_ids = set((await db.execute(
+            select(MarketNewcomerLog.app_id).where(
+                MarketNewcomerLog.subgenre_cn.like("%SLG%")))).scalars().all())
+
         seen: set[str] = set()
-        for app_id, name in rows:
+        for app_id, name, publisher in rows:
             if app_id in already or app_id in seen:
                 continue
             seen.add(app_id)
+            # 非 SLG 新品跳过：不搜、不记台账——留待后续（厂商接入 / 题材分类）下轮再评估。
+            if not (is_slg(app_id, publisher) or app_id in slg_subgenre_ids):
+                continue
             gate = evaluate_search_gate(already_searched=False,
                                         used_today=used_today, daily_cap=cap)
             if not gate.allowed:  # quota_exhausted → 留待下次 drain

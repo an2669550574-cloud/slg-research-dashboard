@@ -22,12 +22,17 @@ def _candidates(name: str):
     ]
 
 
-async def _add_log(app_id: str, name: str, detected=None):
+async def _add_log(app_id: str, name: str, detected=None,
+                   publisher="FunPlus", subgenre_cn=None, country="US"):
+    """默认 publisher=FunPlus（种子 SLG 马甲）→ 过 SLG 门控，让机制测试聚焦搜集逻辑。
+    验门控本身的用例显式传非 SLG publisher / SLG subgenre_cn。country 可变以建同 app
+    的跨 combo 多行（唯一键=country+platform+app_id+chart_type）。"""
     from app.database import AsyncSessionLocal, utcnow_naive
     from app.models.newcomer import MarketNewcomerLog
     async with AsyncSessionLocal() as db:
-        row = MarketNewcomerLog(country="US", platform="ios", app_id=app_id,
-                                as_of="2026-06-26", name=name)
+        row = MarketNewcomerLog(country=country, platform="ios", app_id=app_id,
+                                as_of="2026-06-26", name=name, publisher=publisher,
+                                subgenre_cn=subgenre_cn)
         row.first_detected_at = detected or utcnow_naive()
         db.add(row)
         await db.commit()
@@ -148,6 +153,96 @@ async def test_sync_lookback_excludes_old_detections(app, monkeypatch):
     out = await nv.sync_newcomer_videos(lookback_days=30)
     assert out["searched"] == 1
     assert searched_names == ["新检出"]
+
+
+@pytest.mark.asyncio
+async def test_sync_gates_out_non_slg_newcomers(app, monkeypatch):
+    """SLG 门控（ADR 0002 范围=竞品 SLG）：只搜 SLG 新品，非 SLG（足球/扑克/纸牌）
+    不搜、不进台账（留待后续再评估）。夹具用 prod 真实最糟样本。"""
+    from app.config import settings
+    from app.database import AsyncSessionLocal
+    from app.models.newcomer import NewcomerVideoSearch
+    from app.services import newcomer_video as nv
+    monkeypatch.setattr(settings, "YOUTUBE_API_KEY", "test-key")
+    searched = []
+
+    async def fake_search(name, max_results=None):
+        searched.append(name)
+        return _candidates(name)
+    monkeypatch.setattr(nv, "search_gameplay_videos", fake_search)
+
+    # 真实最糟样本：同名异物/泛域噪声，publisher 均非追踪 SLG 厂商、无 SLG 题材。
+    await _add_log("1193933380", "Head Ball 2 - Игра в футбол",
+                   publisher="Masomo", subgenre_cn="其他")            # 足球
+    await _add_log("6766608185", "Konkani Kurdi - کۆنکانی کوردی",
+                   publisher="Kurdi Games", subgenre_cn=None)          # 库尔德 okey 纸牌
+    await _add_log("1605547429", "Falcon Poker&Texas Hold'em",
+                   publisher="Falcon", subgenre_cn="其他")             # 扑克
+    # 真 SLG 竞品（种子马甲 FunPlus）——应被搜。
+    await _add_log("111", "State of Survival", publisher="FunPlus")
+
+    out = await nv.sync_newcomer_videos()
+    assert out["searched"] == 1
+    assert searched == ["State of Survival"]                          # 只搜 SLG
+    async with AsyncSessionLocal() as db:
+        marked = {t.app_id for t in
+                  (await db.execute(select(NewcomerVideoSearch))).scalars().all()}
+    assert marked == {"111"}                                          # 非 SLG 未进台账
+
+
+@pytest.mark.asyncio
+async def test_sync_rescues_slg_by_subgenre(app, monkeypatch):
+    """subgenre_cn 题材含 'SLG' 救「非追踪厂商但确是 SLG 游戏」的真竞品
+    （Stronghold Kingdoms 国战SLG / My Lands 基地建设SLG，is_slg=0）；
+    同为 is_slg=0 但题材非 SLG（塔防）仍被砍。"""
+    from app.config import settings
+    from app.services import newcomer_video as nv
+    monkeypatch.setattr(settings, "YOUTUBE_API_KEY", "test-key")
+    searched = []
+
+    async def fake_search(name, max_results=None):
+        searched.append(name)
+        return _candidates(name)
+    monkeypatch.setattr(nv, "search_gameplay_videos", fake_search)
+
+    await _add_log("1201717505", "Stronghold Kingdoms: Замки",
+                   publisher="Firefly Studios", subgenre_cn="国战SLG")
+    await _add_log("816221266", "My Lands",
+                   publisher="Strategy First", subgenre_cn="基地建设SLG")
+    await _add_log("6737409896", "Hellsquad Rrrush!",
+                   publisher="Habby", subgenre_cn="塔防")               # 非 SLG 题材 → 砍
+
+    out = await nv.sync_newcomer_videos()
+    assert out["searched"] == 2
+    assert set(searched) == {"Stronghold Kingdoms: Замки", "My Lands"}
+
+
+@pytest.mark.asyncio
+async def test_sync_subgenre_rescue_aggregates_across_rows(app, monkeypatch):
+    """subgenre_cn 稀疏、可能只标在该 app 的某一行：门控按 app_id 聚合判定，
+    不因 dedup 取到 subgenre 为空的那行就误砍真 SLG。"""
+    from app.config import settings
+    from app.database import utcnow_naive
+    from app.services import newcomer_video as nv
+    monkeypatch.setattr(settings, "YOUTUBE_API_KEY", "test-key")
+    searched = []
+
+    async def fake_search(name, max_results=None):
+        searched.append(name)
+        return _candidates(name)
+    monkeypatch.setattr(nv, "search_gameplay_videos", fake_search)
+
+    # 同 app 两行（跨 combo）：新行 subgenre 空、老行标 国战SLG。dedup 取新行，
+    # 但门控应据「任一行题材含 SLG」保留。
+    now = utcnow_naive()
+    await _add_log("6686394372", "Age of History 3", publisher="Łukasz Jakowski",
+                   subgenre_cn=None, detected=now, country="US")
+    await _add_log("6686394372", "Age of History 3", publisher="Łukasz Jakowski",
+                   subgenre_cn="国战SLG", detected=now - timedelta(days=1), country="JP")
+
+    out = await nv.sync_newcomer_videos()
+    assert out["searched"] == 1
+    assert searched == ["Age of History 3"]
 
 
 @pytest.mark.asyncio
