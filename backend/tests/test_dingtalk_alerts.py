@@ -218,6 +218,35 @@ def test_appstore_digest_expanded_section():
 # ── 挂钩链路 ────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
+async def test_send_daily_digest_drains_videos_after_translate(client, monkeypatch):
+    """digest 内联视频补漏 drain（review #181）：subgenre_cn 由 translate 在 digest 里
+    写入、而视频 job 02:45 在此之前——题材救回类当日新品那轮被跳过。断言 digest 在
+    translate **之后**补跑一轮 drain，且在 webhook 闸门**之前**（没配 webhook 也 drain，
+    前端抽屉受益）。"""
+    import importlib
+    ra = importlib.import_module("app.services.release_alerts")
+    i18n = importlib.import_module("app.services.newcomer_i18n")
+    nv = importlib.import_module("app.services.newcomer_video")
+    from app.config import settings
+
+    order = []
+
+    async def fake_translate():
+        order.append("translate")
+
+    async def fake_drain(*a, **kw):
+        order.append("drain")
+        return {"searched": 0, "videos": 0, "pending_left": 0}
+
+    monkeypatch.setattr(i18n, "translate_pending_newcomers", fake_translate)
+    monkeypatch.setattr(nv, "sync_newcomer_videos", fake_drain)
+    monkeypatch.setattr(settings, "DINGTALK_WEBHOOK_URL", "")   # 无 webhook
+
+    assert await ra.send_daily_digest() is False                # 闸门处返回
+    assert order == ["translate", "drain"]                      # 次序 + 闸门前都跑了
+
+
+@pytest.mark.asyncio
 async def test_send_daily_digest_end_to_end(client, monkeypatch):
     """造当日榜单数据 + 已建档主体 → 日报含异动与两层新品，且只发一条。"""
     import importlib

@@ -1114,6 +1114,16 @@ async def send_daily_digest() -> bool:
         await translate_pending_newcomers()
     except Exception:
         logger.exception("Newcomer translate (in digest) crashed")
+    # 视频补漏 drain：02:45 的视频 job 在 subgenre_cn 写入（就在上面的 translate）之前跑，
+    # 「非追踪厂商但题材是 SLG」的当日新品在那轮被 SLG 门控跳过（review #181 发现）。
+    # translate 刚写完题材分类，此刻补一轮 drain 让这类新品的视频赶上当日卡。台账去重
+    # 保证已搜的 app 零重复 YT 调用；YT key 未配则整体 no-op。放 webhook 闸门之前——
+    # 前端抽屉的视频段同样受益，不依赖 webhook。
+    from app.services.newcomer_video import sync_newcomer_videos
+    try:
+        await sync_newcomer_videos()
+    except Exception:
+        logger.exception("Newcomer video drain (in digest) crashed")
     # 维护者群或领导群任一配了 webhook 就跑（两群独立，不因没配 maintainer 就漏发领导卡）。
     if not (dingtalk.is_enabled() or dingtalk.leader_target_configured()):
         return False

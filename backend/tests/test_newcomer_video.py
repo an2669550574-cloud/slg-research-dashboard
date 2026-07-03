@@ -246,6 +246,41 @@ async def test_sync_subgenre_rescue_aggregates_across_rows(app, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_sync_ignore_list_beats_subgenre_rescue(app, monkeypatch):
+    """人工忽略名单先行（与 i18n/digest 同名单同口径）：被人工裁决忽略的厂商，
+    即使其行在忽略前已被 LLM 写过含 SLG 的 subgenre_cn，也不搜（裁决 > 题材救回）。"""
+    from app.config import settings
+    from app.database import AsyncSessionLocal
+    from app.models.publisher import PublisherIgnore
+    from app.services import newcomer_video as nv
+    from app.services.name_match import corp_squash
+    from app.services.newcomers import _tokens
+    monkeypatch.setattr(settings, "YOUTUBE_API_KEY", "test-key")
+    searched = []
+
+    async def fake_search(name, max_results=None):
+        searched.append(name)
+        return _candidates(name)
+    monkeypatch.setattr(nv, "search_gameplay_videos", fake_search)
+
+    # 真实场景（缺口裁决 2026-06-30）：Snowprint 被 publisher 粒度忽略；假设其行
+    # 在忽略前被 LLM 误写过 SLG 题材——救回不应复活它。key 用真实 helper 算，保证同口径。
+    async with AsyncSessionLocal() as db:
+        db.add(PublisherIgnore(kind="publisher",
+                               value=corp_squash(_tokens("Snowprint Studios AB"))))
+        await db.commit()
+    await _add_log("6444838222", "Warhammer 40K: Tacticus",
+                   publisher="Snowprint Studios AB", subgenre_cn="基地建设SLG")
+    # 对照：未忽略的题材 SLG 照常救回。
+    await _add_log("816221266", "My Lands",
+                   publisher="Strategy First", subgenre_cn="基地建设SLG")
+
+    out = await nv.sync_newcomer_videos()
+    assert out["searched"] == 1
+    assert searched == ["My Lands"]            # 忽略名单命中的没搜
+
+
+@pytest.mark.asyncio
 async def test_videos_endpoint_lists_and_soft_deletes(client):
     """读端点按候选序返回；删端点软删去噪一条（CJK 标题）——行保留、默认列表隐藏、
     include_hidden 可取回，且噪声样本带 hidden_at（供回溯统计召回质量）。"""
