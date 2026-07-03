@@ -174,6 +174,8 @@ async def _sustained_climbs(country: str, platform: str, today: str, *,
     - 窗口 [today-WINDOW, today] 内 ≥ MIN_SNAPSHOTS 个快照（数据充分性：稀疏市场自动跳过）；
     - 累计升幅 start_rank - cur_rank ≥ MIN_DROP；
     - 今日是窗口新高（cur_rank ≤ 窗口内最好名次）——排除「曾爬到高位又回落」的伪连涨；
+    - **起点即窗口最差**（start_rank == 窗口内最差名次）——排除「先跌破起点再净回升」的 V 形/
+      震荡（净上行但非稳步爬升，「连涨」文案会误导）；真实样本 Z Route 的内部小抖动仍 ≤ 起点、放行；
     - **无任何单日 surge**（相邻快照升幅全 < RANK_JUMP）——保证与 surge 段零重叠、不重报
       已被当日窜升报过的大跳。
     """
@@ -224,13 +226,20 @@ async def _sustained_climbs(country: str, platform: str, today: str, *,
             continue
         if cur_rank > min(ranks):                 # 今日非窗口新高 → 已回落，不算「正在连涨」
             continue
+        if start_rank != max(ranks):              # 起点非窗口最差 → 中途曾跌破起点（V 形/震荡），非稳步
+            continue
         if any((ranks[i] - ranks[i + 1]) >= jump  # 含单日 surge → 已被 surge 段报过，不重复
                for i in range(len(ranks) - 1)):
             continue
+        # span_days 用**日历跨度**（start_date→today）而非 len(seq)：渲染文案是「N天累计」，
+        # 若某几天漏同步（scheduler 可能漏过几天），快照数会少于真实天数，「N天」就失真。
+        # 日历跨度对漏同步天鲁棒；无漏同步时与快照数一致（既有测试值不变）。min_snaps 仍用快照数。
+        span_days = ((datetime.strptime(today, "%Y-%m-%d")
+                      - datetime.strptime(seq[0][0], "%Y-%m-%d")).days + 1)
         climbs.append({
             "app_id": aid, "name": r.name or aid, "icon_url": r.icon_url,
             "start_rank": start_rank, "cur_rank": cur_rank,
-            "start_date": seq[0][0], "span_days": len(seq),
+            "start_date": seq[0][0], "span_days": span_days,
             "publisher": r.publisher, "revenue": r.revenue, "downloads": r.downloads,
         })
     return climbs

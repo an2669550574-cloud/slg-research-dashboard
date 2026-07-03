@@ -286,6 +286,31 @@ async def test_climb_excludes_faded_peak(client):
 
 
 @pytest.mark.asyncio
+async def test_climb_excludes_vshape_recovery(client):
+    """先跌破起点再净回升的 V 形/震荡 → 非「稳步」连涨，即便净上行达标也排除。
+    #44→#46(跌破起点)→#40→#36→#30：净升 14≥阈值、今日窗口新高、无单日 surge，但起点 #44
+    非窗口最差（#46 更差）→ start_rank != max(ranks) 排除。"""
+    from app.services.movement import detect_movement
+    await _seed_days("vshape", {"2026-05-12": 44, "2026-05-13": 46, "2026-05-14": 40,
+                                "2026-05-15": 36, "2026-05-16": 30})
+    s = await detect_movement("US", "ios", "2026-05-16")
+    assert [e["name"] for e in s["climbs"]] == [], "V 形回升不算稳步连涨"
+
+
+@pytest.mark.asyncio
+async def test_climb_allows_dip_above_start(client):
+    """真实样本 Z Route 式：内部有小抖动（#42→#45）但始终 ≤ 起点 #51 → 仍算稳步连涨。
+    起点即窗口最差、今日新高、无单日 surge。"""
+    from app.services.movement import detect_movement
+    await _seed_days("zroute", {"2026-05-11": 51, "2026-05-12": 42, "2026-05-13": 45,
+                                "2026-05-14": 45, "2026-05-15": 42, "2026-05-16": 40})
+    s = await detect_movement("US", "ios", "2026-05-16")
+    cl = {e["name"]: e for e in s["climbs"]}
+    assert "zroute" in cl, "起点内小抖动但不跌破起点 → 仍是连涨"
+    assert cl["zroute"]["start_rank"] == 51 and cl["zroute"]["cur_rank"] == 40
+
+
+@pytest.mark.asyncio
 async def test_climb_requires_min_snapshots(client):
     """窗口内快照 < min_snaps(3) → 数据太稀疏（次市场/冷启动），跳过不误报。
     只两天：#40→#28，累计够、今日新高，但仅 2 个快照。"""
