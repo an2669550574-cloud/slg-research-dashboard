@@ -1021,6 +1021,33 @@ def test_movement_reentry_highlight_verb():
     assert "🔄 **老兵** 重回 #2" in line and "空降" not in line
 
 
+def test_movement_climb_renders_line():
+    """连涨（climbs）渲染成「↗️ … 连涨 #start → #cur（N天累计 ↑X）」，与 📈 单日窜升区分。"""
+    from app.services.release_alerts import build_movement_lines
+    s = {"new_entrants": [], "surges": [], "drops": [], "revenue_spikes": [],
+         "climbs": [{"app_id": "wao", "name": "战争与秩序", "start_rank": 40,
+                     "cur_rank": 28, "span_days": 5, "revenue": None, "downloads": None}]}
+    text = "\n".join(build_movement_lines(s))
+    assert "↗️ **战争与秩序** 连涨 #40 → **#28**" in text
+    assert "5天累计 ↑12" in text
+
+
+def test_movement_climb_highlight_line():
+    """今日要闻一行的连涨渲染。"""
+    from app.services.release_alerts import _highlight_line
+    e = {"app_id": "wao", "name": "战争与秩序", "start_rank": 40, "cur_rank": 28, "span_days": 5}
+    line = _highlight_line({"e": e, "country": "US", "platform": "ios", "kind": "climb"})
+    assert "↗️ **战争与秩序** 连涨 #40 → #28（5天）" in line
+
+
+def test_movement_climb_scored_below_surge():
+    """同幅度下连涨强度分 < 单日窜升（渐进不如突发抢眼），但仍 >0（不被硬排除）。"""
+    from app.services.release_alerts import _event_score
+    surge = _event_score("surge", {"prev_rank": 40, "cur_rank": 28})
+    climb = _event_score("climb", {"start_rank": 40, "cur_rank": 28, "span_days": 5})
+    assert 0 < climb < surge
+
+
 def test_movement_reentry_scored_below_true_entrant():
     """回归降权：同名次 is_reentry 强度分 < 真首发；但仍 >0（高名次回归不硬排除）。"""
     from app.services.release_alerts import _event_score
