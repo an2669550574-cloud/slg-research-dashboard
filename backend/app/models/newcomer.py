@@ -93,6 +93,28 @@ class NewcomerVideo(Base):
     hidden_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
+class AppSubgenre(Base):
+    """任意 app 的玩法子品类分类（LLM，受控词表 SUBGENRE_VOCAB）——给「同赛道」匹配补齐
+    `market_newcomer_log.subgenre_cn` 覆盖不到的存量竞品（P1-2）。
+
+    `subgenre_cn` 只在新品被翻译时产出（`translate_pending_newcomers`），结构性覆盖不到：
+    ① 从未作为新品检出的 established 竞品（movement 老熟人）② subgenre 特性上线前的老检出
+    行（`summary_cn` 已写但 `subgenre_cn=NULL`，不会被重译）。这张表按 app_id 全局补，digest
+    建 `own_matches` 时作 fallback 源 → ⚔️ 同赛道对老竞品也生效。
+
+    `subgenre_cn` 可空 = 已尝试分类但 LLM 未给出词表内值（**写行即「已尝试」，不再重复烧
+    LLM**，避免 `subgenre_cn IS NULL` 永久重试的坑，同 newcomer_i18n 哲学）。零 ST。
+    """
+    __tablename__ = "app_subgenre"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    app_id: Mapped[str] = mapped_column(String(200), unique=True, index=True)
+    name: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    subgenre_cn: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    source: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # game / newcomer_log
+    classified_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
 class NewcomerVideoSearch(Base):
     """视频搜索台账：记「哪些 app 已搜过」。
 

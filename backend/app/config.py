@@ -238,6 +238,11 @@ class Settings(BaseSettings):
     DIGEST_WEEKLY_REVIEW_ENABLED: bool = True
     DIGEST_WEEKLY_REVIEW_DAYS: int = 30      # 回看窗口
     DIGEST_WEEKLY_REVIEW_CAP: int = 8        # 起飞 / 掉榜每段明细上限
+    # 存量竞品玩法子品类回补（P1-2）：给「有描述的 is_slg 存量 app」（tracked games / movement
+    # 老熟人 / subgenre 特性前老检出行）补分类进 app_subgenre 表，digest 建 own_matches 时作
+    # fallback → ⚔️ 同赛道对老竞品也生效。digest 内每轮 drain 上限（LLM 便宜文本模型、前进式累积，
+    # 几天内把存量分类完，稳态近 0）。<=0 = 关闭回补。
+    APP_SUBGENRE_BACKFILL_CAP: int = 15
 
     # ── App Store 清单雷达（免费 iTunes lookup，零 ST 配额）──────────────
     # 每轮对每个开发者账号扫这些 storefront（逗号小写）。SLG 几乎都先软启动：

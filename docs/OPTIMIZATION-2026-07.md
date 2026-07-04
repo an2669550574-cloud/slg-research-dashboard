@@ -112,8 +112,8 @@ soft-launch ST 雷达（烧配额，2026-06-27 否）· 视频停用词表（软
 | P2 health GP 计数 | ✅ 已实现（未部署） | `/health` 加 `total_gp_artists`/`entities_without_gp_artist`；HealthChip tooltip 加 GP 覆盖行 |
 | P0-1③ 周察周报卡 | ✅ 已实现（未部署） | `release_alerts.build_weekly_newcomer_review` + `send_weekly_newcomer_review`（近30天 SLG 新品起飞/在榜/掉榜分层，两卡都发）+ 周一 04:40 UTC job；3 单测 |
 | P0-2 一键晋升 | ✅ 已实现（未部署） | 新品/厂商抽屉「转入深度追踪」按钮，复用 `POST /games/`（iOS app_id 即 trackId 自动追踪版本/分地区）；纯前端 |
-| P1-2 subgenre 回补 | ⬜ backlog | 第三批 |
-| P1-1 雷达富化接入 | ⬜ backlog | 第三批 |
+| P1-2 subgenre 回补 | ✅ 已实现（未部署） | 新表 `app_subgenre`（迁移 0039）+ `classify_pending_app_subgenres`（有描述的 is_slg 存量 app 分类，复用 `_SUBGENRE_DEFS`）+ digest `_subgenres_for_apps` fallback + 内联 drain；解锁 ⚔️ 对 movement 老竞品；5 单测。**赛道脉搏视图**仍待做 |
+| P1-1 雷达富化接入 | ⬜ backlog | 第三批（进行中） |
 | P1-3 digest 去重/封顶 | ⬜ 观察触发 | 攒领导卡长度 |
 
 > **第一批落地记录（2026-07-04，本地未部署，PR #186）**：三项全零 ST、零迁移，纯读时计算 + 加派生字段，回滚走纯代码。后端 pytest 601 / 前端 build + vitest 89 全绿。**视觉验证待部署**——走势 chip 需真实多快照榜单历史才显示，本地 mock 数据不足以演示，按项目既有「HK 代理预览」流程在部署后截图确认。

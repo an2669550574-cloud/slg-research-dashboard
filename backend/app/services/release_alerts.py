@@ -306,6 +306,35 @@ async def _load_own_products() -> list[tuple[str, list[str], set[str]]]:
     return out
 
 
+async def _subgenres_for_apps(app_ids: set[str]) -> dict[str, str]:
+    """候选竞品 app_id → 玩法子品类 `subgenre_cn`（给 own_matches「同赛道」匹配用）。
+
+    `market_newcomer_log` 优先（新品/曾建档竞品有），缺的 fallback `app_subgenre`（P1-2 存量
+    回补，覆盖 movement 老熟人 + subgenre 特性前老检出行）——让 ⚔️ 同赛道对老竞品也生效。零 ST。
+    """
+    out: dict[str, str] = {}
+    if not app_ids:
+        return out
+    from app.models.newcomer import MarketNewcomerLog, AppSubgenre
+    ids = list(app_ids)
+    async with AsyncSessionLocal() as db:
+        for aid, sg in (await db.execute(
+            select(MarketNewcomerLog.app_id, MarketNewcomerLog.subgenre_cn)
+            .where(MarketNewcomerLog.app_id.in_(ids),
+                   MarketNewcomerLog.subgenre_cn.is_not(None))
+        )).all():
+            out.setdefault(aid, sg)
+        missing = [a for a in ids if a not in out]
+        if missing:
+            for aid, sg in (await db.execute(
+                select(AppSubgenre.app_id, AppSubgenre.subgenre_cn)
+                .where(AppSubgenre.app_id.in_(missing),
+                       AppSubgenre.subgenre_cn.is_not(None))
+            )).all():
+                out.setdefault(aid, sg)
+    return out
+
+
 # ── 每日情报汇总（竞品异动 + 两层新品，全 combo 一条） ─────────────────────
 
 def build_movement_lines(s: dict, entities: Optional[dict] = None,
@@ -1164,6 +1193,15 @@ async def send_daily_digest() -> bool:
         await translate_pending_newcomers()
     except Exception:
         logger.exception("Newcomer translate (in digest) crashed")
+    # 存量竞品子品类回补 drain（P1-2）：给「有描述的 is_slg 存量 app」（tracked / movement
+    # 老熟人 / subgenre 特性前老检出行）补分类进 app_subgenre，让下方 own_matches 的 ⚔️ 同赛道
+    # 对老竞品也生效。放 translate 之后（同一 LLM 网关）、own_matches 之前，当轮分类当轮见效；
+    # 封顶前进式累积，几天分类完存量。零 ST；无 key / mock no-op。
+    from app.services.app_subgenre import classify_pending_app_subgenres
+    try:
+        await classify_pending_app_subgenres()
+    except Exception:
+        logger.exception("App subgenre backfill (in digest) crashed")
     # 视频补漏 drain：02:45 的视频 job 在 subgenre_cn 写入（就在上面的 translate）之前跑，
     # 「非追踪厂商但题材是 SLG」的当日新品在那轮被 SLG 门控跳过（review #181 发现）。
     # translate 刚写完题材分类，此刻补一轮 drain 让这类新品的视频赶上当日卡。台账去重
@@ -1369,17 +1407,9 @@ async def send_daily_digest() -> bool:
                     for e in (mv.get(k) or []):
                         if e.get("app_id"):
                             cand_ids.add(e["app_id"])
-            subgenre_by_app: dict[str, str] = {}
-            if cand_ids:
-                from app.models.newcomer import MarketNewcomerLog
-                async with AsyncSessionLocal() as db:
-                    sgrows = (await db.execute(
-                        select(MarketNewcomerLog.app_id, MarketNewcomerLog.subgenre_cn)
-                        .where(MarketNewcomerLog.app_id.in_(list(cand_ids)),
-                               MarketNewcomerLog.subgenre_cn.is_not(None))
-                    )).all()
-                for aid, sg in sgrows:
-                    subgenre_by_app.setdefault(aid, sg)
+            # 候选竞品子品类：market_newcomer_log 优先 + app_subgenre fallback（P1-2 存量回补，
+            # 让 ⚔️ 同赛道对 movement 老竞品也生效）。零 ST。
+            subgenre_by_app = await _subgenres_for_apps(cand_ids)
             for c in per_combo:
                 for key in ("market", "publisher", "free_market", "free_publisher"):
                     for n in ((c.get(key) or {}).get("newcomers") or []):
