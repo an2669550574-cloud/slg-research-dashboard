@@ -333,6 +333,30 @@ digest 给新品行附行业公众号文章（`_match_articles_to_apps`）。匹
 
 **覆盖范围（PR #147）**：原只翻 `is_slg=True`；现**去掉 is_slg gate，扩到「待识别新厂」(`is_slg=false`)**——新品页核查建档 / digest 待建档段都要看懂。控成本三道：① `is_slg DESC` 优先排序（已识别 SLG 先占 cap，digest/领导卡不退化）② 跳过忽略名单（人工确认非 SLG 不翻）③ cap 不变（待识别多的日子翻不完、下次接着，译文未就位处优雅降级不显 📝）。
 
+### 新品检出后走势追踪（`compute_trajectories`，OPTIMIZATION-2026-07 P0-1，#186）
+
+补「新品检出即阅后即焚」断层：`market_newcomer_log`（检出快照）× `game_rankings`（检出后每日名次）按 `(country,platform,app_id,chart_type)` **读时 join**，给每个检出新品算走势。`services/newcomers.py::compute_trajectories(rows)` 返回每行 `current_rank`（该 combo/chart 最新快照名次；掉出采集深度→None）/ `peak_rank`（检出以来最好）/ `on_chart` / `days_tracked`（检出日→最新快照日历跨度）/ `trend`（climbing/falling/stable/dropped/new/unknown）。`/newcomers/history` 每行附 `trajectory`；前端新品卡 + 抽屉 `TrendBadge`（new·unknown 不渲染）+「仍在爬升 / 已掉榜」筛选。方向阈值 `_TRAJECTORY_TREND_THRESHOLD=5`（检出至今**累计**位移 ≥5 判方向，与 movement 单日 `COMPETITOR_RANK_JUMP` 不同轴）。**结构性限制（勿当 bug）**：走势只对**日更市场（US/iOS）**有意义——次市场周级同步下检出日=最新快照→`days_tracked=0`→`trend='new'`（无后续点判不了），故 prod 上多数近检出显示 `new`（chip 不渲染）。零 ST。
+
+### 新品周察周报卡（`build_weekly_newcomer_review`，P0-1③，#188）
+
+周级独立卡（scheduler 周一 **04:40 UTC** `weekly_newcomer_review`）：回顾近 `DIGEST_WEEKLY_REVIEW_DAYS`(30) 天检出的 SLG 新品按走势分层——🚀 起飞(climbing) / ✅ 在榜存活 / ✝️ 掉榜(dropped)，起飞+掉榜段列明细（`DIGEST_WEEKLY_REVIEW_CAP`=8）。**live `is_slg` 过滤**（不读陈旧存档列）、一 app 一代表行（优先 US/iOS）、空窗口返回 None 不发空卡。**两卡都发**（SLG-only 已核实竞品，领导可读）。`DIGEST_WEEKLY_REVIEW_ENABLED` 开关。**无幂等台账**（周级 misfire 重发无害，与领导群每日幂等 #179 不同轴，故意不引表）。**坑**：代表行优先 US/iOS 会掩盖同 app 跨市场走势分歧（Android 掉榜但 iOS 在榜→计在榜），v1 接受。零 ST。
+
+### 高潜新品一键晋升 tracked（P0-2，#188）
+
+新品 / 厂商抽屉「转入深度追踪」按钮 → 复用 `POST /games/` 建 `games` 行（**纯前端零后端**）。**关键便利**：iOS 新品 `app_id` 本身即数字 trackId，晋升后自动获版本追踪（ADR 0003）/ 分地区（ADR 0004）/ 详情页趋势，无需人工补 `ios_track_id`；安卓优雅降级（仅趋势、无版本源）。已存在（400）→ 前端提示「已在追踪」。tracked games 从此不再限于起步的 8 个静态老竞品。
+
+### 存量竞品 subgenre 回补（`app_subgenre` 表，alembic 0039，P1-2，#189）
+
+`market_newcomer_log.subgenre_cn` 只在新品被翻译（`translate_pending_newcomers`）时产出，**结构性覆盖不到**：① 从未作为新品检出的 established 竞品（movement 老熟人——⚔️ 同赛道对这些行**从不命中**）② subgenre 特性上线前的老检出行（`summary_cn` 已写但 `subgenre_cn=NULL`，不被重译）。新表 `app_subgenre(app_id 唯一, subgenre_cn?, source)` 按 app_id 全局补：`services/app_subgenre.py::classify_pending_app_subgenres`（候选 = tracked games 全纳入 + 有描述的 `is_slg` `market_newcomer_log` 行，排除已分类；digest 内每轮 drain `APP_SUBGENRE_BACKFILL_CAP`=15、前进式累积）。digest 建 `own_matches` 时 `release_alerts._subgenres_for_apps`（`market_newcomer_log` 优先 + `app_subgenre` fallback）→ ⚔️ 同赛道对老竞品也生效。分类复用 `newcomer_i18n.classify_subgenre`（子品类定义抽成单一来源 `_SUBGENRE_DEFS`，只分类不翻译、`max_tokens=1024` 给思考型模型留 reasoning 余量）。**坑**：`app_subgenre.subgenre_cn` 可空 =「已尝试但 LLM 未给词表内值」（写行即已尝试、不再重烧，同 newcomer_i18n 防重试坑）。零 ST。
+
+### 商店雷达软启动新品接入富化（`chart_type='radar'` 影子行，P1-1，#190）
+
+修「信号越早富化越少」倒挂——雷达清单 diff 检出的软启动 SLG 新品（买量调研最佳窗）此前只落 `publisher_itunes_apps`、无中文摘要/subgenre/视频。`itunes_releases.ingest_artist_apps`（iTunes+GP 共享）检出真新上架（`is_baseline=false`）且属 SLG（`entity.is_slg` OR `is_slg(track_id)` app_id 钉）时收集富化字段 → `newcomer_log.record_radar_newcomers` 写 **`chart_type='radar'` 影子行**进 `market_newcomer_log`（富化字段本就随 iTunes lookup 拿到直接落库、只 LLM 字段留 NULL、rank/revenue NULL、`is_slg=True`；`(country,platform,app_id,'radar')` 幂等）。影子行天然被 translate / subgenre 回补 / 视频 drain 捡起（都源自 `market_newcomer_log`、不按 chart_type 过滤）。**坑（勿回头改）**：影子行是**富化通道不是榜**——`/history` 显式 `chart_type != 'radar'` 排除（含 chart=all），**绝不进新品页市场卡片网格**（避开 rank/country/走势全 NULL 边界坑）；富化出的 📝 摘要回显「商店雷达」区块（`/appstore` join `summary_cn`）+ digest 雷达段。`RADAR_NEWCOMER_ENRICH_ENABLED` 开关。**露出方案 =「仅雷达段补 📝」**（用户 2026-07-05 拍板，非接入市场网格）。零 ST。
+
+### 赛道脉搏（`/newcomers/subgenre-pulse`，P1-2 stretch，#191）
+
+近 N 天新品按 `subgenre_cn` 分布 + 环比上一等长窗口——回答「哪个赛道在冒新品 / 升温降温」（数字门 SLG 整体在热还是冷）。按 app_id 去重（同 app 跨 combo/chart 算一个新品），用该 app **最早检出**定落哪个窗口；忽略名单过滤；radar 影子行也计入（软启动新品同样是赛道信号）。前端新品页市场视图折叠卡（CSS 横条 + 计数 + 升温 ↑/降温 ↓，窗口跟随页面 days 筛选，无分类数据不渲染）。**注**：环比需时间上积累 subgenre 分类数据才有意义（回补起步期上一窗口=0 → 全 ↑）。零 ST、零迁移（复用 `subgenre_cn`）。
+
 ---
 
 ## 标签库 + 产品作用域（PR #113，alembic 0024+0025）
