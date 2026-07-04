@@ -105,16 +105,19 @@ soft-launch ST 雷达（烧配额，2026-06-27 否）· 视频停用词表（软
 
 排序逻辑：第一批用最小成本先让「新品后来怎么样」在看板可见（验证数据质量）；第二批变成领导可感知的周报（价值兑现点）；第三批才动 schema。每批独立可回滚。
 
-| 项 | 状态 | 备注 |
-|---|---|---|
-| P0-1① 后端走势 | ✅ 已实现（未部署） | `services/newcomers.py::compute_trajectories` + `/history` 附 `trajectory`；7 单测（climbing/falling/stable/dropped/new/unknown/free 隔离），pytest 601 |
-| P0-1② 前端走势列 | ✅ 已实现（未部署） | 新品卡 + 抽屉 `TrendBadge`（现名次/掉榜/箭头，new·unknown 不渲染）+「仍在爬升/已掉榜」筛选 chip；zh/en i18n；build + 89 vitest |
-| P2 health GP 计数 | ✅ 已实现（未部署） | `/health` 加 `total_gp_artists`/`entities_without_gp_artist`；HealthChip tooltip 加 GP 覆盖行 |
-| P0-1③ 周察周报卡 | ✅ 已实现（未部署） | `release_alerts.build_weekly_newcomer_review` + `send_weekly_newcomer_review`（近30天 SLG 新品起飞/在榜/掉榜分层，两卡都发）+ 周一 04:40 UTC job；3 单测 |
-| P0-2 一键晋升 | ✅ 已实现（未部署） | 新品/厂商抽屉「转入深度追踪」按钮，复用 `POST /games/`（iOS app_id 即 trackId 自动追踪版本/分地区）；纯前端 |
-| P1-2 subgenre 回补 | ✅ 已实现（未部署） | 新表 `app_subgenre`（迁移 0039）+ `classify_pending_app_subgenres`（有描述的 is_slg 存量 app 分类，复用 `_SUBGENRE_DEFS`）+ digest `_subgenres_for_apps` fallback + 内联 drain；解锁 ⚔️ 对 movement 老竞品；5 单测。**赛道脉搏视图**仍待做 |
-| P1-1 雷达富化接入 | ⬜ backlog | 第三批（进行中） |
-| P1-3 digest 去重/封顶 | ⬜ 观察触发 | 攒领导卡长度 |
+> **✅ 全部条目已部署 HK prod（截至 2026-07-05，runtime `#191`/`4bd9a14`→`27ef216`）。各机制的权威「怎么工作」说明已毕业进 [`ARCHITECTURE.md`](ARCHITECTURE.md) § 新品监测 + 每日 digest（本文件保留为审查 rationale + 落地流水）。**
+
+| 项 | 状态 | PR | 备注（机制详见 ARCHITECTURE.md） |
+|---|---|---|---|
+| P0-1① 后端走势 | ✅ 已部署 | #186 | `compute_trajectories` + `/history` 附 `trajectory`；7 单测 |
+| P0-1② 前端走势列 | ✅ 已部署 | #186 | 新品卡/抽屉 `TrendBadge` +「仍在爬升/已掉榜」筛选；prod 实拍 |
+| P2 health GP 计数 | ✅ 已部署 | #186 | `/health` 加 `total_gp_artists`/`entities_without_gp_artist` |
+| P0-1③ 周察周报卡 | ✅ 已部署 | #188 | `build_weekly_newcomer_review` + 周一 04:40 UTC job；两卡都发 |
+| P0-2 一键晋升 | ✅ 已部署 | #188 | 抽屉「转入深度追踪」复用 `POST /games/`；纯前端 |
+| P1-2 subgenre 回补 | ✅ 已部署 | #189 | `app_subgenre` 表/迁移 0039 + `classify_pending_app_subgenres` + digest fallback |
+| P1-1 雷达富化接入 | ✅ 已部署 | #190 | `chart_type='radar'` 影子行 riding 富化 drain；「仅雷达段补 📝」方案 |
+| 赛道脉搏视图 | ✅ 已部署 | #191 | `/newcomers/subgenre-pulse` + 前端折叠卡；prod 实拍 25 新品 |
+| P1-3 digest 去重/封顶 | ⬜ 观察触发 | — | 攒领导卡长度（唯一未启动项，见 [[project_digest_leader_push_roadmap]]） |
 
 > **第一批落地记录（2026-07-04，本地未部署，PR #186）**：三项全零 ST、零迁移，纯读时计算 + 加派生字段，回滚走纯代码。后端 pytest 601 / 前端 build + vitest 89 全绿。**视觉验证待部署**——走势 chip 需真实多快照榜单历史才显示，本地 mock 数据不足以演示，按项目既有「HK 代理预览」流程在部署后截图确认。
 >
