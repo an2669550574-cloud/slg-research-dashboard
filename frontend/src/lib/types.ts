@@ -338,6 +338,19 @@ export interface NewcomerHistoryItem {
   /** 检出时是否「回归」（baseline 之外曾出现）。0022 迁移前的历史行为 null —
    *  前端按真首发处理（默认 signal=true_new 仍会显示，老卡片照旧）。 */
   is_reentry: boolean | null
+  /** 检出后走势（读时算 game_rankings，零 ST）。无后续快照点时为 null / trend='unknown'。 */
+  trajectory: NewcomerTrajectory | null
+}
+
+/** 检出后走势：这款新品现在名次到哪了 / 是否已掉榜。 */
+export interface NewcomerTrajectory {
+  current_rank: number | null    // 最新快照名次（掉出采集深度 → null）
+  current_as_of: string | null   // 最新快照日
+  peak_rank: number | null       // 检出以来最好（最小）名次
+  last_seen: string | null       // 最近一次仍在榜的快照日
+  days_tracked: number | null    // 检出日 → 最新快照的日历跨度
+  on_chart: boolean              // 最新快照里是否还在
+  trend: 'climbing' | 'falling' | 'stable' | 'dropped' | 'new' | 'unknown'
 }
 
 export interface NewcomerHistoryOut {
@@ -969,6 +982,8 @@ export interface PublisherHealth {
   total_relations: number
   total_itunes_artists: number
   entities_without_itunes_artist: number
+  total_gp_artists: number
+  entities_without_gp_artist: number
   capital_entities: number
   avg_brief_len: number
   max_brief_len: number

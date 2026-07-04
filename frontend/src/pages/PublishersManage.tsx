@@ -1572,6 +1572,7 @@ function HealthChip() {
     h.stale_review > 0    && tt.healthTipStale(h.stale_review),
     h.no_relations > 0    && tt.healthTipNoRels(h.no_relations),
     tt.healthTipArtist(h.total - h.entities_without_itunes_artist, h.total, h.total_itunes_artists),
+    tt.healthTipArtistGp(h.total - h.entities_without_gp_artist, h.total, h.total_gp_artists),
   ].filter(Boolean).join('\n')
   return (
     <span

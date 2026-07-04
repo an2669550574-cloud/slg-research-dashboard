@@ -225,6 +225,15 @@ export const en: Translations = {
     chartFreeBadge: 'Free chart',
     reentryBadge: 'Re-entry',
     reentryHint: 'This app appeared in this market beyond the baseline window — fell out briefly and returned, often signaling a renewed marketing push',
+    // Post-detection trajectory (P0-1 newcomer lifecycle tracking, read-time over game_rankings, zero quota)
+    trendNow: (rank: number) => `now #${rank}`,
+    trendDropped: 'Off chart',
+    trendTooltip: (peak: number, days: number) => `Peak #${peak} since detection · tracked ${days}d`,
+    trendDroppedTooltip: (peak: number, lastSeen: string) => `Dropped out of tracked ranks · peak #${peak} · last seen ${lastSeen}`,
+    trendFilterHint: 'Filter by post-detection trajectory: Climbing = newcomers still rising; Off chart = flash in the pan',
+    trendFilterAll: 'All trends',
+    trendFilterClimbing: 'Climbing',
+    trendFilterDropped: 'Off chart',
     // Data freshness (JP/KR/DE/RU weekly sync can lag a few days)
     stalenessHeader: 'Chart sync lag:',
     stalenessDaysAgo: (n: number) => `${n}d ago`,
@@ -639,6 +648,8 @@ export const en: Translations = {
     healthTipNoRels: (n: number) => `No equity relations: ${n} (independent or unmapped)`,
     healthTipArtist: (withN: number, total: number, artists: number) =>
       `iOS radar coverage: ${withN}/${total} entities (${artists} accounts; capital holders / app_id-pinned majors legitimately none)`,
+    healthTipArtistGp: (withN: number, total: number, artists: number) =>
+      `GP radar coverage: ${withN}/${total} entities (${artists} accounts; iOS-only / capital holders legitimately none)`,
     exportColName: 'Entity',
     exportColNameEn: 'Name (EN)',
     exportColRegion: 'Region',

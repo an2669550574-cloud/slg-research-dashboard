@@ -610,6 +610,12 @@ async def publisher_health(db: AsyncSession = Depends(get_db)):
         select(PublisherItunesArtist).where(PublisherItunesArtist.platform == "ios")
     )).scalars().all()
     entities_with_ios_artist = {a.entity_id for a in ios_artists}
+    # GP 侧雷达对称统计（#166 起雷达接 iOS+GP 双侧，很多 SLG 只在 Google Play）——
+    # 此前 /health 只算 iOS 覆盖，GP 王牌空转不可见。两侧各自独立判覆盖。
+    gp_artists = (await db.execute(
+        select(PublisherItunesArtist).where(PublisherItunesArtist.platform == "gp")
+    )).scalars().all()
+    entities_with_gp_artist = {a.entity_id for a in gp_artists}
 
     aliases_by_eid: dict[int, int] = {}
     for a in aliases:
@@ -686,6 +692,9 @@ async def publisher_health(db: AsyncSession = Depends(get_db)):
         total_itunes_artists=len(ios_artists),
         entities_without_itunes_artist=sum(
             1 for e in entities if e.id not in entities_with_ios_artist),
+        total_gp_artists=len(gp_artists),
+        entities_without_gp_artist=sum(
+            1 for e in entities if e.id not in entities_with_gp_artist),
         capital_entities=capital_entities,
         avg_brief_len=(sum(brief_lens) // total) if total else 0,
         max_brief_len=max(brief_lens) if brief_lens else 0,

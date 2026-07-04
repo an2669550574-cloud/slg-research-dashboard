@@ -230,6 +230,8 @@ class PublisherHealthOut(BaseModel):
     total_relations: int
     total_itunes_artists: int = 0          # 已 wire 的 iOS 开发者账号（雷达自动召回器）总数
     entities_without_itunes_artist: int = 0  # 没接 iOS 雷达的主体数（含资本方/app_id 钉的大厂，故偏高）
+    total_gp_artists: int = 0              # 已 wire 的 GP 开发者账号总数（雷达 iOS+GP 双侧，很多 SLG 只在 GP）
+    entities_without_gp_artist: int = 0    # 没接 GP 雷达的主体数（多为 iOS-only / 资本方，故偏高）
     capital_entities: int            # is_slg=False 的资本方/控股母体
     avg_brief_len: int               # 平均 brief 字符数
     max_brief_len: int               # 单主体最长 brief（已加戳记后会拉高）

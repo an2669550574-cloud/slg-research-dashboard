@@ -247,6 +247,15 @@ export const zh = {
     chartFreeBadge: '下载榜',
     reentryBadge: '回归',
     reentryHint: '该产品在基线窗口之外曾上过本市场榜单——短期跌出后回归，常是厂商加码投放的信号',
+    // 检出后走势（P0-1 新品生命周期追踪，读时算 game_rankings、零配额）
+    trendNow: (rank: number) => `现 #${rank}`,
+    trendDropped: '已掉榜',
+    trendTooltip: (peak: number, days: number) => `检出以来峰值 #${peak} · 已追踪 ${days} 天`,
+    trendDroppedTooltip: (peak: number, lastSeen: string) => `已跌出采集名次范围 · 峰值 #${peak} · 末次在榜 ${lastSeen}`,
+    trendFilterHint: '按检出后走势筛选：仍在爬升 = 名次持续上升的起势新品；已掉榜 = 昙花一现',
+    trendFilterAll: '全部走势',
+    trendFilterClimbing: '仍在爬升',
+    trendFilterDropped: '已掉榜',
     // 数据新鲜度提示（JP/KR/DE/RU 周级同步可能有几天滞后）
     stalenessHeader: '榜单同步滞后：',
     stalenessDaysAgo: (n: number) => `截至 ${n} 天前`,
@@ -663,6 +672,8 @@ export const zh = {
     healthTipNoRels: (n: number) => `无股权关系主体：${n}（独立厂或待挂）`,
     healthTipArtist: (withN: number, total: number, artists: number) =>
       `iOS 雷达覆盖：${withN}/${total} 主体（${artists} 账号；资本方/app_id 钉的大厂不接属正常）`,
+    healthTipArtistGp: (withN: number, total: number, artists: number) =>
+      `GP 雷达覆盖：${withN}/${total} 主体（${artists} 账号；iOS-only / 资本方不接属正常）`,
     exportColName: '主体',
     exportColNameEn: '英文名',
     exportColRegion: '地区',
