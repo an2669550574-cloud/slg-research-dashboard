@@ -241,6 +241,12 @@ export const en: Translations = {
     trendFilterAll: 'All trends',
     trendFilterClimbing: 'Climbing',
     trendFilterDropped: 'Off chart',
+    // Track pulse (P1-2 stretch): newcomer distribution per subgenre over last N days + WoW
+    pulseTitle: (n: number) => `Track pulse · last ${n}d`,
+    pulseSummary: (total: number, hottest: string) => `${total} newcomers classified · hottest ${hottest}`,
+    pulseHint: (n: number) => `Newcomers per gameplay subgenre over the last ${n}d (deduped by app) vs the previous ${n}d — which track is heating up / cooling down`,
+    pulseExpand: 'Expand',
+    pulseCollapse: 'Collapse',
     // Data freshness (JP/KR/DE/RU weekly sync can lag a few days)
     stalenessHeader: 'Chart sync lag:',
     stalenessDaysAgo: (n: number) => `${n}d ago`,

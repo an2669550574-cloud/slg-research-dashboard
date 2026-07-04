@@ -26,6 +26,7 @@ import type {
   MovementsOut,
   NewcomersOut,
   NewcomerHistoryOut,
+  SubgenrePulseOut,
   PublisherNewcomersOut,
   StoreDetail,
   NewcomerVideo,
@@ -215,6 +216,9 @@ export const newcomersApi = {
    *  chart='grossing'(默认) 收入榜；'free' 下载榜；'all' 两榜都返回（ADR 0001）。 */
   history: (opts: { days?: number; country?: string; platform?: string; topn?: number; signal?: 'true_new' | 'reentry' | 'all'; chart?: 'grossing' | 'free' | 'all' } = {}): Promise<NewcomerHistoryOut> =>
     api.get('/newcomers/history', { params: opts }).then(r => r.data),
+  /** 赛道脉搏：近 N 天各玩法子品类新品分布 + 环比。 */
+  subgenrePulse: (days = 30): Promise<SubgenrePulseOut> =>
+    api.get('/newcomers/subgenre-pulse', { params: { days } }).then(r => r.data),
   /** 手动触发全 combo 检出落库（首次回填用）。 */
   historySync: (): Promise<{ message: string; detected: number; recorded: number; enriched: number }> =>
     api.post('/newcomers/history/sync').then(r => r.data),
