@@ -26,7 +26,7 @@
 """
 import asyncio
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Optional
 
 from sqlalchemy import select, func, distinct
@@ -421,4 +421,112 @@ async def gate_publisher_newcomers_by_release_date(
         if rd and rd < cutoff:
             continue  # 真实上架日早于阈值 → 老产品，剔除
         out.append({**n, "release_date": rd})
+    return out
+
+
+# 检出后名次位移达到这个幅度才判方向（低于视为持平，抗日常小抖动）。与 movement 的
+# COMPETITOR_RANK_JUMP=10（单日跳）不同轴——这是「检出至今累计位移」的方向判定，取更敏感的 5。
+_TRAJECTORY_TREND_THRESHOLD = 5
+
+
+def _days_between(d1: str, d2: str) -> Optional[int]:
+    """两个 "YYYY-MM-DD" 的日历天数差 d2 - d1；解析失败返回 None。"""
+    try:
+        return (datetime.strptime(d2, "%Y-%m-%d") - datetime.strptime(d1, "%Y-%m-%d")).days
+    except (ValueError, TypeError):
+        return None
+
+
+async def compute_trajectories(rows) -> dict[int, dict]:
+    """给检出日志行批量计算「检出后走势」（纯读本地 game_rankings，零 ST 配额）。
+
+    `market_newcomer_log` 记的是检出时点快照，它之后每天的名次都在 `game_rankings`
+    里——两表只差一个 join。新品检出后即「阅后即焚」是本模块最大的产品断层：除非它
+    冲进收入榜 Top20（movement 口径），否则没人知道它后来是起飞还是死了。这里把
+    「上周那批新品现在怎么样了」补成可读信号。
+
+    按 (country, platform, chart_type, app_id) 取该 app 检出日 (as_of) 当天及之后的
+    名次序列，算出每行的走势 dict：
+      - current_rank / current_as_of：该 combo/chart 最新快照的名次（掉出采集深度 → None）
+      - peak_rank：检出以来最好（最小）名次
+      - last_seen：最近一次仍在榜的快照日
+      - days_tracked：检出日 → 该 combo 最新快照的日历跨度
+      - on_chart：最新快照里它是否还在（未掉出采集深度）
+      - trend：climbing / falling / stable / dropped / new / unknown（前端直接渲 chip）
+
+    返回 {log_id: trajectory_dict}。无对应 game_rankings 点的行 trend='unknown'。
+    入参 rows = MarketNewcomerLog 行（读 id/country/platform/chart_type/app_id/as_of/rank
+    标量，无 relationship，跨 session 读安全）。
+    """
+    rows = list(rows)
+    if not rows:
+        return {}
+    app_ids = {r.app_id for r in rows}
+    since = min(r.as_of for r in rows)  # 最早检出日作下界，缩小扫描范围
+
+    async with AsyncSessionLocal() as db:
+        pts = (await db.execute(
+            select(GameRanking.country, GameRanking.platform, GameRanking.chart_type,
+                   GameRanking.app_id, GameRanking.date, GameRanking.rank)
+            .where(GameRanking.app_id.in_(app_ids), GameRanking.date >= since)
+        )).all()
+        # 各 combo/chart 的最新快照日（判掉榜；与具体 app 无关）。
+        combo_latest = {
+            (c, p, ct): d
+            for c, p, ct, d in (await db.execute(
+                select(GameRanking.country, GameRanking.platform, GameRanking.chart_type,
+                       func.max(GameRanking.date))
+                .group_by(GameRanking.country, GameRanking.platform, GameRanking.chart_type)
+            )).all()
+        }
+
+    # 按 (combo, chart, app) 归拢名次点。
+    by_key: dict[tuple, list[tuple[str, Optional[int]]]] = {}
+    for c, p, ct, aid, d, rk in pts:
+        by_key.setdefault((c, p, ct, aid), []).append((d, rk))
+
+    out: dict[int, dict] = {}
+    for r in rows:
+        key = (r.country, r.platform, r.chart_type, r.app_id)
+        combo_last = combo_latest.get((r.country, r.platform, r.chart_type))
+        # 只看检出日 (as_of) 当天及之后的点——检出后走势，检出前历史不算。
+        pts_after = sorted((d, rk) for d, rk in by_key.get(key, []) if d >= r.as_of)
+        on_rank = [(d, rk) for d, rk in pts_after if rk is not None]
+        if not on_rank:
+            out[r.id] = {
+                "current_rank": None, "current_as_of": None, "peak_rank": None,
+                "last_seen": None, "days_tracked": None, "on_chart": False,
+                "trend": "unknown",
+            }
+            continue
+        last_seen, last_rank = on_rank[-1]
+        peak = min(rk for _, rk in on_rank)
+        # on_chart：该 app 最后在榜日 == 该 combo 最新快照日（未掉出采集深度）。
+        on_chart = combo_last is not None and last_seen >= combo_last
+        current_rank = last_rank if on_chart else None
+        days_tracked = _days_between(r.as_of, combo_last or last_seen)
+        if not on_chart:
+            trend = "dropped"
+        elif days_tracked == 0:
+            trend = "new"  # 检出当天即最新快照，还没后续数据可判走势
+        elif r.rank is not None and current_rank is not None:
+            # 名次越小越好，delta = 检出名次 - 当前名次，>0 = 上升。
+            delta = r.rank - current_rank
+            if delta >= _TRAJECTORY_TREND_THRESHOLD:
+                trend = "climbing"
+            elif delta <= -_TRAJECTORY_TREND_THRESHOLD:
+                trend = "falling"
+            else:
+                trend = "stable"
+        else:
+            trend = "unknown"
+        out[r.id] = {
+            "current_rank": current_rank,
+            "current_as_of": last_seen if on_chart else None,
+            "peak_rank": peak,
+            "last_seen": last_seen,
+            "days_tracked": days_tracked,
+            "on_chart": on_chart,
+            "trend": trend,
+        }
     return out

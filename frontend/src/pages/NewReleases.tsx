@@ -6,14 +6,14 @@ import { newcomersApi, publishersApi } from '../lib/api'
 import { formatRevenue, formatNumber } from '../lib/utils'
 import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
-import { Download as DownloadIcon, Sparkles, Info, FilePlus2, Globe2, Building2, Store, RefreshCw, Star, X, ExternalLink, Repeat, Clock, Ban, ChevronDown, Youtube } from 'lucide-react'
+import { Download as DownloadIcon, Sparkles, Info, FilePlus2, Globe2, Building2, Store, RefreshCw, Star, X, ExternalLink, Repeat, Clock, Ban, ChevronDown, Youtube, TrendingUp, TrendingDown, Minus, CircleOff } from 'lucide-react'
 import { COUNTRIES, PLATFORMS, platformLabel, type Country, type Platform } from '../lib/markets'
 import { GameIcon } from '../components/GameIcon'
 import { QueryError } from '../components/QueryError'
 import { PageHeader } from '../components/PageHeader'
 import { WechatAccountsPanel } from '../components/WechatAccountsPanel'
 import { useLocalStorageState } from '../lib/hooks'
-import type { NewcomerHistoryItem, PublisherNewcomersOut } from '../lib/types'
+import type { NewcomerHistoryItem, NewcomerTrajectory, PublisherNewcomersOut } from '../lib/types'
 import { groupByApp, groupPublisherByApp, type GroupedNewcomer, type GroupedPublisherNewcomer } from '../lib/newcomerGrouping'
 
 export default function NewReleases() {
@@ -37,6 +37,8 @@ export default function NewReleases() {
   // SLG 状态筛选：默认只看「已识别 SLG」（发行商在白名单/已建档），把「待识别新厂」
   // (is_slg=false) 折进独立选项——次市场涌入的非 SLG 噪声不再默认刷屏催建档。
   const [slgFilter, setSlgFilter] = useLocalStorageState<'slg' | 'pending' | 'all'>('slg.nc.slgstatus', 'slg')
+  // 检出后走势筛选（P0-1）：全部 / 仍在爬升（起飞新品）/ 已掉榜（昙花一现）。默认全部。
+  const [trendFilter, setTrendFilter] = useLocalStorageState<'all' | 'climbing' | 'dropped'>('slg.nc.trend', 'all')
   const [selected, setSelected] = useState<GroupedNewcomer | null>(null)
 
   const { data, isLoading, isError, refetch } = useQuery({
@@ -111,10 +113,13 @@ export default function NewReleases() {
   const slgCount = useMemo(() => allGroups.filter(g => g.rep.is_slg).length, [allGroups])
   const pendingCount = allGroups.length - slgCount
   const groups = useMemo(() => {
-    if (slgFilter === 'slg') return allGroups.filter(g => g.rep.is_slg)
-    if (slgFilter === 'pending') return allGroups.filter(g => !g.rep.is_slg)
-    return allGroups
-  }, [allGroups, slgFilter])
+    let g = allGroups
+    if (slgFilter === 'slg') g = g.filter(x => x.rep.is_slg)
+    else if (slgFilter === 'pending') g = g.filter(x => !x.rep.is_slg)
+    if (trendFilter === 'climbing') g = g.filter(x => x.rep.trajectory?.trend === 'climbing')
+    else if (trendFilter === 'dropped') g = g.filter(x => x.rep.trajectory?.trend === 'dropped')
+    return g
+  }, [allGroups, slgFilter, trendFilter])
   // 厂商新品视角的去重后计数（表格合并在子组件内，这里只为表头计数与之一致）。
   const pubGroupCount = useMemo(
     () => groupPublisherByApp(pubQuery.data?.items ?? []).length,
@@ -319,6 +324,19 @@ export default function NewReleases() {
                 </button>
               ))}
             </div>
+            <div className="flex gap-1 bg-elevated rounded-lg p-1" title={t.newcomers.trendFilterHint}>
+              {(['all', 'climbing', 'dropped'] as const).map(s => (
+                <button
+                  key={s}
+                  onClick={() => setTrendFilter(s)}
+                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${trendFilter === s ? 'bg-brand-600 text-white' : 'text-secondary hover:text-primary'}`}
+                >
+                  {s === 'climbing' && <TrendingUp size={11} />}
+                  {s === 'dropped' && <CircleOff size={11} />}
+                  {s === 'all' ? t.newcomers.trendFilterAll : s === 'climbing' ? t.newcomers.trendFilterClimbing : t.newcomers.trendFilterDropped}
+                </button>
+              ))}
+            </div>
           </>
         )}
       </div>
@@ -384,6 +402,7 @@ export default function NewReleases() {
                     <div className={`text-sm font-bold font-data ${gr.bestRank == null ? 'text-muted' : gr.bestRank <= 10 ? 'text-yellow-400' : gr.bestRank <= 50 ? 'text-primary' : 'text-muted'}`}>
                       #{gr.bestRank ?? '—'}
                     </div>
+                    <div className="flex justify-end"><TrendBadge traj={g.trajectory} /></div>
                   </div>
                 </div>
                 {g.summary_cn && (
@@ -468,6 +487,39 @@ export default function NewReleases() {
         <span>{view === 'market' ? t.newcomers.note : t.newcomers.publisherNote}</span>
       </div>
     </div>
+  )
+}
+
+
+/** 检出后走势徽标（P0-1）：把「新品检出即阅后即焚」补成态势——这款现在爬到哪了 / 掉榜没。
+ *  climbing/falling/stable 显示「现 #名次」+ 方向箭头；dropped 显示「已掉榜」；
+ *  new（检出当天、无后续数据）/ unknown（无轨迹点）不渲染，避免噪声。tooltip 带峰值 + 追踪天数。 */
+function TrendBadge({ traj }: { traj: NewcomerTrajectory | null }) {
+  const t = useT()
+  if (!traj || traj.trend === 'new' || traj.trend === 'unknown') return null
+  if (traj.trend === 'dropped') {
+    return (
+      <span
+        title={traj.peak_rank != null && traj.last_seen ? t.newcomers.trendDroppedTooltip(traj.peak_rank, traj.last_seen) : undefined}
+        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-red-500/10 text-red-400 border border-red-500/25"
+      >
+        <CircleOff size={10} />{t.newcomers.trendDropped}
+      </span>
+    )
+  }
+  const cls = traj.trend === 'climbing'
+    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25'
+    : traj.trend === 'falling'
+    ? 'bg-amber-500/10 text-amber-400 border-amber-500/25'
+    : 'bg-elevated text-muted border-default'
+  return (
+    <span
+      title={traj.peak_rank != null && traj.days_tracked != null ? t.newcomers.trendTooltip(traj.peak_rank, traj.days_tracked) : undefined}
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium font-data border ${cls}`}
+    >
+      {traj.trend === 'climbing' ? <TrendingUp size={10} /> : traj.trend === 'falling' ? <TrendingDown size={10} /> : <Minus size={10} />}
+      {traj.current_rank != null ? t.newcomers.trendNow(traj.current_rank) : ''}
+    </span>
   )
 }
 
@@ -726,6 +778,7 @@ function NewcomerDrawer({ group, onClose }: { group: GroupedNewcomer; onClose: (
             <span className={`font-bold ${group.bestRank != null && group.bestRank <= 10 ? 'text-yellow-400' : 'text-primary'}`}>
               #{group.bestRank ?? '—'}{multi && group.bestRank != null && <span className="ml-1 text-muted font-normal">{t.newcomers.marketBestRank}</span>}
             </span>
+            <TrendBadge traj={item.trajectory} />
             {item.genre && <span className="px-1.5 py-0.5 bg-elevated rounded text-secondary">{item.genre}</span>}
             {item.rating != null && item.rating > 0 && (
               <span className="inline-flex items-center gap-0.5 text-amber-400">

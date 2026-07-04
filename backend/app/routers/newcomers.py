@@ -23,6 +23,7 @@ from app.models.publisher import PublisherEntity, PublisherItunesArtist, Publish
 from app.services.newcomers import (
     detect_newcomers, detect_publisher_newcomers, _load_entity_matchers,
     _load_ignore_keys, gate_publisher_newcomers_by_release_date,
+    compute_trajectories,
 )
 from app.services.gp_releases import sync_gp_releases
 from app.services.itunes_releases import sync_itunes_releases
@@ -222,6 +223,20 @@ async def get_publisher_newcomers(
     )
 
 
+class NewcomerTrajectory(BaseModel):
+    """检出后走势（读时算 game_rankings，零 ST）。见 services.newcomers.compute_trajectories。
+
+    把「新品检出即阅后即焚」补成态势：这批新品现在是起飞、平稳、下滑还是已掉榜。
+    """
+    current_rank: Optional[int] = None    # 最新快照名次（掉出采集深度 → None）
+    current_as_of: Optional[str] = None   # 最新快照日
+    peak_rank: Optional[int] = None       # 检出以来最好（最小）名次
+    last_seen: Optional[str] = None       # 最近一次仍在榜的快照日
+    days_tracked: Optional[int] = None    # 检出日 → 最新快照的日历跨度
+    on_chart: bool = False                # 最新快照里是否还在
+    trend: str = "unknown"                # climbing/falling/stable/dropped/new/unknown
+
+
 class NewcomerHistoryItem(BaseModel):
     """一条已沉淀的新面孔检出（含免费源富化字段，未富化为 NULL）。"""
     id: int
@@ -259,6 +274,8 @@ class NewcomerHistoryItem(BaseModel):
     # 检出时是否「回归」（baseline 之外曾出现）。0022 迁移前的历史行为 None ——
     # 前端按真首发处理（向后兼容，缺省 = 老数据照旧显示）。
     is_reentry: Optional[bool] = None
+    # 检出后走势（读时算 game_rankings，零 ST）。无后续快照点时字段全空、trend='unknown'。
+    trajectory: Optional[NewcomerTrajectory] = None
 
 
 class NewcomerHistoryOut(BaseModel):
@@ -326,6 +343,8 @@ async def get_newcomer_history(
     rows = [r for r in rows if not _is_ignored(r.app_id, r.publisher, ignore_pub_keys, ignore_app_ids)]
     from app.services.newcomer_log import attribute_entities
     attributed = await attribute_entities(rows)
+    # 检出后走势：每行 join game_rankings 算「现在名次到哪了/是否掉榜」（零 ST）。
+    trajectories = await compute_trajectories(rows)
     # 数据新鲜度：每 combo 最近一次已同步快照日，让前端给陈旧 combo 加 stale 提示。
     freshness_rows = (await db.execute(
         select(GameRanking.country, GameRanking.platform, sa_func.max(GameRanking.date))
@@ -349,6 +368,8 @@ async def get_newcomer_history(
                 entity_id=attributed.get(r.id, (None, None))[0],
                 entity_name=attributed.get(r.id, (None, None))[1],
                 screenshots=json.loads(r.screenshot_urls) if r.screenshot_urls else [],
+                trajectory=(NewcomerTrajectory(**trajectories[r.id])
+                            if r.id in trajectories else None),
             )
             for r in rows
         ],
