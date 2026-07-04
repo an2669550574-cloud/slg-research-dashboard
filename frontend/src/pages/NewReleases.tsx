@@ -6,7 +6,7 @@ import { newcomersApi, publishersApi, gamesApi } from '../lib/api'
 import { formatRevenue, formatNumber } from '../lib/utils'
 import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
-import { Download as DownloadIcon, Sparkles, Info, FilePlus2, Globe2, Building2, Store, RefreshCw, Star, X, ExternalLink, Repeat, Clock, Ban, ChevronDown, Youtube, TrendingUp, TrendingDown, Minus, CircleOff, Radar } from 'lucide-react'
+import { Download as DownloadIcon, Sparkles, Info, FilePlus2, Globe2, Building2, Store, RefreshCw, Star, X, ExternalLink, Repeat, Clock, Ban, ChevronDown, ChevronRight, Youtube, TrendingUp, TrendingDown, Minus, CircleOff, Radar, Activity } from 'lucide-react'
 import { COUNTRIES, PLATFORMS, platformLabel, type Country, type Platform } from '../lib/markets'
 import { GameIcon } from '../components/GameIcon'
 import { QueryError } from '../components/QueryError'
@@ -343,6 +343,8 @@ export default function NewReleases() {
 
       {view === 'market' && data?.as_of_by_combo && <StaleCombosWarning asOfByCombo={data.as_of_by_combo} today={data.today} />}
 
+      {view === 'market' && <SubgenrePulse days={days} />}
+
       {view === 'publisher' ? (
         <>
           <AppstoreReleasesSection />
@@ -487,6 +489,55 @@ export default function NewReleases() {
         <span>{view === 'market' ? t.newcomers.note : t.newcomers.publisherNote}</span>
       </div>
     </div>
+  )
+}
+
+
+/** 赛道脉搏（P1-2 stretch）：近 N 天各玩法子品类的新品数（CSS 横条）+ 环比上一个等长窗口
+ *  的升温/降温箭头。回答「哪个赛道在冒新品」。默认收起（省地方），窗口跟随页面 days 筛选。
+ *  无分类数据整卡不渲染。所有 hooks 在任何 early return 之前。 */
+function SubgenrePulse({ days }: { days: number }) {
+  const t = useT()
+  const [open, setOpen] = useLocalStorageState('slg.nc.pulseOpen', false)
+  const { data } = useQuery({
+    queryKey: ['subgenrePulse', days],
+    queryFn: () => newcomersApi.subgenrePulse(days),
+    staleTime: 5 * 60 * 1000,
+  })
+  if (!data || data.total === 0) return null
+  const max = Math.max(...data.buckets.map(b => b.count), 1)
+  const hottest = data.buckets[0]?.subgenre ?? ''
+  return (
+    <section className="border border-default bg-surface rounded-xl">
+      <button onClick={() => setOpen(!open)} className="w-full flex items-center gap-2.5 px-4 py-3 text-left">
+        <span className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center bg-accent/15">
+          <Activity size={14} className="text-accent" />
+        </span>
+        <span className="font-display text-sm font-semibold text-primary">{t.newcomers.pulseTitle(days)}</span>
+        <span className="text-[11px] text-muted truncate">{t.newcomers.pulseSummary(data.total, hottest)}</span>
+        <span className="ml-auto text-[11px] text-muted shrink-0">{open ? t.newcomers.pulseCollapse : t.newcomers.pulseExpand}</span>
+        {open ? <ChevronDown size={15} className="text-muted shrink-0" /> : <ChevronRight size={15} className="text-muted shrink-0" />}
+      </button>
+      {open && (
+        <div className="border-t border-default px-4 py-3">
+          <div className="text-[11px] text-muted mb-3">{t.newcomers.pulseHint(days)}</div>
+          <div className="space-y-1.5">
+            {data.buckets.map(b => (
+              <div key={b.subgenre} className="flex items-center gap-2">
+                <span className="w-24 shrink-0 text-xs text-secondary truncate" title={b.subgenre}>{b.subgenre}</span>
+                <div className="flex-1 h-4 bg-elevated rounded overflow-hidden">
+                  <div className="h-full bg-accent/50 rounded-r" style={{ width: `${Math.max(Math.round((b.count / max) * 100), b.count > 0 ? 4 : 0)}%` }} />
+                </div>
+                <span className="w-7 text-right text-xs font-data text-primary">{b.count}</span>
+                <span className={`w-11 text-right text-[10px] font-data ${b.delta > 0 ? 'text-emerald-400' : b.delta < 0 ? 'text-amber-400' : 'text-muted'}`}>
+                  {b.delta > 0 ? `↑${b.delta}` : b.delta < 0 ? `↓${-b.delta}` : '–'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
   )
 }
 

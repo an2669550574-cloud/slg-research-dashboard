@@ -361,6 +361,21 @@ export interface NewcomerHistoryOut {
   as_of_by_combo: Record<string, string>
 }
 
+/** 赛道脉搏：一个玩法子品类近窗口新品热度 + 环比。 */
+export interface SubgenrePulseBucket {
+  subgenre: string
+  count: number       // 当前窗口去重后落此子品类的新品数
+  prev_count: number  // 上一个等长窗口
+  delta: number       // count - prev_count（>0 升温 / <0 降温）
+}
+
+export interface SubgenrePulseOut {
+  today: string
+  days: number
+  total: number
+  buckets: SubgenrePulseBucket[]  // 当前窗口新品数降序
+}
+
 export interface NewcomersOut {
   today: string
   items: NewcomerItem[]

@@ -263,6 +263,12 @@ export const zh = {
     trendFilterAll: '全部走势',
     trendFilterClimbing: '仍在爬升',
     trendFilterDropped: '已掉榜',
+    // 赛道脉搏（P1-2 stretch）：近 N 天各玩法子品类新品分布 + 环比
+    pulseTitle: (n: number) => `赛道脉搏 · 近 ${n} 天`,
+    pulseSummary: (total: number, hottest: string) => `${total} 个新品已分类 · 最热 ${hottest}`,
+    pulseHint: (n: number) => `近 ${n} 天各玩法子品类的新品数（按 app 去重）+ 环比上一个 ${n} 天窗口，看哪个赛道在升温 / 降温`,
+    pulseExpand: '展开',
+    pulseCollapse: '收起',
     // 数据新鲜度提示（JP/KR/DE/RU 周级同步可能有几天滞后）
     stalenessHeader: '榜单同步滞后：',
     stalenessDaysAgo: (n: number) => `截至 ${n} 天前`,
