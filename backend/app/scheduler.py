@@ -220,6 +220,17 @@ async def _run_daily_alert_digest() -> None:
         logger.exception("Daily alert digest job crashed")
 
 
+async def _run_weekly_newcomer_review() -> None:
+    """定时任务包装：SLG 新品周察卡（近 N 天检出新品「存活/爬升/掉榜」，P0-1③）。
+    读时算 game_rankings 走势，零 ST；未配 webhook / 窗口无 SLG 新品 静默 no-op；
+    异常不拖垮 scheduler。"""
+    from app.services.release_alerts import send_weekly_newcomer_review
+    try:
+        await send_weekly_newcomer_review()
+    except Exception:
+        logger.exception("Weekly newcomer review job crashed")
+
+
 async def _run_wechat_login_check() -> None:
     """定时任务包装：微信公众号登录将过期/已失效 → 钉钉提醒重新扫码。
     未启用 / 未配 webhook / 服务连不上 → 静默；异常不拖垮 scheduler。"""
@@ -421,6 +432,17 @@ def start_scheduler() -> None:
         _run_region_launch_sync,
         CronTrigger(day_of_week="mon", hour=4, minute=20, timezone="UTC"),
         id="region_launch_sync",
+        replace_existing=True,
+        misfire_grace_time=3600 * 3,
+    )
+
+    # SLG 新品周察卡（P0-1③）：每周一 04:40 UTC（= 北京一 12:40，避开 04:00 DB 备份 +
+    # 04:20 区上线刷新；读的是每日 02:30 已同步的 game_rankings）。零 ST；未配 webhook /
+    # 窗口无 SLG 新品空跑无害，故无条件挂。
+    scheduler.add_job(
+        _run_weekly_newcomer_review,
+        CronTrigger(day_of_week="mon", hour=4, minute=40, timezone="UTC"),
+        id="weekly_newcomer_review",
         replace_existing=True,
         misfire_grace_time=3600 * 3,
     )

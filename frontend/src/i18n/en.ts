@@ -206,6 +206,13 @@ export const en: Translations = {
     triageConfirm: (name: string) => `Create a research dossier for "${name}" and pin this app_id? (it will be recognized as SLG after).`,
     triaged: (name: string) => `Dossier created: ${name} · add ownership / sources in Publishers`,
     triageBrief: (game: string, market: string) => `From New Releases · ${market} · ${game}`,
+    // One-click promote to deep tracking (P0-2): add as a tracked competitor; iOS auto-gains version / regional-launch tracking + detail trends
+    promote: 'Track deeply',
+    promoteHint: 'Add as a tracked competitor: iOS auto-gains version-update & regional-launch tracking + detail-page trends (Android: detail trends only, no version source)',
+    promoteConfirm: (name: string) => `Track "${name}" deeply? Adds it to the competitor set; iOS will auto-track version updates daily and regional launches weekly (zero quota).`,
+    promoted: (name: string) => `Now tracking deeply: ${name} · version / regions fill in on next sync`,
+    promoteExists: 'This app is already tracked',
+    promoteFailed: 'Failed to add tracking, please retry',
     ignore: 'Ignore',
     ignoreConfirm: (name: string) => `Mark "${name}" as non-SLG and add to the ignore list? It will stop appearing in New Releases / research gaps (restorable on the Publishers page).`,
     ignoreConfirmApp: (name: string) => `Ignore only this app "${name}"? Marks just this title as non-SLG; other titles from the same publisher still appear (restorable on the Publishers page).`,
