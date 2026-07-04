@@ -1066,6 +1066,11 @@ function AppstoreReleasesSection() {
                   {it.price && <span className="shrink-0">{t.newcomers.appstorePrice(it.price)}</span>}
                   <span className="truncate">{it.bundle_id}{it.artist_label ? ` · ${it.artist_label}` : ''}</span>
                 </div>
+                {it.summary_cn && (
+                  <p className="mt-1 text-[11px] leading-snug text-secondary line-clamp-2">
+                    📝 {it.summary_cn}
+                  </p>
+                )}
                 {it.description && (
                   <p className="mt-1 text-[11px] leading-snug text-muted line-clamp-2">
                     {it.description}

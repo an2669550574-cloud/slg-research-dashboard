@@ -243,6 +243,12 @@ class Settings(BaseSettings):
     # fallback → ⚔️ 同赛道对老竞品也生效。digest 内每轮 drain 上限（LLM 便宜文本模型、前进式累积，
     # 几天内把存量分类完，稳态近 0）。<=0 = 关闭回补。
     APP_SUBGENRE_BACKFILL_CAP: int = 15
+    # 商店雷达软启动新品接入富化管道（P1-1，修「信号越早富化越少」倒挂）：雷达清单 diff 检出
+    # 真新上架（is_baseline=false）且属 SLG 主体时，补写一行「影子行」进 market_newcomer_log
+    # （chart_type='radar'，rank=NULL）→ 天然汇入中文化 / subgenre / 视频富化流。影子行**不进
+    # 新品页市场卡片网格**（/history 排除 chart_type='radar'），只把富化出的 📝 摘要回显到「商店
+    # 雷达」区块 + digest 雷达段。零 ST（富化字段本就随 iTunes lookup 拿到）。False = 关此接入。
+    RADAR_NEWCOMER_ENRICH_ENABLED: bool = True
 
     # ── App Store 清单雷达（免费 iTunes lookup，零 ST 配额）──────────────
     # 每轮对每个开发者账号扫这些 storefront（逗号小写）。SLG 几乎都先软启动：

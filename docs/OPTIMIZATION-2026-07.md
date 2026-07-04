@@ -119,3 +119,5 @@ soft-launch ST 雷达（烧配额，2026-06-27 否）· 视频停用词表（软
 > **第一批落地记录（2026-07-04，本地未部署，PR #186）**：三项全零 ST、零迁移，纯读时计算 + 加派生字段，回滚走纯代码。后端 pytest 601 / 前端 build + vitest 89 全绿。**视觉验证待部署**——走势 chip 需真实多快照榜单历史才显示，本地 mock 数据不足以演示，按项目既有「HK 代理预览」流程在部署后截图确认。
 >
 > **第二批落地记录（2026-07-04，本地未部署，stacked on #186）**：P0-1③ 周察周报卡（新增周级 job + config 旋钮 `DIGEST_WEEKLY_REVIEW_ENABLED/DAYS/CAP`，零迁移）+ P0-2 一键晋升（纯前端，复用现有 `POST /games/`）。后端 pytest **604**（+3 周察单测）/ 前端 build + vitest 89 全绿。周察卡视觉、晋升后版本/分地区追踪同样待部署后确认。
+>
+> **第三批落地记录（2026-07-04）**：两项独立 PR。**P1-2 subgenre 回补**（`app_subgenre` 表/迁移 0039 + `classify_pending_app_subgenres` + digest `_subgenres_for_apps` fallback + drain）解锁 ⚔️ 对 movement 老竞品；pytest **609**（+5）。**P1-1 雷达软启动新品接入富化**（用户选「仅雷达段补 📝」方案）：`ingest_artist_apps` 收集 SLG 真新上架 → `record_radar_newcomers` 写 `chart_type='radar'` **影子行**进 `market_newcomer_log`（riding 中文化/subgenre/视频 drain，字段本就随 iTunes lookup 拿到、只 LLM 字段留 NULL），`/history` 排除影子行不进市场网格，📝 摘要回显「商店雷达」区块 + digest 雷达段；config `RADAR_NEWCOMER_ENRICH_ENABLED`，零迁移；pytest **610**（+6）。两 PR 独立于 main，合并顺序 #189 先、P1-1 后（如冲突走 rebase）。**赛道脉搏视图**仍待做。

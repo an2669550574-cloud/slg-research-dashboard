@@ -115,6 +115,8 @@ class AppstoreReleaseItem(BaseModel):
     description: Optional[str] = None
     screenshots: list[str] = []
     first_seen_at: datetime
+    # P1-1：软启动新品若已写影子行并中文化，带一句话摘要（track_id ≡ market_newcomer_log.app_id）。
+    summary_cn: Optional[str] = None
 
 
 class AppstoreReleasesOut(BaseModel):
@@ -150,6 +152,17 @@ async def get_appstore_releases(
         )
         .order_by(PublisherItunesApp.first_seen_at.desc())
     )).all()
+    # P1-1：这些雷达新上架若已写影子行并中文化，带上 📝 摘要（track_id ≡ app_id）。
+    from app.models.newcomer import MarketNewcomerLog
+    track_ids = [app.track_id for app, *_ in rows if app.track_id]
+    summaries: dict[str, str] = {}
+    if track_ids:
+        for aid, sc in (await db.execute(
+            select(MarketNewcomerLog.app_id, MarketNewcomerLog.summary_cn).where(
+                MarketNewcomerLog.app_id.in_(track_ids),
+                MarketNewcomerLog.summary_cn.is_not(None))
+        )).all():
+            summaries.setdefault(aid, sc)
 
     return AppstoreReleasesOut(
         today=today,
@@ -165,6 +178,7 @@ async def get_appstore_releases(
                 description=app.description,
                 screenshots=json.loads(app.screenshot_urls) if app.screenshot_urls else [],
                 first_seen_at=app.first_seen_at,
+                summary_cn=summaries.get(app.track_id),
             )
             for app, entity_name, artist_label, platform in rows
         ],
@@ -316,8 +330,12 @@ async def get_newcomer_history(
     from app.models.newcomer import MarketNewcomerLog
     from sqlalchemy import or_, func as sa_func
     from app.models.game import GameRanking, CHART_GROSSING
+    from app.services.newcomer_log import CHART_RADAR
     since = utcnow_naive() - timedelta(days=days)
     q = select(MarketNewcomerLog).where(MarketNewcomerLog.first_detected_at >= since)
+    # 雷达影子行（chart_type='radar'，P1-1）只为 riding 富化管道，不是真榜——绝不进市场卡片
+    # 网格（含 chart=all）。它们的 📝 摘要回显在「商店雷达」区块，不在这里。
+    q = q.where(MarketNewcomerLog.chart_type != CHART_RADAR)
     if chart != "all":
         q = q.where(MarketNewcomerLog.chart_type == chart)
     if country:
