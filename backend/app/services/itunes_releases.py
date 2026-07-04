@@ -223,6 +223,7 @@ async def sync_itunes_releases() -> dict:
 
     started_at = utcnow_naive()
     expanded_rows: list[tuple[int, list[str]]] = []  # (app row id, 新增的区)
+    radar_newcomers: list[dict] = []                  # P1-1：本轮 SLG 真新上架的富化字段
     for i, artist in enumerate(artists):
         if i > 0:
             await asyncio.sleep(_POLITE_DELAY_S)
@@ -238,6 +239,15 @@ async def sync_itunes_releases() -> dict:
         for k in ("baselined", "new_apps", "backfilled_old", "expanded", "enriched"):
             summary[k] += result[k]
         expanded_rows.extend(result["expanded_rows"])
+        radar_newcomers.extend(result.get("radar_newcomers") or [])
+
+    # P1-1：把 SLG 真新上架写成 market_newcomer_log 影子行 → riding 中文化/subgenre/视频。
+    if radar_newcomers:
+        from app.services.newcomer_log import record_radar_newcomers
+        try:
+            await record_radar_newcomers(radar_newcomers)
+        except Exception:
+            logger.exception("radar newcomer shadow-row write failed (sync itself succeeded)")
 
     logger.info("itunes releases sync done: %s", summary)
     if summary["new_apps"] > 0 or expanded_rows:
@@ -257,13 +267,25 @@ async def ingest_artist_apps(artist_row_id: int, apps: list[dict]) -> dict:
     输入记录可带 _seen_storefronts（set）；不带视作 {"us"}（兼容单区调用/旧测试）。
     """
     out = {"baselined": 0, "new_apps": 0, "backfilled_old": 0,
-           "expanded": 0, "expanded_rows": [], "enriched": 0}
+           "expanded": 0, "expanded_rows": [], "enriched": 0,
+           # P1-1：本轮该账号下 SLG 真新上架的富化字段（供 record_radar_newcomers 写影子行）。
+           "radar_newcomers": []}
     async with AsyncSessionLocal() as db:
         artist: Optional[PublisherItunesArtist] = (await db.execute(
             select(PublisherItunesArtist).where(PublisherItunesArtist.id == artist_row_id)
         )).scalar_one_or_none()
         if artist is None:
             return out
+        # P1-1 SLG 门控：主体是纯 SLG 厂（entity.is_slg）→ 其新上架都纳入；多品类大厂
+        # （entity.is_slg=False，靠 app_id 钉真 SLG 单品）→ 仅钉过的 track_id 纳入。用 is_slg(tid)
+        # 的 app_id pin 语义即可覆盖后者。market_newcomer_log.platform 用 ios/android（gp→android）。
+        from app.models.publisher import PublisherEntity
+        from app.services.slg_publishers import is_slg
+        entity = await db.get(PublisherEntity, artist.entity_id)
+        slg_entity = bool(entity and entity.is_slg)
+        entity_name = entity.name if entity else None
+        mkt_platform = "android" if artist.platform == "gp" else "ios"
+        collect_radar = settings.RADAR_NEWCOMER_ENRICH_ENABLED
 
         existing: dict[str, PublisherItunesApp] = {
             row.track_id: row
@@ -321,6 +343,14 @@ async def ingest_artist_apps(artist_row_id: int, apps: list[dict]) -> dict:
                 out["backfilled_old"] += 1
             else:
                 out["new_apps"] += 1
+                # P1-1：真新上架且属 SLG（纯 SLG 厂 or 钉过的 SLG 单品）→ 收集富化字段，
+                # 供 record_radar_newcomers 写 chart_type='radar' 影子行，riding 中文化/subgenre/视频。
+                if collect_radar and (slg_entity or is_slg(tid, None)):
+                    radar_country = (_sf_sorted(seen_sfs)[0].upper() if seen_sfs else "WW")
+                    out["radar_newcomers"].append({
+                        **f, "country": radar_country, "platform": mkt_platform,
+                        "publisher": entity_name,
+                    })
 
         artist.last_synced_at = utcnow_naive()
         await db.commit()

@@ -43,8 +43,10 @@ def _app(track_id, name, bundle_id=None, release_date="2026-06-01", storefronts=
 
 
 def _counts(result: dict) -> dict:
-    """忽略 expanded_rows 明细与 enriched（展示字段自愈），只比 diff 计数。"""
-    return {k: v for k, v in result.items() if k not in ("expanded_rows", "enriched")}
+    """忽略 expanded_rows 明细、enriched（展示字段自愈）与 radar_newcomers（P1-1 富化影子行
+    收集，非 diff 计数），只比 diff 计数。"""
+    return {k: v for k, v in result.items()
+            if k not in ("expanded_rows", "enriched", "radar_newcomers")}
 
 
 @pytest.mark.asyncio

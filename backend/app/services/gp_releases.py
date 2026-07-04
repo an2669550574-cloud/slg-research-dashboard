@@ -246,6 +246,7 @@ async def sync_gp_releases() -> dict:
         return summary
 
     started_at = utcnow_naive()
+    radar_newcomers: list[dict] = []                  # P1-1：本轮 SLG 真新上架的富化字段
     for i, account in enumerate(accounts):
         if i > 0:
             await asyncio.sleep(_POLITE_DELAY_S)
@@ -265,6 +266,15 @@ async def sync_gp_releases() -> dict:
         summary["gp_synced"] += 1
         summary["gp_baselined"] += result["baselined"]
         summary["gp_new_apps"] += result["new_apps"]
+        radar_newcomers.extend(result.get("radar_newcomers") or [])
+
+    # P1-1：SLG 真新上架写 market_newcomer_log 影子行（platform='android'）→ 富化管道。
+    if radar_newcomers:
+        from app.services.newcomer_log import record_radar_newcomers
+        try:
+            await record_radar_newcomers(radar_newcomers)
+        except Exception:
+            logger.exception("radar newcomer shadow-row write failed (gp sync succeeded)")
 
     logger.info("gp releases sync done: %s", summary)
     if summary["gp_new_apps"] > 0:

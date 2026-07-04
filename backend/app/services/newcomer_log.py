@@ -192,6 +192,63 @@ async def record_all_combos() -> dict:
     return total
 
 
+# 雷达影子行的检出通道标记（chart_type）。不是真榜——纯为 riding 中文化/subgenre/视频
+# 富化管道而存在；/history 显式排除它，故不进新品页市场卡片网格（P1-1）。
+CHART_RADAR = "radar"
+
+
+async def record_radar_newcomers(rows: list[dict]) -> int:
+    """把商店雷达检出的 SLG 真新上架写成 market_newcomer_log「影子行」（chart_type='radar'）。
+
+    目的（P1-1，修「信号越早富化越少」倒挂）：软启动期新品是买量调研最佳观察窗，此前只落
+    `publisher_itunes_apps`、拿不到中文摘要/subgenre/视频。写影子行后天然被 translate /
+    subgenre backfill / 视频 drain（都源自 market_newcomer_log、不按 chart_type 过滤）捡起。
+
+    富化字段（description/genre/rating/icon/store_url…）本就随 iTunes lookup 拿到，直接落库；
+    只 summary_cn/subgenre_cn/description_cn 留 NULL 待 LLM drain。rank/revenue=NULL（非榜）、
+    is_slg=True（已 SLG 门控）。(country,platform,app_id,'radar') 唯一——已存在则跳过（幂等，
+    雷达重扫不会重复；真新上架本就只在首检出触发一次）。零 ST。
+    """
+    if not rows:
+        return 0
+    today = utcnow_naive().strftime("%Y-%m-%d")
+    now = utcnow_naive()
+    written = 0
+    async with AsyncSessionLocal() as db:
+        for r in rows:
+            app_id = r.get("track_id") or r.get("app_id")
+            if not app_id:
+                continue
+            country = (r.get("country") or "WW").upper()
+            platform = r.get("platform") or "ios"
+            exists = (await db.execute(
+                select(MarketNewcomerLog.id).where(
+                    MarketNewcomerLog.country == country,
+                    MarketNewcomerLog.platform == platform,
+                    MarketNewcomerLog.app_id == app_id,
+                    MarketNewcomerLog.chart_type == CHART_RADAR,
+                ))).scalar_one_or_none()
+            if exists is not None:
+                continue
+            db.add(MarketNewcomerLog(
+                country=country, platform=platform, app_id=app_id, chart_type=CHART_RADAR,
+                as_of=today, name=r.get("name") or app_id, publisher=r.get("publisher"),
+                icon_url=r.get("artwork_url"), rank=None, revenue=None, is_slg=True,
+                is_reentry=False, first_detected_at=now,
+                store_url=r.get("track_view_url"), release_date=r.get("release_date"),
+                genre=r.get("genre"), rating=r.get("rating"), rating_count=r.get("rating_count"),
+                price=r.get("price"), description=r.get("description"),
+                screenshot_urls=r.get("screenshot_urls"), languages=r.get("languages"),
+                enrich_source=("gp" if platform == "android" else "itunes"), enriched_at=now,
+            ))
+            written += 1
+        if written:
+            await db.commit()
+    if written:
+        logger.info("radar newcomers: %d shadow row(s) written to market_newcomer_log", written)
+    return written
+
+
 async def prune_newcomer_log(retention_days: Optional[int] = None) -> int:
     """删除 first_detected_at 早于保留窗口的检出日志，返回删除行数。
 

@@ -466,6 +466,8 @@ export interface AppstoreReleaseItem {
   description: string | null
   screenshots: string[]
   first_seen_at: IsoDateString
+  /** P1-1：软启动新品若已写影子行并中文化，带一句话 📝 摘要；未翻为 null。 */
+  summary_cn: string | null
 }
 
 export interface AppstoreReleasesOut {

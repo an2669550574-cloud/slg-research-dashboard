@@ -743,6 +743,7 @@ async def _recent_radar_arrivals(days: int, cap: int = 8) -> list[dict]:
     平淡日维护者卡兜底段用；按 first_seen_at 倒序、封顶 cap。_platform_tag/_sf_text 在下方
     「应用商店雷达」节定义（模块级，call-time 解析，前引无碍）。"""
     from datetime import timedelta
+    from app.models.newcomer import MarketNewcomerLog
     cutoff = utcnow_naive() - timedelta(days=days)
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(
@@ -753,8 +754,19 @@ async def _recent_radar_arrivals(days: int, cap: int = 8) -> list[dict]:
             .order_by(PublisherItunesApp.first_seen_at.desc())
             .limit(cap)
         )).all()
+        # P1-1：这些雷达新上架若已写影子行并被中文化，带上 📝 摘要（track_id ≡ app_id）。
+        track_ids = [app.track_id for app, _ in rows if app.track_id]
+        summaries: dict[str, str] = {}
+        if track_ids:
+            for aid, sc in (await db.execute(
+                select(MarketNewcomerLog.app_id, MarketNewcomerLog.summary_cn).where(
+                    MarketNewcomerLog.app_id.in_(track_ids),
+                    MarketNewcomerLog.summary_cn.is_not(None))
+            )).all():
+                summaries.setdefault(aid, sc)
     return [{"name": app.name, "entity": entity_name, "platform_tag": _platform_tag(app),
-             "genre": app.genre or "", "sf": _sf_text(app)} for app, entity_name in rows]
+             "genre": app.genre or "", "sf": _sf_text(app),
+             "summary": summaries.get(app.track_id)} for app, entity_name in rows]
 
 
 def build_radar_recent_lines(items: list[dict], cap: int) -> list[str]:
@@ -763,8 +775,12 @@ def build_radar_recent_lines(items: list[dict], cap: int) -> list[str]:
     out: list[str] = []
     for it in items[:cap]:
         genre = f" · {it['genre']}" if it.get("genre") else ""
-        out.append(f"🛒 **{_md_name(it['name'])}** — {_md_name(it['entity'])}"
-                   f"（{it['platform_tag']}）{genre}{it.get('sf') or ''}")
+        line = (f"🛒 **{_md_name(it['name'])}** — {_md_name(it['entity'])}"
+                f"（{it['platform_tag']}）{genre}{it.get('sf') or ''}")
+        # P1-1：软启动新品已中文化则补一句话 📝 摘要（雷达段此前只有裸名+区）。
+        if it.get("summary"):
+            line = _block([line, f"📝 {_md_name(it['summary'], maxlen=60)}"])
+        out.append(line)
     return out
 
 
