@@ -228,6 +228,13 @@ export const zh = {
     triageConfirm: (name: string) => `把「${name}」建档为待调研厂商主体？会在「厂商主体」页创建一条档案并钉住该 app_id（建档后即识别为 SLG）。`,
     triaged: (name: string) => `已建档：${name} · 去「厂商主体」补股权 / 溯源`,
     triageBrief: (game: string, market: string) => `由新品监测建档 · ${market} · ${game}`,
+    // 一键晋升深度追踪（P0-2）：建为 tracked 竞品，iOS 自动获版本更新 / 分地区上线追踪 + 详情页趋势
+    promote: '转入深度追踪',
+    promoteHint: '建为追踪竞品：iOS 自动获得版本更新 / 分地区上线追踪 + 详情页趋势（安卓仅详情页趋势，无版本源）',
+    promoteConfirm: (name: string) => `把「${name}」转入深度追踪？会在竞品库建档，iOS 后续每日自动追踪版本更新、周级追踪分地区上线（零配额）。`,
+    promoted: (name: string) => `已转入深度追踪：${name} · 版本 / 分地区将随下轮同步补齐`,
+    promoteExists: '该产品已在深度追踪中',
+    promoteFailed: '转入追踪失败，请重试',
     ignore: '忽略',
     ignoreConfirm: (name: string) => `确认「${name}」非 SLG、加入忽略名单？此后该发行商不再进新品监测 / 调研缺口提示（可在「厂商主体」页恢复）。`,
     ignoreConfirmApp: (name: string) => `仅忽略此 app「${name}」？只把这一款标为非 SLG，同发行商其他产品仍会出现（可在「厂商主体」页恢复）。`,

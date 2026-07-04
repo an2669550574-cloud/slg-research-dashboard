@@ -2,11 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { newcomersApi, publishersApi } from '../lib/api'
+import { newcomersApi, publishersApi, gamesApi } from '../lib/api'
 import { formatRevenue, formatNumber } from '../lib/utils'
 import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
-import { Download as DownloadIcon, Sparkles, Info, FilePlus2, Globe2, Building2, Store, RefreshCw, Star, X, ExternalLink, Repeat, Clock, Ban, ChevronDown, Youtube, TrendingUp, TrendingDown, Minus, CircleOff } from 'lucide-react'
+import { Download as DownloadIcon, Sparkles, Info, FilePlus2, Globe2, Building2, Store, RefreshCw, Star, X, ExternalLink, Repeat, Clock, Ban, ChevronDown, Youtube, TrendingUp, TrendingDown, Minus, CircleOff, Radar } from 'lucide-react'
 import { COUNTRIES, PLATFORMS, platformLabel, type Country, type Platform } from '../lib/markets'
 import { GameIcon } from '../components/GameIcon'
 import { QueryError } from '../components/QueryError'
@@ -524,6 +524,43 @@ function TrendBadge({ traj }: { traj: NewcomerTrajectory | null }) {
 }
 
 
+/** 一键晋升深度追踪（P0-2）：把新品建为 tracked 竞品 → iOS 自动获版本更新 / 分地区上线
+ *  追踪 + 详情页趋势（安卓无版本源、仅趋势）。复用 POST /games/——iOS 数字 app_id 本身
+ *  即 trackId，version_tracker 自动识别，无需人工补 ios_track_id。已存在（400）→ 提示已追踪。 */
+function PromoteToTrackedButton({ item }: { item: {
+  app_id: string; name: string; publisher: string | null; icon_url: string | null
+  platform: string; country: string
+} }) {
+  const t = useT()
+  const qc = useQueryClient()
+  const mut = useMutation({
+    mutationFn: () => gamesApi.create({
+      app_id: item.app_id, name: item.name, publisher: item.publisher,
+      icon_url: item.icon_url, platform: item.platform, country: item.country,
+    }),
+    onSuccess: (g) => {
+      qc.invalidateQueries({ queryKey: ['games'] })
+      toast.success(t.newcomers.promoted(g.name))
+    },
+    onError: (e: unknown) => {
+      const status = (e as { response?: { status?: number } })?.response?.status
+      if (status === 400) toast(t.newcomers.promoteExists)
+      else toast.error(t.newcomers.promoteFailed)
+    },
+  })
+  const handle = () => {
+    if (!window.confirm(t.newcomers.promoteConfirm(item.name))) return
+    mut.mutate()
+  }
+  return (
+    <button onClick={handle} disabled={mut.isPending} title={t.newcomers.promoteHint}
+      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-default text-secondary hover:text-primary hover:border-strong transition-colors disabled:opacity-50">
+      <Radar size={12} />{t.newcomers.promote}
+    </button>
+  )
+}
+
+
 /** 忽略控件：无发行商名 → 单按钮 app_id 粒度（与旧行为一致）；有名 → 下拉两选项
  *  （忽略整个发行商 / 仅忽略此 app），让运营对「同厂只想滤掉这一款」的场景有 app 粒度。
  *  所有 hooks 在任何 early return 之前（prop 切换不变 hook 数量，避免崩页）。 */
@@ -823,6 +860,7 @@ function NewcomerDrawer({ group, onClose }: { group: GroupedNewcomer; onClose: (
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-default text-secondary hover:text-primary hover:border-strong transition-colors">
               {t.newcomers.openDetail}
             </button>
+            <PromoteToTrackedButton item={item} />
           </div>
           <StoreDetailSection d={item} />
           <NewcomerVideoSection appId={item.app_id} />
@@ -913,6 +951,7 @@ function PublisherNewcomerDrawer({ group, onClose }: { group: GroupedPublisherNe
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-default text-secondary hover:text-primary hover:border-strong transition-colors">
               {t.newcomers.openDetail}
             </button>
+            <PromoteToTrackedButton item={item} />
           </div>
           {isLoading ? (
             <div className="py-6 text-center text-xs text-muted">{t.newcomers.enrichLoading}</div>
