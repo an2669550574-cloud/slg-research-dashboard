@@ -1499,6 +1499,117 @@ async def send_daily_digest() -> bool:
     return sent_any
 
 
+# ── 新品周察周报卡（P0-1③ 新品生命周期追踪）────────────────────────────────
+
+async def build_weekly_newcomer_review(days: int, cap: int) -> Optional[tuple[str, str]]:
+    """近 days 天检出的 SLG 新品「存活/爬升/掉榜」周察卡（读时算 game_rankings，零 ST）。
+
+    补「新品检出即阅后即焚」断层：除非冲进收入榜 Top20（movement），否则没人知道检出后
+    它起飞还是死了。这里把近窗口 SLG 新品按检出后走势分层——🚀 起飞（名次持续上升）/
+    ✅ 在榜存活 / ✝️ 掉榜（昙花一现），起飞 + 掉榜两段列明细（决策上最该看的两极）。
+
+    返回 (title, text)；窗口内无 SLG 新品 → None（不发空卡）。
+    """
+    from app.models.newcomer import MarketNewcomerLog
+    from app.models.game import CHART_GROSSING
+    from app.services.newcomers import compute_trajectories
+    from app.services.slg_publishers import is_slg
+
+    since = utcnow_naive() - timedelta(days=days)
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(
+            select(MarketNewcomerLog).where(
+                MarketNewcomerLog.chart_type == CHART_GROSSING,
+                MarketNewcomerLog.first_detected_at >= since,
+            ).order_by(MarketNewcomerLog.first_detected_at.asc())
+        )).scalars().all()
+
+    # 只看 SLG——用 live is_slg（避免存档 is_slg 陈旧，同 #181 教训）；跨 combo 按 app_id
+    # 取一条代表行（优先 US/iOS 主市场，否则最早检出——rows 已按 first_detected 升序）。
+    reps: dict[str, "MarketNewcomerLog"] = {}
+    for r in rows:
+        if not is_slg(r.app_id, r.publisher):
+            continue
+        cur = reps.get(r.app_id)
+        if cur is None:
+            reps[r.app_id] = r
+        elif (r.country, r.platform) == ("US", "ios") and (cur.country, cur.platform) != ("US", "ios"):
+            reps[r.app_id] = r
+    if not reps:
+        return None
+
+    rep_rows = list(reps.values())
+    traj = await compute_trajectories(rep_rows)
+    climbing: list[dict] = []
+    surviving = dropped = 0
+    for r in rep_rows:
+        tj = traj.get(r.id) or {}
+        trend = tj.get("trend")
+        if trend == "climbing":
+            climbing.append({"name": r.name or r.app_id, "detect_rank": r.rank, **tj})
+        elif trend == "dropped":
+            dropped += 1
+        elif tj.get("on_chart"):
+            surviving += 1
+        # new / unknown（刚检出 / 无轨迹点）计入总数、不进明细分层
+
+    # 掉榜明细单列（值得注意的「昙花一现」）：峰值靠前的优先。
+    dropped_items = sorted(
+        ({"name": r.name or r.app_id, "detect_rank": r.rank, **(traj.get(r.id) or {})}
+         for r in rep_rows if (traj.get(r.id) or {}).get("trend") == "dropped"),
+        key=lambda x: (x.get("peak_rank") is None, x.get("peak_rank") or 999),
+    )
+    total = len(rep_rows)
+    today = utcnow_naive().strftime("%Y-%m-%d")
+    head = (f"### 📈 SLG 新品周察 · 近 {days} 天\n\n"
+            f"> 检出 **{total}** 款 SLG 新品：🚀 起飞 {len(climbing)} · "
+            f"✅ 在榜 {surviving} · ✝️ 掉榜 {dropped}")
+    sections = [head]
+
+    if climbing:
+        # 起飞按累计升幅降序（升幅 = 检出名次 - 当前名次，越大越靠前）。
+        climbing.sort(key=lambda x: (x["detect_rank"] or 999) - (x.get("current_rank") or 999),
+                      reverse=True)
+        lines = ["\n\n**🚀 起飞（名次持续上升）**"]
+        for x in climbing[:cap]:
+            gain = (x["detect_rank"] or 0) - (x.get("current_rank") or 0)
+            span = f" · {x['days_tracked']}天" if x.get("days_tracked") else ""
+            lines.append(f"- **{_md_name(x['name'])}** 检出 #{x['detect_rank']} → 现 "
+                         f"**#{x.get('current_rank')}**（↑{gain}{span}）")
+        sections.append("\n".join(lines))
+
+    if dropped_items:
+        lines = ["\n\n**✝️ 已掉榜（昙花一现）**"]
+        for x in dropped_items[:cap]:
+            pk = f" · 峰值 #{x['peak_rank']}" if x.get("peak_rank") else ""
+            ls = f" · 末次在榜 {x['last_seen']}" if x.get("last_seen") else ""
+            lines.append(f"- **{_md_name(x['name'])}** 检出 #{x['detect_rank']}{pk}{ls}")
+        sections.append("\n".join(lines))
+
+    return f"SLG 新品周察 {today}", "".join(sections)
+
+
+async def send_weekly_newcomer_review() -> bool:
+    """周级 job 入口：拼一张「SLG 新品周察」卡，两群都发（SLG-only、已核实竞品，领导可读）。
+
+    未配任一 webhook / 未开开关 / 窗口内无 SLG 新品 → 静默 no-op。无幂等台账（周级、
+    misfire 重发无实质危害，与每日必达卡的领导群幂等守卫不同轴，故不引新表）。零 ST。
+    """
+    if not settings.DIGEST_WEEKLY_REVIEW_ENABLED:
+        return False
+    if not (dingtalk.is_enabled() or dingtalk.leader_target_configured()):
+        return False
+    card = await build_weekly_newcomer_review(
+        settings.DIGEST_WEEKLY_REVIEW_DAYS, settings.DIGEST_WEEKLY_REVIEW_CAP)
+    if card is None:
+        logger.info("weekly newcomer review: no SLG newcomers in window, skip")
+        return False
+    sent = await dingtalk.send_markdown(*card, target="maintainer")
+    if dingtalk.leader_target_configured():
+        sent = await dingtalk.send_markdown(*card, target="leader") or sent
+    return sent
+
+
 # ── 微信公众号登录过期提醒 ─────────────────────────────────────────────────
 
 # ssh 隧道兜底（手机端外网受限、按钮打不开时改用电脑）；按钮才是主路径（看板登录页，

@@ -232,6 +232,12 @@ class Settings(BaseSettings):
     # 折进 digest 一段，给平淡日一个「近期雷达catch」的日级汇总视图。仅维护者卡、仅平淡日。
     # 零 ST（纯本地 publisher_itunes_apps 读）。<=0 = 关闭该段。
     DIGEST_RADAR_RECENT_DAYS: int = 2
+    # 新品周察周报卡（P0-1③ 新品生命周期追踪）：周级独立卡，回顾近 N 天检出的 SLG 新品
+    # 「存活/爬升/掉榜」分层（读时算 game_rankings 走势，零 ST）。补「检出即阅后即焚」断层——
+    # 领导看到「新品 X 上架」后没人答「它后来怎么样了」。两卡都发（SLG-only，领导可读）。
+    DIGEST_WEEKLY_REVIEW_ENABLED: bool = True
+    DIGEST_WEEKLY_REVIEW_DAYS: int = 30      # 回看窗口
+    DIGEST_WEEKLY_REVIEW_CAP: int = 8        # 起飞 / 掉榜每段明细上限
 
     # ── App Store 清单雷达（免费 iTunes lookup，零 ST 配额）──────────────
     # 每轮对每个开发者账号扫这些 storefront（逗号小写）。SLG 几乎都先软启动：

@@ -110,10 +110,12 @@ soft-launch ST 雷达（烧配额，2026-06-27 否）· 视频停用词表（软
 | P0-1① 后端走势 | ✅ 已实现（未部署） | `services/newcomers.py::compute_trajectories` + `/history` 附 `trajectory`；7 单测（climbing/falling/stable/dropped/new/unknown/free 隔离），pytest 601 |
 | P0-1② 前端走势列 | ✅ 已实现（未部署） | 新品卡 + 抽屉 `TrendBadge`（现名次/掉榜/箭头，new·unknown 不渲染）+「仍在爬升/已掉榜」筛选 chip；zh/en i18n；build + 89 vitest |
 | P2 health GP 计数 | ✅ 已实现（未部署） | `/health` 加 `total_gp_artists`/`entities_without_gp_artist`；HealthChip tooltip 加 GP 覆盖行 |
-| P0-1③ 周察周报卡 | ⬜ backlog | 第二批 |
-| P0-2 一键晋升 | ⬜ backlog | 第二批 |
+| P0-1③ 周察周报卡 | ✅ 已实现（未部署） | `release_alerts.build_weekly_newcomer_review` + `send_weekly_newcomer_review`（近30天 SLG 新品起飞/在榜/掉榜分层，两卡都发）+ 周一 04:40 UTC job；3 单测 |
+| P0-2 一键晋升 | ✅ 已实现（未部署） | 新品/厂商抽屉「转入深度追踪」按钮，复用 `POST /games/`（iOS app_id 即 trackId 自动追踪版本/分地区）；纯前端 |
 | P1-2 subgenre 回补 | ⬜ backlog | 第三批 |
 | P1-1 雷达富化接入 | ⬜ backlog | 第三批 |
 | P1-3 digest 去重/封顶 | ⬜ 观察触发 | 攒领导卡长度 |
 
-> **第一批落地记录（2026-07-04，本地未部署）**：三项全零 ST、零迁移，纯读时计算 + 加派生字段，回滚走纯代码。后端 pytest 601 / 前端 build + vitest 89 全绿。**视觉验证待部署**——走势 chip 需真实多快照榜单历史才显示，本地 mock 数据不足以演示，按项目既有「HK 代理预览」流程在部署后截图确认。
+> **第一批落地记录（2026-07-04，本地未部署，PR #186）**：三项全零 ST、零迁移，纯读时计算 + 加派生字段，回滚走纯代码。后端 pytest 601 / 前端 build + vitest 89 全绿。**视觉验证待部署**——走势 chip 需真实多快照榜单历史才显示，本地 mock 数据不足以演示，按项目既有「HK 代理预览」流程在部署后截图确认。
+>
+> **第二批落地记录（2026-07-04，本地未部署，stacked on #186）**：P0-1③ 周察周报卡（新增周级 job + config 旋钮 `DIGEST_WEEKLY_REVIEW_ENABLED/DAYS/CAP`，零迁移）+ P0-2 一键晋升（纯前端，复用现有 `POST /games/`）。后端 pytest **604**（+3 周察单测）/ 前端 build + vitest 89 全绿。周察卡视觉、晋升后版本/分地区追踪同样待部署后确认。
