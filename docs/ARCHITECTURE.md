@@ -211,10 +211,10 @@ US-only 非次市场同步日 + 美区平淡时卡很薄（实测某日仅 2 异
 **手机端链接可达性（关键约束）**：公司网络下钉钉**电脑端能开外网、手机端打不开**（App Store / Google Play / YouTube）。钉钉 ActionCard 是同一份 markdown、**无法按客户端区分链接**，故按可达性分类标注：
 
 - **外网链接（手机端死链）**：🔗 商店页（`_link_line`）/ 🎬 视频（`_video_seg`，#162 起内联进新品行动作行）→ 加 `💻` 标识 + 卡片底部图例（`💻 = 需电脑端打开`，仅当卡里有 💻 时挂）。
-- **两端可达（看板实为间歇）**：🎯 看板（`slg.*.nip.io` 自建·公网 HTTPS）/ 📰 微信文章（`mp.weixin.qq.com` 国内）→ 不标。⚠️ 看板深链对国内手机实为**间歇可达**非稳定（见下「连锁限制」末条）。
+- **两端可达（看板实为间歇）**：🎯 看板（自建·公网 HTTPS，**2026-07-05 起 `slgradar.uk` 经 Cloudflare**，此前 `slg.*.nip.io`）/ 📰 微信文章（`mp.weixin.qq.com` 国内）→ 不标。⚠️ 看板深链对国内手机实为**间歇可达**非稳定（见下「连锁限制」末条）。
 - **底部 ActionCard 按钮**：从商店直链改 **看板深链**（`_dashboard_focus_url`，两端可达、手机也能点），只取头条新品——movement 异动老游戏不在看板新品页、深链定位不到，不进按钮；商店直链在行内保留带 💻（不丢电脑端入口）。未配 `DASHBOARD_BASE_URL` 则无按钮，ActionCard 降级 markdown。
 - **连锁限制**：看板详情页里的国外资源（商店截图 mzstatic 图床 / YouTube 视频）手机端在看板内也可能加载不全；视频「播放」本质要客户端能访问 YouTube，无解、只能电脑端。
-- **⚠️ 看板深链「两端可达」是乐观假设（2026-06-28 排障证伪）**：HK 境外 IP → 国内手机（移动数据/无代理）跨境拉前端 JS bundle（主包 ~373KB）链路不稳，钉钉 webview 传输中途 `client disconnected` → React 挂载不了 → **整页白屏，连自有文字情报都看不到**；**间歇性**（链路好时能开、差时白屏）。诊断法：`docker logs slg_caddy` 查手机 UA(`AliApp(DingTalk)`) 的 `aborting with incomplete response`。备选治理（均未做，2026-06-28 决议**先观察暂不修**）：① 看板链接也标 💻 ② 后端轻量服务端分享页（绕开重型 SPA，最对症）③ Cloudflare 免备案 CDN ④ 腾讯云跨境加速。**约束**：服务器必须境外（ST API）→ 不能搬国内；nip.io 裸 IP → 国内 CDN 备案走不通。
+- **⚠️ 看板深链「两端可达」是乐观假设（2026-06-28 排障证伪）**：HK 境外 IP → 国内手机（移动数据/无代理）跨境拉前端 JS bundle（主包 ~373KB）链路不稳，钉钉 webview 传输中途 `client disconnected` → React 挂载不了 → **整页白屏，连自有文字情报都看不到**；**间歇性**（链路好时能开、差时白屏）。诊断法：`docker logs slg_caddy` 查手机 UA(`AliApp(DingTalk)`) 的 `aborting with incomplete response`。**2026-07-05 已上 ③ Cloudflare**（`slgradar.uk` 橙云代理 + 源站 CF-only 防火墙，主目的=隐藏源站 + WAF，见 `docs/SECURITY-CADDY-DOMAIN.md`）：**顺带**或许改善此白屏，但 CF 免费版**无中国大陆节点**、大陆用户走境外 CF 边缘 → 改善不保证（钉钉手机实测「没问题」，待更多验证）。其余备选①②④未做。**约束**：服务器必须境外（ST API）→ 不能搬国内；真正稳的国内方案要 ICP 备案 CDN=另一工程。
 
 代码集中在 `build_daily_digest` 拼装层 + `_block` / `_meta_inner` / `_link_line` / `_digest_tldr` helper（`services/release_alerts.py`）。**本轮（2026-06-28）已落地**：重要度排序 + 今日要闻（见下节）、领导群/维护者群双卡分发 + markdown 转义（见「双卡分发」节）、同赛道（竞品玩法子品类精确匹配，见末节）、实机视频/市场待识别折叠减负（#141，见「封顶」节）、领导卡只看 SLG 产品（#143，见「双卡分发」节）。**剩余 digest backlog**：全局段统一封顶预算、emoji 收敛（多个「新」语义重叠）、跨 combo 新品按 app_id 去重、领导卡推送时点前移。（**已落地**：空卡心跳/数据未就位告警 P1.1、movement 空降补 is_reentry 门控 P1.4——见「is_reentry」「空卡分支」节。）
 
@@ -256,6 +256,7 @@ US-only 非次市场同步日 + 美区平淡时卡很薄（实测某日仅 2 异
 - **录入**：「我方产品」页（`ProductsManage.tsx`）编辑面板加**玩法子品类下拉**（受控词表，首选）+ 题材关键词输入框（回退）+ 卡片 chip。子品类的词表前后端两处（`newcomer_i18n.SUBGENRE_VOCAB` + `ProductsManage.SUBGENRE_OPTIONS`）须同步。
 - **加权**：`_collect_scored_items` 对命中竞品 ×`_OWN_MATCH_BOOST`(2.5) 上浮今日要闻排序（PR #148）。**领导卡 + 维护者卡都显示**（纯决策信号，不剥离）。
 - **局限**：子品类靠 LLM 分类（已用最糟样本验证 Last Shelter→基地建设SLG / Frozen City→城建模拟 / 合成数字门样本→数字门SLG 三者分得开）；movement 老竞品若从未作为新品建档则无 `subgenre_cn`、子品类产品对其不命中（属预期——established 竞品领导本就熟）。
+- **可读性标签（#198）**：新品/异动行在名次后紧跟 ` · <subgenre_cn>`（`_sg_label`，如 `🆕 탑 로드 空降 #42 · 数字门SLG`）——外文游戏名读者一眼辨品类。复用同一 `_subgenres_for_apps` 映射（`send_daily_digest` **无条件**富化进 entry、与 own_matches 解耦，无 own_products 也显示）；无 `subgenre_cn` 则不加、向后兼容。注入新品三段（✨/🏢/⬇️）+ 今日要闻（🆕 空降 / ✨ 新品）。
 
 ### 新厂商线索 CTA（PR #104）
 

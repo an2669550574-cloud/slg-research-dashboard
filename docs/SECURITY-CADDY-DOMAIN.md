@@ -1,5 +1,7 @@
 # 安全加固执行手册：Caddy 认证 + 真域名/Cloudflare（P0-1 / P1-2）
 
+> **状态（2026-07-05）**：**Part B（真域名 + Cloudflare + 源站 CF-only 防火墙）已执行** —— prod 现服务于 CF 橙云后的自有域名（`SLG_ORIGIN_TLS=tls internal` + `cf-firewall.service`，nip.io 退役、直连源站 IP 被 DROP）。**Part A（Caddy basic_auth）按用户裁定不做**（受众内部）。以下 Part A 仅存档备参；Part B 可作复现 / 回滚参考。
+>
 > 配套 [`SECURITY-2026-07.md`](SECURITY-2026-07.md) 的**两项需人工执行**的加固。都动 prod 入口层，
 > 有「配错即全站不可达」风险 → 每步给了 `caddy validate` 前置校验 + 回滚。**先在钉钉真机验证**
 > 再依赖（手机端可达性本就脆，见 [[project_dashboard_mobile_reachability]]）。
