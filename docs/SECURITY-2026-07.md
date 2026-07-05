@@ -181,4 +181,4 @@ P0-1（Caddy 认证，当天，收益最大）
 - **`feat/media-signing-decouple`**（1 commit，pytest ✓）：`MEDIA_SIGNING_SECRET` 独立密钥，`media._secret()` 优先读它、未配回退 API_KEY。后端签 URL、前端不碰密钥 → **零前端改动**；旧链接 TTL 6h 内自动重签。
 - **`docs/security-hardening-plan`**：本文件。
 - **部署注意**：三分支均**零迁移纯代码**，回滚走纯代码。`LLM_*` / `MEDIA_SIGNING_SECRET` 改后须 `compose --env-file .env up -d backend` 重读。prod 若配 `MEDIA_SIGNING_SECRET`，开着页面的用户媒体 URL 会在下次列表刷新（≤6h）自动重签，无需干预。
-- **待你决策/操作**：P0-1 Caddy basic_auth（需钉钉真机验证）、P1-2 买域名 + Cloudflare（需注册/DNS）、P1-1 前端 key 运行时化（看 P0-1 体感）。
+- **待你决策/操作**：P0-1 Caddy basic_auth（需钉钉真机验证）、P1-2 买域名 + Cloudflare（需注册/DNS）、P1-1 前端 key 运行时化（看 P0-1 体感）。**P0-1 + P1-2 的可套用 diff + step-by-step + 真机验证 + 回滚见配套手册 [`SECURITY-CADDY-DOMAIN.md`](SECURITY-CADDY-DOMAIN.md)**。
