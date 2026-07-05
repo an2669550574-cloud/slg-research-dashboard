@@ -144,15 +144,41 @@ P0-1（Caddy 认证，当天，收益最大）
 
 ---
 
-## 六、状态跟踪
+## 六、状态跟踪（2026-07-05 执行后更新）
+
+> ⚠️ **地面真相修正**：上 prod 核实 + 读码后，本计划初稿有多处「把已实现当待做」的误判，
+> 已在下表订正。核实结论见 §七。
 
 | 项 | 状态 | 备注 |
 |---|---|---|
-| P0-1 Caddy 认证 | ⬜ 待做 | 依赖核实清单 #3 |
-| P0-2 fail-closed | ⬜ 待做 | |
-| P0-3 LLM 月封顶 + 告警 | ⬜ 待做 | 依赖核实清单 #2 |
-| P0-4 全局限流 | ⬜ 待做 | 依赖核实清单 #1 |
-| P1-1 key 移出 bundle | ⬜ 待做 | 与 P0-1 部分重叠 |
-| P1-2 真域名 + Cloudflare | ⬜ 待做 | 有等待期，尽早启动 |
-| P1-3 媒体签名解耦 | ⬜ 待做 | 与 P1-1 同根，一起做 |
-| P2 审计日志 / 按人 key / CSP | ⬜ 缓 | 视 P0/P1 后剩余风险 |
+| P0-1 Caddy 认证 | ⬜ **待做（需你）** | 依赖钉钉 webview 真机验证（§七 #3）——我做不了 |
+| P0-2 fail-closed | ✅ **已发现早已实现** | `main.py:24-31` 启动即对 prod 无 API_KEY 抛 `RuntimeError` 拒起；security.py 的 per-request skip 仅 mock 模式可达。**剩 ADMIN_DELETE 无启动闸**（低优先，在 API_KEY 墙后） |
+| P0-3 LLM 成本护栏 | ✅ **本次落地**（`feat/llm-budget-hardening`） | 拆记账漏洞修复 + 月封顶 + 触顶告警 + 日预算调低。见 §八 |
+| P0-4 全局限流 | ✅ **已发现早已配** | prod `RATE_LIMIT_DEFAULT=120/minute` + config `RATE_LIMIT_AI_SYNC=10/hour`。剩「AI 端点单独更严限流」但已被 P0-3 预算闸门覆盖，降级为可选 |
+| P1-1 key 移出 bundle | ⬜ **待做（需决策）** | 与 P0-1 重叠；P0-1 上后可降级为纯轮换 |
+| P1-2 真域名 + Cloudflare | ⬜ **待做（需你）** | 需你注册域名 + 配 DNS——我做不了 |
+| P1-3 媒体签名解耦 | ✅ **本次落地**（`feat/media-signing-decouple`） | `MEDIA_SIGNING_SECRET` 独立密钥，见 §八 |
+| P2 审计日志 / 按人 key / CSP | ⬜ 缓 | 视 P0/P1 后剩余风险；Caddy 已有 Security header 段，CSP 可增量 |
+
+---
+
+## 七、Prod 核实结论（2026-07-05，只读）
+
+| 核实项 | 结果 |
+|---|---|
+| 全局限流 | ✅ `RATE_LIMIT_DEFAULT=120/minute` 已配（P0-4 已完成） |
+| 删除口令 | ❌ `ADMIN_DELETE_PASSWORD` 未配（删标签无独立口令，但在 API_KEY 墙后，低危） |
+| LLM 日均花费 | **三个可触发端点历史花费全为 $0**（素材2条/标签0/创意迁移0）→ 你的担忧是**前瞻性防滥用**，非「正在流血」 |
+| 成本记账 | ⚠️ **发现真隐患**：成本分散 3 张表，闸门只 sum 了 materials 一张 → 「三端点共享日预算」在记账层是漏的（已修，见 §八） |
+| fail-open | ✅ **误判订正**：`main.py:24-31` 早已 fail-closed（prod 无 key 拒起） |
+| Caddyfile | 44 行、已有 Security header 段、`handle /api/*`→backend / `handle`→frontend，加 basic_auth 容易 |
+
+---
+
+## 八、本次已落地（2026-07-05，三分支未推）
+
+- **`feat/llm-budget-hardening`**（2 commits，pytest 622✓）：①修记账漏洞——新增 `services/llm_budget.py` 汇总三表四列，`today_cost_usd` 委托之，7 处闸门零改动自动受益；②月封顶 `LLM_MONTHLY_BUDGET_USD=30` + 触顶推维护者群告警（当天每档一次、内存去重）+ 日预算 `20→5`（历史用量≈0，设紧更早触顶）；③conftest 清空 DINGTALK webhook env（顺带修「本地真 webhook 致 dingtalk 用例偶发误发」）。
+- **`feat/media-signing-decouple`**（1 commit，pytest ✓）：`MEDIA_SIGNING_SECRET` 独立密钥，`media._secret()` 优先读它、未配回退 API_KEY。后端签 URL、前端不碰密钥 → **零前端改动**；旧链接 TTL 6h 内自动重签。
+- **`docs/security-hardening-plan`**：本文件。
+- **部署注意**：三分支均**零迁移纯代码**，回滚走纯代码。`LLM_*` / `MEDIA_SIGNING_SECRET` 改后须 `compose --env-file .env up -d backend` 重读。prod 若配 `MEDIA_SIGNING_SECRET`，开着页面的用户媒体 URL 会在下次列表刷新（≤6h）自动重签，无需干预。
+- **待你决策/操作**：P0-1 Caddy basic_auth（需钉钉真机验证）、P1-2 买域名 + Cloudflare（需注册/DNS）、P1-1 前端 key 运行时化（看 P0-1 体感）。
