@@ -137,17 +137,20 @@ class Settings(BaseSettings):
     # logger.error（经现有 LoggingIntegration 推送 Sentry，零额外配额/基建）。
     # 只在定时任务路径触发，手动刷新不告警，避免刷屏。
     COMPETITOR_ALERT_ENABLED: bool = True
-    # 只关注 TopN 内的异动；榜尾对竞品监控无意义，且收入仅 Top20 有值。
-    # 2026-07-05 由 20→15 收紧减量：只盯更靠头部的竞品进退，砍掉 #16–20 的中段抖动。
-    # 空降/窜升/跌出/收入异动四类 + 回归门控候选集**共用此单一闸门**（movement.py:115 的
-    # `r.rank > topn` 一处 continue 同时门控四类）——故**收入异动也随之收窄到 Top15**：#16–20
-    # 的收入异动不再单列（有意减量，非漏报；那本就是中段、领导关注度低）。注：revenue 值 ST 只
-    # 供到 Top20，Top15 落其内数据仍完整。展示层 DIGEST_MOVEMENT_TOPN 另有上限，两层独立。
+    # 只关注 TopN 内的名次异动；榜尾对竞品监控无意义。
+    # 2026-07-05 由 20→15 收紧减量（#200）：只盯更靠头部的竞品进退，砍掉 #16–20 的中段抖动。
+    # **空降/窜升/跌出 + 回归门控候选集**共用此闸门。收入异动**已解耦**、另走 COMPETITOR_REVENUE_TOPN
+    # （收入是高信号，不随名次收窄——见下）。展示层 DIGEST_MOVEMENT_TOPN 另有上限，两层独立。
     COMPETITOR_ALERT_TOPN: int = 15
     # 名次环比变化 ≥ 该值才算「窜升/暴跌」，过滤日常抖动。
     COMPETITOR_RANK_JUMP: int = 10
     # 收入环比 |变化%| ≥ 该值才报（两日都需有收入数据）。
     COMPETITOR_REVENUE_PCT: int = 50
+    # 收入异动**独立的名次闸门**（与名次异动的 COMPETITOR_ALERT_TOPN 解耦）：收入大幅变动是高信号
+    # 竞品动态，即便名次落在收窄后的 rank TopN(15) 之外也值得报（2026-07-05 用户裁定，起因 #200 把
+    # 名次 TopN 收到 15 曾误伤 #16–20 的收入异动）。默认 20 = ST 供 revenue 的上限
+    # （见 SENSOR_TOWER_RANKING_SALES_TOPN），即「revenue 有值的全区间都监控」，不被名次收窄削弱。
+    COMPETITOR_REVENUE_TOPN: int = 20
     # movement「空降」回归门控回看窗（天）：new_entrant 默认靠 today vs 上一可用日两快照判，
     # 老 SLG 短暂跌出 TopN 又回来会被错标「🆕 空降」（prod 实测 US/iOS top 榜 ~32% app 有
     # 出榜又回缺口）。回看上一可用日**之前** N 天内是否曾在 TopN，曾在 → is_reentry=True，

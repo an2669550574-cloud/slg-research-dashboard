@@ -47,6 +47,7 @@ async def detect_movement(country: str, platform: str, today: str) -> dict:
     topn = settings.COMPETITOR_ALERT_TOPN
     jump = settings.COMPETITOR_RANK_JUMP
     rev_pct = settings.COMPETITOR_REVENUE_PCT
+    rev_topn = settings.COMPETITOR_REVENUE_TOPN
 
     async with AsyncSessionLocal() as db:
         # 上一可用日：不一定是昨天（scheduler 可能漏过几天），取 < today 的最近一天。
@@ -110,7 +111,8 @@ async def detect_movement(country: str, platform: str, today: str) -> dict:
     def _label(r):
         return r.name or r.app_id
 
-    # 今日 TopN 内的 SLG：新进 / 窜升 / 收入异动。app_id/icon 一并带出供前端跳转和展示。
+    # 今日名次 TopN(topn) 内的 SLG：新进 / 窜升。app_id/icon 一并带出供前端跳转和展示。
+    # 收入异动**不在此循环**——它另走更宽的 rev_topn（见下），与名次收窄解耦。
     for r in today_rows:
         if r.rank is None or r.rank > topn or not is_slg(r.app_id, r.publisher):
             continue
@@ -130,14 +132,25 @@ async def detect_movement(country: str, platform: str, today: str) -> dict:
                 "prev_rank": p.rank, "cur_rank": r.rank,
                 "publisher": r.publisher, "revenue": r.revenue, "downloads": r.downloads,
             })
-        if p.revenue and r.revenue is not None and p.revenue > 0:
-            pct = (r.revenue - p.revenue) / p.revenue * 100
-            if abs(pct) >= rev_pct:
-                summary["revenue_spikes"].append({
-                    "app_id": r.app_id, "name": _label(r), "icon_url": r.icon_url,
-                    "cur_rank": r.rank,  # 收入异动行带上当前名次，给收入涨跌一个排名参照系
-                    "prev_revenue": p.revenue, "cur_revenue": r.revenue, "pct": pct,
-                })
+
+    # 收入异动：**独立、更宽的 TopN（rev_topn，默认 20 = ST 供 revenue 的上限）**。收入大幅变动是
+    # 高信号竞品动态，即便名次落在收窄后的 rank TopN(topn) 之外也值得报（2026-07-05 用户裁定，起因
+    # #200 把名次 TopN 收到 15 曾误伤 #16–20 的收入异动）。与名次异动解耦、各自视角：同一 app 可
+    # 既空降/窜升又收入异动，渲染层不跨类去重（本就允许 surge+revenue 双行）。prev 名次 >rev_topn 者
+    # revenue 为 None（ST 只供 TopN 内）→ 被下方 revenue 空值守卫天然过滤。
+    for r in today_rows:
+        if r.rank is None or r.rank > rev_topn or not is_slg(r.app_id, r.publisher):
+            continue
+        p = prev.get(r.app_id)
+        if p is None or not p.revenue or p.revenue <= 0 or r.revenue is None:
+            continue
+        pct = (r.revenue - p.revenue) / p.revenue * 100
+        if abs(pct) >= rev_pct:
+            summary["revenue_spikes"].append({
+                "app_id": r.app_id, "name": _label(r), "icon_url": r.icon_url,
+                "cur_rank": r.rank,  # 收入异动行带上当前名次，给收入涨跌一个排名参照系
+                "prev_revenue": p.revenue, "cur_revenue": r.revenue, "pct": pct,
+            })
 
     # 上一日在 TopN 的 SLG：今日跌出 TopN / 彻底掉榜
     for p in prev_rows:
