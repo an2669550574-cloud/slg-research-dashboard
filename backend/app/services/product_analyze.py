@@ -195,7 +195,7 @@ async def analyze_product(product: OwnProduct, materials: list[OwnProductMateria
     text = resp.choices[0].message.content or ""
     usage = llm_gateway.usage_to_dict(getattr(resp, "usage", None))
     cost = llm_gateway.estimate_cost(model, usage).total_usd
-    parsed = video_analyze._parse_response(text)  # 复用同一套 ```/前缀 剥离逻辑
+    parsed = llm_gateway.parse_llm_json(text)  # 共享容错解析（围栏/前后缀/游离引号兜底）
 
     brief = _compose_brief(parsed)
     if not brief:

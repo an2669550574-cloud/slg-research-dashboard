@@ -215,6 +215,8 @@ _SYSTEM_PROMPT = """你是一名资深手机游戏买量素材分析师，专长
 
 输出原则：
 - 只输出上述 JSON 对象本体，前后不带 ```、不带任何前后缀文字。
+- 必须是可被 JSON.parse 解析的合法 JSON：字符串值内若要引用素材文案，一律用中文引号「」，
+  **绝不用英文双引号 "**（会截断字符串、破坏 JSON）；万不得已用英文引号务必转义为 \\"。
 - ts 用秒（浮点，精度到 0.1s 即可），与给你的帧时间戳一致或就近。
 - 不确定的字段宁可省略也不要编造；scenes 必须覆盖给到的每一帧。
 - 标签简短（≤ 6 字），不要把整段描述塞进 tag。
@@ -250,23 +252,10 @@ def _build_messages(frames: list[FrameSample], material_title: str) -> list[dict
 
 
 def _parse_response(text: str) -> dict:
-    """模型应吐纯 JSON；但偶尔会带 ```json``` 围栏或前缀解释——剥掉再 parse。
-    解析失败抛 ValueError，由 analyze_material 转 status=failed。"""
-    text = text.strip()
-    if text.startswith("```"):
-        # 剥 ```json ... ``` / ``` ... ```
-        text = text.strip("`")
-        if text.lower().startswith("json"):
-            text = text[4:]
-        # 去掉末尾可能残留的 ```
-        text = text.strip().rstrip("`").strip()
-    # 兜底：找第一个 { 到最后一个 } 之间
-    if not text.startswith("{"):
-        s = text.find("{")
-        e = text.rfind("}")
-        if s >= 0 and e > s:
-            text = text[s : e + 1]
-    return json.loads(text)
+    """模型应吐纯 JSON；但偶尔带 ```json``` 围栏 / 前缀解释 / 字符串内未转义引号——
+    委托 llm_gateway.parse_llm_json 稳健解析（含游离引号兜底修复）。
+    解析失败抛 json.JSONDecodeError（ValueError 子类），由 analyze_material 转 failed。"""
+    return llm_gateway.parse_llm_json(text)
 
 
 @dataclass

@@ -212,19 +212,9 @@ def _material_analysis_block(m: Material) -> str:
 
 
 def _parse_json(text: str) -> dict:
-    """与 video_analyze 同款三层兜底解析。"""
-    text = text.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        if text.lower().startswith("json"):
-            text = text[4:]
-        text = text.strip().rstrip("`").strip()
-    if not text.startswith("{"):
-        s = text.find("{")
-        e = text.rfind("}")
-        if s >= 0 and e > s:
-            text = text[s : e + 1]
-    return json.loads(text)
+    """与 video_analyze 同款稳健解析，委托 llm_gateway.parse_llm_json
+    （围栏/前后缀/字符串内未转义引号兜底修复）。"""
+    return llm_gateway.parse_llm_json(text)
 
 
 async def _call_text_llm(

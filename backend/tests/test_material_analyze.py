@@ -166,6 +166,48 @@ def test_parse_response_raises_on_garbage():
         _parse_response("not json at all")
 
 
+def test_parse_response_repairs_unescaped_inner_quotes():
+    """真 prod bug（Foundation_ Galactic Frontier 素材）：模型在中文摘要里内嵌英文
+    双引号 → 旧解析 json.loads 崩「Expecting ',' delimiter」。兜底修复应还原成功、
+    把游离引号当内容保留。"""
+    from app.services.video_analyze import _parse_response
+    text = '{\n  "brief": "素材用"庇护所"对比兄弟与女友，制造反差",\n  "tags": ["末日生存"]\n}'
+    parsed = _parse_response(text)
+    assert parsed["brief"] == '素材用"庇护所"对比兄弟与女友，制造反差'
+    assert parsed["tags"] == ["末日生存"]
+
+
+# ── 共享容错解析 llm_gateway.parse_llm_json（video_analyze + creative_adapt 共用）──
+
+def test_parse_llm_json_repairs_multiple_stray_quotes():
+    from app.services.llm_gateway import parse_llm_json
+    parsed = parse_llm_json('{"brief": "对比"兄弟"和"女友"建的庇护所", "tags": []}')
+    assert parsed["brief"] == '对比"兄弟"和"女友"建的庇护所'
+
+
+def test_parse_llm_json_tolerates_raw_newline_in_string():
+    """strict=False：串内裸控制字符（换行）不该崩——LLM 常见坏输出。"""
+    from app.services.llm_gateway import parse_llm_json
+    parsed = parse_llm_json('{"brief": "第一行\n第二行", "tags": []}')
+    assert parsed["brief"] == "第一行\n第二行"
+
+
+def test_parse_llm_json_leaves_valid_escaped_quotes_untouched():
+    """合法 JSON（引号已转义）首次 json.loads 即成、不进修复分支、值不变。"""
+    from app.services.llm_gateway import parse_llm_json
+    parsed = parse_llm_json('{"brief": "他说\\"hi\\"", "tags": []}')
+    assert parsed["brief"] == '他说"hi"'
+
+
+def test_parse_llm_json_raises_json_error_on_garbage():
+    """无法解析仍抛 json.JSONDecodeError（ValueError 子类）→ caller 的
+    `except json.JSONDecodeError` 生效、兜成 status=failed。"""
+    import json
+    from app.services.llm_gateway import parse_llm_json
+    with pytest.raises(json.JSONDecodeError):
+        parse_llm_json("not json at all")
+
+
 # ────────────────────────────────────────────────────────────
 # Service: 字段归一化
 # ────────────────────────────────────────────────────────────
