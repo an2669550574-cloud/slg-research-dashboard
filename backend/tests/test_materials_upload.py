@@ -152,3 +152,27 @@ async def test_delete_unlinks_file(client, monkeypatch, tmp_path):
     assert len(list(media_dir.iterdir())) == 1, "上传后应有 1 个落盘文件"
     await client.delete(f"/api/materials/{up['id']}")
     assert list(media_dir.iterdir()) == [], "删除素材应连带删档"
+
+
+def test_media_signing_secret_decoupled_from_api_key(monkeypatch):
+    """媒体签名密钥独立于 API_KEY：配 MEDIA_SIGNING_SECRET 后，用 bundle 里泄露的
+    API_KEY 伪造的 token 应失效（闭合「拿到前端 bundle → 伪造任意媒体 token」链）。
+    未配独立密钥时回退 API_KEY（旧链接平滑迁移）。"""
+    import hashlib
+    import hmac
+    import time
+
+    from app.config import settings
+    from app.services import media
+
+    # 回退：未配独立密钥 → 用 API_KEY 签验一致
+    monkeypatch.setattr(settings, "MEDIA_SIGNING_SECRET", None)
+    monkeypatch.setattr(settings, "API_KEY", "bundle-key")
+    assert media.verify(7, media.sign(7)) is True
+
+    # 配独立密钥 → 签验走独立密钥；用 API_KEY 伪造的 token 失效
+    monkeypatch.setattr(settings, "MEDIA_SIGNING_SECRET", "server-only-secret")
+    assert media.verify(7, media.sign(7)) is True
+    exp = int(time.time()) + 3600
+    forged = hmac.new(b"bundle-key", f"7:{exp}".encode(), hashlib.sha256).hexdigest()[:16]
+    assert media.verify(7, f"{exp}.{forged}") is False   # 攻击者用 bundle key 伪造 → 拒
