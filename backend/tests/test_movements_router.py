@@ -31,9 +31,11 @@ async def test_movements_returns_flattened_events_for_single_combo(client, caplo
     from app.database import utcnow_naive
     today = utcnow_naive().strftime("%Y-%m-%d")
     # 昨日：仅 'staying' 在 Top；今日：'staying' 大涨 + 'newbie' 新进
-    await _seed("2026-04-01", [("staying", 18, 100_000.0, SLG_PUB)])
+    # staying 昨日 #14 仍在 TopN(15) 内，故今日 #14→#3 判「窜升」而非「新进」（若昨日在 TopN 外
+    # 则应判 new_entrant）——这样才同时验到 surge + revenue_spike 两类。
+    await _seed("2026-04-01", [("staying", 14, 100_000.0, SLG_PUB)])
     await _seed(today, [
-        ("staying", 3, 200_000.0, SLG_PUB),  # 18→3 升 + 收入 +100%
+        ("staying", 3, 200_000.0, SLG_PUB),  # 14→3 升11 + 收入 +100%
         ("newbie",  5, None, SLG_PUB),       # 新进 Top
     ])
 
