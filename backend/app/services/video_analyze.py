@@ -268,10 +268,16 @@ class AnalysisResult:
     model: str
 
 
-async def _call_llm(messages: list[dict]) -> tuple[dict, float, str]:
-    """返回 (parsed_json, cost_usd, model_id)。"""
+# 素材分析允许选的模型白名单（与创意迁移 creative_adapt.ALLOWED_ADAPT_MODELS 对齐：
+# 都带视觉/强归纳的 Claude；默认 sonnet 省钱，用户可在前端升 opus 拿更细的解读）。
+# 端点校验：传白名单外的值一律 400，防误调贵模型/不存在模型。None → settings.TAISHI_VISION_MODEL。
+ALLOWED_ANALYZE_MODELS = ("claude-sonnet-4.5", "claude-opus-4.7")
+
+
+async def _call_llm(messages: list[dict], model: Optional[str] = None) -> tuple[dict, float, str]:
+    """返回 (parsed_json, cost_usd, model_id)。model=None → settings.TAISHI_VISION_MODEL。"""
     client = llm_gateway.get_client()
-    model = settings.TAISHI_VISION_MODEL
+    model = model or settings.TAISHI_VISION_MODEL
     resp = await client.chat.completions.create(
         model=model,
         messages=messages,
@@ -366,11 +372,12 @@ async def assert_llm_budget(db: AsyncSession) -> None:
         )
 
 
-async def analyze_material(material_id: int) -> None:
+async def analyze_material(material_id: int, model: Optional[str] = None) -> None:
     """后台任务入口。整段独立开 session（BackgroundTasks 不传 request scope db）。
 
     状态机：调用方应已把 analysis_status 置 running，本函数负责走完
-    done / failed 终态并写入字段。
+    done / failed 终态并写入字段。model=None → settings.TAISHI_VISION_MODEL
+    （白名单校验在端点侧做，后台任务信任传入值）。
     """
     async with AsyncSessionLocal() as db:
         m = (await db.execute(select(Material).where(Material.id == material_id))).scalar_one_or_none()
@@ -398,7 +405,7 @@ async def analyze_material(material_id: int) -> None:
             # 持久化帧 + 联系单：用户后续在抽屉里看图用。重新分析时先清旧的，
             # 避免帧数变化（比如改了 MATERIAL_ANALYZE_FRAMES）导致 frame_10
             # 残留。LLM 调用在前，IO 在后；调用失败就不浪费磁盘。
-            parsed, cost, model = await _call_llm(_build_messages(frames, m.title))
+            parsed, cost, used_model = await _call_llm(_build_messages(frames, m.title), model)
             await asyncio.to_thread(clear_analysis_artifacts, material_id)
             await asyncio.to_thread(save_frames_to_disk, frames, material_id)
             await asyncio.to_thread(
@@ -415,11 +422,11 @@ async def analyze_material(material_id: int) -> None:
             m.analysis_frames = [{"ts": f.timestamp_sec} for f in frames]
             m.analysis_has_contact_sheet = True
             m.analyzed_at = utcnow_naive()
-            m.analysis_model = model
+            m.analysis_model = used_model
             m.analysis_cost_usd = cost
             m.analysis_error = None
             await db.commit()
-            logger.info("Analyzed material %s in %.2f$ via %s", material_id, cost, model)
+            logger.info("Analyzed material %s in %.2f$ via %s", material_id, cost, used_model)
         except json.JSONDecodeError as e:
             await _mark_failed(db, m, f"模型返回非 JSON：{str(e)[:200]}")
         except Exception as e:

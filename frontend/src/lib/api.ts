@@ -276,8 +276,8 @@ export const materialsApi = {
   // 结构化打标签（P2）：整体替换某素材的标签值（replace-all）；必填/单多选校验在后端
   setTagValues: (id: number, values: MaterialTagValueInput[]): Promise<MaterialOut> =>
     api.put(`/materials/${id}/tag-values`, { values }).then(r => r.data),
-  analyze: (id: number): Promise<MaterialOut> =>
-    api.post(`/materials/${id}/analyze`).then(r => r.data),
+  analyze: (id: number, model?: string): Promise<MaterialOut> =>
+    api.post(`/materials/${id}/analyze`, model ? { model } : {}).then(r => r.data),
   adoptTags: (id: number): Promise<MaterialOut> =>
     api.post(`/materials/${id}/adopt-tags`).then(r => r.data),
   adaptDirections: (id: number, ourProduct: string, productId?: number | null): Promise<CreativeDirectionsResponse> =>

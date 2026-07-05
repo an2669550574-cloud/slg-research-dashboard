@@ -116,6 +116,68 @@ async def test_analyze_rejects_when_already_running(client, monkeypatch, tmp_pat
 
 
 # ────────────────────────────────────────────────────────────
+# 模型选择（白名单 + 透传 + 兼容空 body）
+# ────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_analyze_rejects_model_outside_whitelist(client, monkeypatch, tmp_path):
+    """传白名单外的模型 → 400，不排队分析（防误调贵/不存在模型）。"""
+    _media_tmp(monkeypatch, tmp_path)
+    m = await _upload(client)
+
+    from app.services import video_analyze
+    async def fake_today_cost(db): return 0.0
+    monkeypatch.setattr(video_analyze, "today_cost_usd", fake_today_cost)
+
+    r = await client.post(f"/api/materials/{m['id']}/analyze", json={"model": "gpt-4o"})
+    assert r.status_code == 400
+    assert "不支持的模型" in r.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_analyze_missing_material_beats_bad_model(client):
+    """不存在的素材 + 坏模型 → 404（资源存在性优先于 model 白名单校验，不被 400 掩盖）。"""
+    r = await client.post("/api/materials/99999/analyze", json={"model": "gpt-4o"})
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_analyze_passes_whitelisted_model_to_task(client, monkeypatch, tmp_path):
+    """白名单内的模型透传给后台任务。"""
+    _media_tmp(monkeypatch, tmp_path)
+    m = await _upload(client)
+
+    from app.services import video_analyze
+    captured = {}
+    async def fake_today_cost(db): return 0.0
+    async def fake_analyze(mid, model=None): captured["model"] = model
+    monkeypatch.setattr(video_analyze, "today_cost_usd", fake_today_cost)
+    monkeypatch.setattr(video_analyze, "analyze_material", fake_analyze)
+
+    r = await client.post(f"/api/materials/{m['id']}/analyze", json={"model": "claude-opus-4.7"})
+    assert r.status_code == 200, r.text
+    assert captured["model"] == "claude-opus-4.7"
+
+
+@pytest.mark.asyncio
+async def test_analyze_omitted_model_defaults_none(client, monkeypatch, tmp_path):
+    """不传 model（空 body）→ 后台任务收到 None（回落 settings.TAISHI_VISION_MODEL），旧调用兼容。"""
+    _media_tmp(monkeypatch, tmp_path)
+    m = await _upload(client)
+
+    from app.services import video_analyze
+    captured = {"model": "sentinel"}
+    async def fake_today_cost(db): return 0.0
+    async def fake_analyze(mid, model=None): captured["model"] = model
+    monkeypatch.setattr(video_analyze, "today_cost_usd", fake_today_cost)
+    monkeypatch.setattr(video_analyze, "analyze_material", fake_analyze)
+
+    r = await client.post(f"/api/materials/{m['id']}/analyze")
+    assert r.status_code == 200, r.text
+    assert captured["model"] is None
+
+
+# ────────────────────────────────────────────────────────────
 # 采纳 LLM 标签
 # ────────────────────────────────────────────────────────────
 

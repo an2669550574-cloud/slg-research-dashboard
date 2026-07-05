@@ -213,10 +213,17 @@ async def update_material(material_id: int, data: MaterialUpdate, db: AsyncSessi
     return await _single_out(db, m)
 
 
+class AnalyzeRequest(BaseModel):
+    """分析可选参数。model 缺省 → settings.TAISHI_VISION_MODEL（sonnet）；
+    body 整体可选，空 POST 兼容旧调用。"""
+    model: Optional[str] = None
+
+
 @router.post("/{material_id}/analyze", response_model=MaterialOut)
 async def analyze_material_endpoint(
     material_id: int,
     background: BackgroundTasks,
+    req: Optional[AnalyzeRequest] = None,
     db: AsyncSession = Depends(get_db),
 ):
     """触发 LLM 视频分析（异步）。立刻返回 status=running 的素材状态。
@@ -225,9 +232,12 @@ async def analyze_material_endpoint(
     - 仅 upload 来源的视频可分析（外链拿不到原文件抽帧）
     - 日成本超 LLM_DAILY_BUDGET_USD 拒新请求（避免失控烧钱）
     - 同素材正在分析中（status=running）则拒绝重入；走 done/failed 都允许重分析
+    - model 若指定须在 ALLOWED_ANALYZE_MODELS 白名单内（防误调贵/不存在模型）
 
     后台 task 会写回 done/failed 状态；前端 GET /{id} 轮询拉新状态。
     """
+    model = req.model if req else None
+
     m = (await db.execute(select(Material).where(Material.id == material_id))).scalar_one_or_none()
     if not m:
         raise HTTPException(status_code=404, detail="素材不存在")
@@ -237,6 +247,12 @@ async def analyze_material_endpoint(
         raise HTTPException(status_code=400, detail=f"仅视频可分析（当前类型：{m.material_type}）")
     if m.analysis_status == "running":
         raise HTTPException(status_code=409, detail="分析进行中，请稍候")
+    # 模型白名单校验放在资源存在性之后：不存在的素材优先回 404，而非被坏 model 的 400 掩盖。
+    if model and model not in video_analyze.ALLOWED_ANALYZE_MODELS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的模型：{model}；可选 {', '.join(video_analyze.ALLOWED_ANALYZE_MODELS)}",
+        )
 
     await video_analyze.assert_llm_budget(db)
 
@@ -245,7 +261,7 @@ async def analyze_material_endpoint(
     await db.commit()
     await db.refresh(m)
 
-    background.add_task(video_analyze.analyze_material, material_id)
+    background.add_task(video_analyze.analyze_material, material_id, model)
 
     return await _single_out(db, m)
 

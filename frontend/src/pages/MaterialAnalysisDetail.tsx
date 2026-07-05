@@ -85,7 +85,7 @@ export default function MaterialAnalysisDetail() {
             status={status}
             isRunning={isRunning}
             seekTo={seekTo}
-            onAnalyze={() => analyzeMut.mutate()}
+            onAnalyze={(model) => analyzeMut.mutate(model)}
             onAdopt={() => adoptMut.mutate()}
             analyzeDisabled={analyzeMut.isPending || isRunning}
             adoptDisabled={adoptMut.isPending}
