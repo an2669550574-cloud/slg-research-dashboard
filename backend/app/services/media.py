@@ -110,7 +110,10 @@ def delete_file(file_path: Optional[str]) -> None:
 
 
 def _secret() -> str:
-    return settings.API_KEY or ""
+    """媒体签名 HMAC 密钥：优先独立的 MEDIA_SIGNING_SECRET（不进前端 bundle），
+    未配则回退 API_KEY（兼容旧链接平滑迁移）。见 config.MEDIA_SIGNING_SECRET——
+    复用 bundle 里的 API_KEY 当签名密钥 = 拿到 bundle 即可伪造任意媒体 token。"""
+    return settings.MEDIA_SIGNING_SECRET or settings.API_KEY or ""
 
 
 def sign(material_id: int, ttl: Optional[int] = None) -> str:
@@ -121,8 +124,9 @@ def sign(material_id: int, ttl: Optional[int] = None) -> str:
 
 
 def verify(material_id: int, token: Optional[str]) -> bool:
-    # 与 require_api_key 一致：未配置 API_KEY（本地开发）则放行。
-    if not settings.API_KEY:
+    secret = _secret()
+    # 无任何签名密钥（本地开发无鉴权）则放行，与 require_api_key 一致。
+    if not secret:
         return True
     if not token or "." not in token:
         return False
@@ -133,7 +137,7 @@ def verify(material_id: int, token: Optional[str]) -> bool:
         return False
     if exp < time.time():
         return False
-    expected = hmac.new(_secret().encode(), f"{material_id}:{exp}".encode(),
+    expected = hmac.new(secret.encode(), f"{material_id}:{exp}".encode(),
                         hashlib.sha256).hexdigest()[:16]
     return hmac.compare_digest(mac, expected)
 

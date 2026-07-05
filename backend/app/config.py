@@ -300,6 +300,10 @@ class Settings(BaseSettings):
     # 站内播放/预览签名 URL 有效期（秒）。<video src> 带不了请求头，故用
     # HMAC 短时令牌走 query string；列表每次刷新会重签，过期自然失效。
     MEDIA_URL_TTL_SECONDS: int = 6 * 3600
+    # 媒体签名 HMAC 密钥。独立于 API_KEY——API_KEY 会编进前端 bundle，若复用为媒体
+    # 签名密钥，任何拿到 bundle 的人即可伪造任意 material 的合法 token。设独立随机值
+    # （不进前端）闭合此漏洞。未配则回退 API_KEY（平滑迁移，旧链接不立即失效）。
+    MEDIA_SIGNING_SECRET: Optional[str] = None
 
     # ── 太石 LLM 网关 ────────────────────────────────────────────
     # 公司统一大模型网关，OpenAI 兼容协议。审批通过后钉钉发 key。
