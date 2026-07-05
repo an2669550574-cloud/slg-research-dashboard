@@ -301,13 +301,16 @@ async def _call_llm(messages: list[dict]) -> tuple[dict, float, str]:
 # ────────────────────────────────────────────────────────────────────────
 
 async def today_cost_usd(db: AsyncSession) -> float:
-    """当 UTC 日已分析成本合计。给端点护栏用。"""
-    today_start = datetime(date.today().year, date.today().month, date.today().day)
-    stmt = (
-        select(func.coalesce(func.sum(Material.analysis_cost_usd), 0.0))
-        .where(Material.analyzed_at >= today_start)
-    )
-    return float((await db.execute(stmt)).scalar_one() or 0.0)
+    """当日 LLM 已花费合计（素材分析 + 创意迁移 + 标签分析三端点汇总）。
+
+    历史坑：本函数曾只统计 materials.analysis_cost_usd，创意迁移 / 标签分析的花费
+    记在各自表里、不进闸门——「三端点共享日预算」在记账层是漏的（只算三分之一）。
+    现委托 llm_budget 汇总三表修正。保留本函数名作为 6 处 router 预算闸门的统一入口
+    （测试亦 monkeypatch 此名，勿让 router 改调 llm_budget 否则 patch 失效）。
+    """
+    from app.services import llm_budget
+
+    return await llm_budget.day_cost_usd(db)
 
 
 async def analyze_material(material_id: int) -> None:
