@@ -31,6 +31,12 @@
 | `GET/POST/DELETE /api/publishers/ignores` | 缺口忽略名单（kind=publisher/app_id 两粒度）；POST 对 publisher 归一成 corp_squash 键存储、幂等。**同时被 /gaps、/download-leads、detect_newcomers（digest 方案①）三处共用** | 是（缺口卡「忽略」按钮 + 「已忽略 N」恢复） |
 | `POST/PUT/DELETE …` | 主体 + 5 类子资源（aliases/app_ids/itunes-artists/sources/relations）CRUD；写后内存 is_slg 索引自动刷新 | 是（抽屉编辑） |
 
+> **prod 直改配方（不发版、零 ST；prod 现在 Cloudflare 后需绕过 CF/Bot-Fight）**：服务器上
+> `D=$(grep ^SLG_DOMAIN .env|cut -d= -f2); K=$(grep ^API_KEY= .env|cut -d= -f2-)` 后：
+> 改 is_slg → `curl --resolve $D:443:127.0.0.1 -k -H "X-API-Key:$K" -X PUT https://$D/api/publishers/{id} -d '{"is_slg":false}'`；
+> 删误钉 pin → `DELETE https://$D/api/publishers/{entity_id}/app-ids/{row_id}`（行 id 查 `publisher_app_ids`，非 app_id）。
+> `--resolve …127.0.0.1` 直连源站绕 CF；端点自动 `load_index_from_db`。是「多品类大厂/母体错标 is_slg=1 全量放噪声」的订正手段（2026-07-05 曾降级 Moonton/CyberJoy 等 9 个 + 删 2 误钉 pin，治 digest 外文噪声刷屏）。
+
 ## 数据存哪、怎么改
 
 - 实体是**运行态 DB 数据，不是代码**。种子 `SEED_PUBLISHERS` 只在空表时灌入；prod 已有数据，改动**走 publishers API 直写 prod，不发版、不进 git、零 ST 配额**。

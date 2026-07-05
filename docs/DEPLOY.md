@@ -8,6 +8,8 @@
 - 80 / 443 端口对外开放
 - 把目标域名 A 记录指向主机 IP（Caddy 会自动签发 Let's Encrypt 证书）
 
+> **HK prod 现状（2026-07-05 起，与上面「裸 Caddy 直连」不同）**：站点在 **Cloudflare 橙云代理**后（`slgradar.uk`）。源站 Caddy 用**自签证书**（根 `.env` `SLG_ORIGIN_TLS=tls internal` + CF SSL 模式 Full，回避 CF 拦 ACME）；源站防火墙**只放行 Cloudflare IP 段**（`cf-firewall.service`，直连源站 IP 被 DROP）。完整拓扑 / 割接 / 回滚见 [`SECURITY-CADDY-DOMAIN.md`](SECURITY-CADDY-DOMAIN.md)。`SLG_ORIGIN_TLS` 留空 = 回退裸 Caddy 直连（LE 自动 HTTPS），仍是本指南默认。
+
 ## 二、配置
 
 ```bash
