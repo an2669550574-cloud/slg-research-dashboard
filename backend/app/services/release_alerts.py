@@ -288,6 +288,14 @@ def _own_tag(app_id, own_matches: Optional[dict]) -> str:
     return f" ⚔️《{_md_name(name, maxlen=20)}》同赛道" if name else ""
 
 
+def _sg_label(entry: dict) -> str:
+    """新品/异动行的中文玩法子品类标签 ` · 数字门SLG`——让外文游戏名一眼可辨品类
+    （韩/日/英文名读者看不懂「是什么游戏」时，子品类补足语义）。无则空。
+    数据由 send_daily_digest 用 _subgenres_for_apps 富化进 entry['subgenre_cn']。"""
+    sg = (entry.get("subgenre_cn") or "").strip()
+    return f" · {sg}" if sg else ""
+
+
 async def _load_own_products() -> list[tuple[str, list[str], set[str]]]:
     """我方产品 (name, [小写关键词], {玩法子品类}) ——「同赛道」匹配用。match_keywords 与
     match_subgenre **都空**的产品跳过。按 is_default 优先、id 次之排序，命中多款时取确定性首个。"""
@@ -547,7 +555,7 @@ def build_newcomer_lines(market: dict, publisher: dict,
                        with_store=is_lead, articles=articles.get(aid)),
             _video_seg(videos, aid)) if s)
         lines.append(_block([
-            f"✨ **{_md_name(n['name'])}** 空降 **#{n['rank']}**{tag}{_own_tag(aid, own_matches)}",
+            f"✨ **{_md_name(n['name'])}** 空降 **#{n['rank']}**{_sg_label(n)}{tag}{_own_tag(aid, own_matches)}",
             f"> {inner}" if inner else "",
             f"📝 {summaries.get(aid)}" if summaries.get(aid) else "",   # LLM 一句话：领导秒懂
             action,
@@ -566,7 +574,7 @@ def build_newcomer_lines(market: dict, publisher: dict,
             _link_line(aid or "", "publisher", articles=articles.get(aid)),
             _video_seg(videos, aid)) if s)
         lines.append(_block([
-            f"🏢 **{_md_name(n['entity_name'])}** 新品 **{_md_name(n['name'])}** {rank}{_own_tag(aid, own_matches)}",
+            f"🏢 **{_md_name(n['entity_name'])}** 新品 **{_md_name(n['name'])}** {rank}{_sg_label(n)}{_own_tag(aid, own_matches)}",
             f"> {inner}" if inner else "",
             f"📝 {summaries.get(aid)}" if summaries.get(aid) else "",
             action,
@@ -609,7 +617,7 @@ def build_free_newcomer_lines(market: dict, publisher: dict,
             _link_line(aid or "", "market", articles=articles.get(aid)),
             _video_seg(videos, aid)) if s)
         lines.append(_block([
-            f"⬇️ **{_md_name(n['name'])}** 下载榜 **{rank}**{_own_tag(aid, own_matches)}",
+            f"⬇️ **{_md_name(n['name'])}** 下载榜 **{rank}**{_sg_label(n)}{_own_tag(aid, own_matches)}",
             f"> {inner}" if inner else "",
             action,
         ]))
@@ -865,7 +873,7 @@ def _highlight_line(item: dict, own_matches: Optional[dict] = None) -> str:
     own = _own_tag(e.get("app_id"), own_matches)
     if kind == "new_entrant":
         ico, verb = ("🔄", "重回") if e.get("is_reentry") else ("🆕", "空降")
-        return f"{mkt} {ico} **{_md_name(e['name'])}** {verb} #{e['cur_rank']}{own}"
+        return f"{mkt} {ico} **{_md_name(e['name'])}** {verb} #{e['cur_rank']}{_sg_label(e)}{own}"
     if kind == "surge":
         return f"{mkt} 📈 **{_md_name(e['name'])}** #{e['prev_rank']} → #{e['cur_rank']}{own}"
     if kind == "climb":
@@ -879,7 +887,7 @@ def _highlight_line(item: dict, own_matches: Optional[dict] = None) -> str:
     # 三类新品（market / publisher / free）：厂商新品用 entity_name，其余用 name
     nm = e.get("name") or e.get("entity_name") or "—"
     rk = f" #{e['rank']}" if e.get("rank") else ""
-    return f"{mkt} ✨ **{_md_name(nm)}**{rk}{own}"
+    return f"{mkt} ✨ **{_md_name(nm)}**{rk}{_sg_label(e)}{own}"
 
 
 def build_highlight_lines(per_combo: list[dict], topn: int,
@@ -1409,23 +1417,36 @@ async def send_daily_digest() -> bool:
     # 新品/曾建档竞品有；未分类老竞品=NULL，子品类产品对其不命中=正是要去掉的假阳）。零 ST/LLM。
     own_matches: dict[str, str] = {}
     try:
+        # 候选竞品（新品三段 + movement）app_id 全集。
+        cand_ids: set[str] = set()
+        for c in per_combo:
+            for key in ("market", "publisher", "free_market", "free_publisher"):
+                for n in ((c.get(key) or {}).get("newcomers") or []):
+                    if n.get("app_id"):
+                        cand_ids.add(n["app_id"])
+            mv = c.get("movement") or {}
+            for k in ("new_entrants", "surges", "drops", "revenue_spikes", "climbs"):
+                for e in (mv.get(k) or []):
+                    if e.get("app_id"):
+                        cand_ids.add(e["app_id"])
+        # 候选竞品子品类：market_newcomer_log 优先 + app_subgenre fallback（P1-2 存量回补，
+        # 让 ⚔️ 同赛道对 movement 老竞品也生效）。零 ST。
+        subgenre_by_app = await _subgenres_for_apps(cand_ids)
+        # C 可读性：把中文子品类富化进各 entry，供 _sg_label 渲染（外文名一眼辨品类）。
+        # 与 own_matches 解耦——无 own_products 也要显示子品类标签。
+        for c in per_combo:
+            for key in ("market", "publisher", "free_market", "free_publisher"):
+                for n in ((c.get(key) or {}).get("newcomers") or []):
+                    if (aid := n.get("app_id")) and subgenre_by_app.get(aid):
+                        n["subgenre_cn"] = subgenre_by_app[aid]
+            mv = c.get("movement") or {}
+            for k in ("new_entrants", "surges", "drops", "revenue_spikes", "climbs"):
+                for e in (mv.get(k) or []):
+                    if (aid := e.get("app_id")) and subgenre_by_app.get(aid):
+                        e["subgenre_cn"] = subgenre_by_app[aid]
+        # 「同赛道」匹配（需 own_products）：文本=名字 + LLM 摘要，子品类优先精确匹配。
         own_products = await _load_own_products()
         if own_products:
-            # 一次查全部候选竞品（新品三段 + movement）的玩法子品类。
-            cand_ids: set[str] = set()
-            for c in per_combo:
-                for key in ("market", "publisher", "free_market", "free_publisher"):
-                    for n in ((c.get(key) or {}).get("newcomers") or []):
-                        if n.get("app_id"):
-                            cand_ids.add(n["app_id"])
-                mv = c.get("movement") or {}
-                for k in ("new_entrants", "surges", "drops", "revenue_spikes", "climbs"):
-                    for e in (mv.get(k) or []):
-                        if e.get("app_id"):
-                            cand_ids.add(e["app_id"])
-            # 候选竞品子品类：market_newcomer_log 优先 + app_subgenre fallback（P1-2 存量回补，
-            # 让 ⚔️ 同赛道对 movement 老竞品也生效）。零 ST。
-            subgenre_by_app = await _subgenres_for_apps(cand_ids)
             for c in per_combo:
                 for key in ("market", "publisher", "free_market", "free_publisher"):
                     for n in ((c.get(key) or {}).get("newcomers") or []):

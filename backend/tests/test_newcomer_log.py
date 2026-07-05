@@ -277,6 +277,20 @@ def test_digest_newcomer_enrich_suffix():
     assert lines2 == ["✨ **寒霜新游** 空降 **#7**\n\n> 厂商 某厂"]
 
 
+def test_digest_newcomer_subgenre_label():
+    """C 可读性：新品行带中文玩法子品类标签（外文名一眼辨品类）；无 subgenre_cn 则不加。"""
+    from app.services.release_alerts import build_newcomer_lines
+    # 外文名 + subgenre_cn → ✨ 行内紧跟 ` · 数字门SLG`
+    market = {"newcomers": [{"app_id": "k1", "rank": 42, "name": "탑 로드",
+                             "publisher": "GAME SPARK", "subgenre_cn": "数字门SLG", "is_slg": True}]}
+    head = build_newcomer_lines(market, {})[0].split("\n")[0]
+    assert head == "✨ **탑 로드** 空降 **#42** · 数字门SLG"
+    # 无 subgenre_cn → 首行不加标签（向后兼容）
+    market2 = {"newcomers": [{"app_id": "k2", "rank": 7, "name": "寒霜新游",
+                              "publisher": "某厂", "is_slg": True}]}
+    assert build_newcomer_lines(market2, {})[0].split("\n")[0] == "✨ **寒霜新游** 空降 **#7**"
+
+
 @pytest.mark.asyncio
 async def test_prune_newcomer_log_drops_old_rows(client, monkeypatch):
     """prune 删除 first_detected_at 超过保留窗口的行，窗口内的保留；retention<=0 关闭。"""
