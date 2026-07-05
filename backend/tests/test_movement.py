@@ -91,6 +91,32 @@ async def test_revenue_spike(client, caplog):
 
 
 @pytest.mark.asyncio
+async def test_revenue_spike_beyond_rank_topn(client):
+    """收入异动走独立更宽的 rev_topn(20)、与名次异动的 TopN(15) 解耦：#18 落在名次 TopN 外，
+    名次异动（surge/new_entrant）不报，但收入 +150% 仍应报 revenue_spike（收入是高信号，
+    #200 把名次收到 15 不该误伤 #16–20 的收入异动）。"""
+    from app.services.movement import detect_movement
+    await _seed("2026-05-15", [("a", 18, 100_000.0, SLG_PUB)])
+    await _seed("2026-05-16", [("a", 18, 250_000.0, SLG_PUB)])  # 名次不动 #18，收入 +150%
+    s = await detect_movement("US", "ios", "2026-05-16")
+    assert len(s["revenue_spikes"]) == 1 and s["revenue_spikes"][0]["name"] == "a"
+    assert s["revenue_spikes"][0]["cur_rank"] == 18
+    assert s["surges"] == [] and s["new_entrants"] == [], "名次 #18>TopN(15) 不报名次异动"
+
+
+@pytest.mark.asyncio
+async def test_revenue_spike_beyond_rev_topn_ignored(client):
+    """今日名次 > rev_topn(20) → 不报收入异动（ST 也不供该名次 revenue，属结构性上限）。"""
+    from app.services.movement import detect_movement
+    await _seed("2026-05-15", [("a", 22, 100_000.0, SLG_PUB)])
+    await _seed("2026-05-16", [("a", 22, 300_000.0, SLG_PUB)])
+    s = await detect_movement("US", "ios", "2026-05-16")
+    # 锁死：排除是走了收入循环的 rev_topn(20) 门控，而非被稀疏闸门 today_missing 提前挡掉。
+    assert s["today_missing"] is False
+    assert s["revenue_spikes"] == []
+
+
+@pytest.mark.asyncio
 async def test_non_slg_movement_ignored(client, caplog):
     from app.services.movement import detect_and_alert_movement
     await _seed("2026-05-15", [("slg", 1, None, SLG_PUB)])
