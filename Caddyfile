@@ -17,6 +17,11 @@
 {$SLG_DOMAIN}:{$SLG_HTTPS_PORT} {
 	encode gzip zstd
 
+	# 源站 TLS 策略（env 注入）：留空 = 自动 HTTPS(Let's Encrypt，直连模式，默认)；
+	# 置 "tls internal" = 自签证书，供 Cloudflare 橙云前置 + SSL 模式 Full 时用
+	# （CF 会拦截 80 端口的 ACME HTTP-01 挑战，源站拿不到 LE 证书，故走自签由 CF 兜公网证书）。
+	{$SLG_ORIGIN_TLS}
+
 	# Security headers
 	header {
 		# Allow images from CDN sources used by iTunes

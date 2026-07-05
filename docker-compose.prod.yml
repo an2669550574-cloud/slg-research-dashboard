@@ -25,6 +25,8 @@ services:
       - SLG_DOMAIN=${SLG_DOMAIN:-localhost}
       - SLG_TLS_EMAIL=${SLG_TLS_EMAIL:-internal}
       - SLG_HTTPS_PORT=${SLG_HTTPS_PORT:-443}
+      # 源站 TLS 策略：空 = 自动 HTTPS(直连)；"tls internal" = 自签(CF 橙云前置)。见 Caddyfile。
+      - SLG_ORIGIN_TLS=${SLG_ORIGIN_TLS:-}
     depends_on:
       - frontend
       - backend
