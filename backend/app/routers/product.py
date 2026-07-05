@@ -3,7 +3,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete as sa_delete
 from typing import Optional
 
-from app.config import settings
 from app.database import get_db
 from app.models.product import OwnProduct, OwnProductMaterial
 from app.schemas import (
@@ -182,12 +181,7 @@ async def analyze_product_endpoint(product_id: int, db: AsyncSession = Depends(g
     if not materials:
         raise HTTPException(status_code=400, detail="该产品还没有素材，请先上传宣传片/截图或粘贴商店描述")
 
-    spent = await video_analyze.today_cost_usd(db)
-    if spent >= settings.LLM_DAILY_BUDGET_USD:
-        raise HTTPException(
-            status_code=429,
-            detail=f"今日 LLM 预算已用尽（${spent:.2f} / ${settings.LLM_DAILY_BUDGET_USD:.2f}），明日重试",
-        )
+    await video_analyze.assert_llm_budget(db)
     try:
         r = await product_analyze.analyze_product(product, materials)
     except ValueError as e:

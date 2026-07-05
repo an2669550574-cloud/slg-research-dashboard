@@ -301,13 +301,80 @@ async def _call_llm(messages: list[dict]) -> tuple[dict, float, str]:
 # ────────────────────────────────────────────────────────────────────────
 
 async def today_cost_usd(db: AsyncSession) -> float:
-    """当 UTC 日已分析成本合计。给端点护栏用。"""
-    today_start = datetime(date.today().year, date.today().month, date.today().day)
-    stmt = (
-        select(func.coalesce(func.sum(Material.analysis_cost_usd), 0.0))
-        .where(Material.analyzed_at >= today_start)
+    """当日 LLM 已花费合计（素材分析 + 创意迁移 + 标签分析三端点汇总）。
+
+    历史坑：本函数曾只统计 materials.analysis_cost_usd，创意迁移 / 标签分析的花费
+    记在各自表里、不进闸门——「三端点共享日预算」在记账层是漏的（只算三分之一）。
+    现委托 llm_budget 汇总三表修正。保留本函数名作为 6 处 router 预算闸门的统一入口
+    （测试亦 monkeypatch 此名，勿让 router 改调 llm_budget 否则 patch 失效）。
+    """
+    from app.services import llm_budget
+
+    return await llm_budget.day_cost_usd(db)
+
+
+# 触顶告警去重：当天(day)/当月(month)每档最多推一次维护者群。单进程内存态——
+# backend 单容器足够；重启丢失顶多多发一条，无害。
+_budget_alert_marks: set[str] = set()
+
+
+async def _alert_budget_hit(scope: str, spent: float, cap: float) -> None:
+    """LLM 预算触顶 → 推维护者群，当天(day)/当月(month)每档一次。
+
+    未配 webhook / 发送失败均不阻断闸门（告警是旁路，429 该照常抛）。
+    """
+    today = date.today()
+    key = (
+        f"month:{today.year}-{today.month:02d}" if scope == "month"
+        else f"day:{today.isoformat()}"
     )
-    return float((await db.execute(stmt)).scalar_one() or 0.0)
+    if key in _budget_alert_marks:
+        return
+    label = "本月" if scope == "month" else "今日"
+    title = f"⚠️ LLM {label}预算触顶"
+    text = (
+        f"### ⚠️ LLM {label}预算触顶\n\n"
+        f"{label}已花费 **${spent:.2f}** / 上限 ${cap:.2f}，后续 AI 端点（素材分析 / "
+        f"创意迁移 / 标签分析）请求将被拒（429）。\n\n"
+        f"> 若非预期用量，排查是否有异常调用在刷这些端点。"
+    )
+    try:
+        from app.services import dingtalk
+
+        if await dingtalk.send_markdown(title, text, target="maintainer"):
+            _budget_alert_marks.add(key)  # 仅发送成功才去重，失败下轮可重试
+    except Exception:
+        logger.warning("LLM 预算触顶告警发送失败", exc_info=True)
+
+
+async def assert_llm_budget(db: AsyncSession) -> None:
+    """AI 端点统一预算闸门：日 / 月任一超限 → 触顶告警（当天每档一次）+ 429。
+
+    7 处可触发 LLM 的端点（素材分析 / 创意迁移×3 / 产品画像 / 标签分析）共用此闸门。
+    daily 走 today_cost_usd（三端点汇总，且保留为测试 monkeypatch 入口）；monthly 走
+    llm_budget.month_cost_usd。LLM_MONTHLY_BUDGET_USD=0 则不启用月度门。
+    """
+    from fastapi import HTTPException
+
+    from app.services import llm_budget
+
+    month_cap = settings.LLM_MONTHLY_BUDGET_USD
+    if month_cap:
+        month = await llm_budget.month_cost_usd(db)
+        if month >= month_cap:
+            await _alert_budget_hit("month", month, month_cap)
+            raise HTTPException(
+                status_code=429,
+                detail=f"本月 LLM 预算已用尽（${month:.2f} / ${month_cap:.2f}），下月重试",
+            )
+    day = await today_cost_usd(db)
+    day_cap = settings.LLM_DAILY_BUDGET_USD
+    if day >= day_cap:
+        await _alert_budget_hit("day", day, day_cap)
+        raise HTTPException(
+            status_code=429,
+            detail=f"今日 LLM 预算已用尽（${day:.2f} / ${day_cap:.2f}），明日重试",
+        )
 
 
 async def analyze_material(material_id: int) -> None:

@@ -13,6 +13,13 @@ os.environ["ANTHROPIC_API_KEY"] = ""
 # 本地 backend/.env 配了真实看板址时，digest 会拼「看板定位」深链，污染不 patch
 # 该项的用例（test_newcomer_log）。统一清空给确定基线；需测深链的用例自行 monkeypatch。
 os.environ["DASHBOARD_BASE_URL"] = ""
+# 钉钉 webhook：本地 backend/.env 若配了真 webhook，测试触发的告警（如 LLM 预算触顶）
+# 会真发到运维群（偶发失败源）。测试统一清空 → dingtalk.send_* no-op；需测发送的
+# 用例自行 monkeypatch settings（test_dingtalk_alerts 即如此）。
+os.environ["DINGTALK_WEBHOOK_URL"] = ""
+os.environ["DINGTALK_SECRET"] = ""
+os.environ["DINGTALK_WEBHOOK_URL_LEADER"] = ""
+os.environ["DINGTALK_SECRET_LEADER"] = ""
 
 
 @pytest.fixture(autouse=True)

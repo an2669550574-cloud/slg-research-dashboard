@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
 from app.database import get_db
-from app.config import settings
 from app.models.tag_analysis import TagAnalysisSession, TagAnalysisMessage
 from app.schemas import (
     TagAnalysisRequest, TagAnalysisSessionOut, TagAnalysisMessageOut,
@@ -35,12 +34,7 @@ async def run_analysis(req: TagAnalysisRequest, db: AsyncSession = Depends(get_d
     - 模型须在白名单（sonnet/opus）→ 400
     - 日 LLM 预算超 LLM_DAILY_BUDGET_USD → 429
     """
-    spent = await video_analyze.today_cost_usd(db)
-    if spent >= settings.LLM_DAILY_BUDGET_USD:
-        raise HTTPException(
-            status_code=429,
-            detail=f"今日 LLM 预算已用尽（${spent:.2f} / ${settings.LLM_DAILY_BUDGET_USD:.2f}），明日重试",
-        )
+    await video_analyze.assert_llm_budget(db)
     try:
         session = await tag_analysis.run_turn(
             db,
