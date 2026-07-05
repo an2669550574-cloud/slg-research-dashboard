@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, text
 from typing import Optional, Literal
 from urllib.parse import quote
-from app.config import settings
 from app.database import get_db, utcnow_naive
 from app.models.material import Material, CreativeAdaptation
 from app.schemas import (
@@ -239,12 +238,7 @@ async def analyze_material_endpoint(
     if m.analysis_status == "running":
         raise HTTPException(status_code=409, detail="分析进行中，请稍候")
 
-    spent = await video_analyze.today_cost_usd(db)
-    if spent >= settings.LLM_DAILY_BUDGET_USD:
-        raise HTTPException(
-            status_code=429,
-            detail=f"今日 LLM 预算已用尽（${spent:.2f} / ${settings.LLM_DAILY_BUDGET_USD:.2f}），明日重试"
-        )
+    await video_analyze.assert_llm_budget(db)
 
     m.analysis_status = "running"
     m.analysis_error = None
@@ -357,12 +351,7 @@ async def adapt_directions(
         raise HTTPException(status_code=404, detail="素材不存在")
     if m.analysis_status != "done":
         raise HTTPException(status_code=400, detail="请先完成素材分析（点击 ✨ 分析）")
-    spent = await video_analyze.today_cost_usd(db)
-    if spent >= settings.LLM_DAILY_BUDGET_USD:
-        raise HTTPException(
-            status_code=429,
-            detail=f"今日 LLM 预算已用尽（${spent:.2f} / ${settings.LLM_DAILY_BUDGET_USD:.2f}），明日重试"
-        )
+    await video_analyze.assert_llm_budget(db)
     try:
         result = await creative_adapt.generate_directions(m, req.our_product)
     except ValueError as e:
@@ -398,12 +387,7 @@ async def adapt_script(
         raise HTTPException(status_code=404, detail="素材不存在")
     if m.analysis_status != "done":
         raise HTTPException(status_code=400, detail="请先完成素材分析")
-    spent = await video_analyze.today_cost_usd(db)
-    if spent >= settings.LLM_DAILY_BUDGET_USD:
-        raise HTTPException(
-            status_code=429,
-            detail=f"今日 LLM 预算已用尽（${spent:.2f} / ${settings.LLM_DAILY_BUDGET_USD:.2f}），明日重试"
-        )
+    await video_analyze.assert_llm_budget(db)
     try:
         result = await creative_adapt.generate_script(m, req.our_product, req.direction)
     except ValueError as e:
@@ -494,12 +478,7 @@ async def adapt_unified_directions(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
-    spent = await video_analyze.today_cost_usd(db)
-    if spent >= settings.LLM_DAILY_BUDGET_USD:
-        raise HTTPException(
-            status_code=429,
-            detail=f"今日 LLM 预算已用尽（${spent:.2f} / ${settings.LLM_DAILY_BUDGET_USD:.2f}），明日重试"
-        )
+    await video_analyze.assert_llm_budget(db)
     try:
         result = await creative_adapt.generate_unified_directions(
             materials, req.our_product, req.model
@@ -552,12 +531,7 @@ async def adapt_unified_directions(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
-    spent = await video_analyze.today_cost_usd(db)
-    if spent >= settings.LLM_DAILY_BUDGET_USD:
-        raise HTTPException(
-            status_code=429,
-            detail=f"今日 LLM 预算已用尽（${spent:.2f} / ${settings.LLM_DAILY_BUDGET_USD:.2f}），明日重试"
-        )
+    await video_analyze.assert_llm_budget(db)
     try:
         result = await creative_adapt.generate_unified_directions(
             materials, req.our_product, req.model
