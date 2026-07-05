@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from typing import Optional
@@ -118,3 +119,76 @@ def usage_to_dict(usage_obj) -> dict:
     if hasattr(usage_obj, "to_dict"):
         return usage_obj.to_dict()
     return {}
+
+
+def _escape_stray_quotes(s: str) -> str:
+    """容错修复：转义字符串值内**未转义的英文双引号**——LLM 引用素材文案（如
+    `对比"兄弟"和"女友"建的庇护所`）时最常见的坏 JSON 成因。
+
+    只在 json.loads 首次失败后调用（合法 JSON 永不进这里）。启发式：扫描时跟踪
+    「是否在字符串内」，串内遇到 `"` 就前看下一个非空白字符——若是结构分隔符
+    （`,` `}` `]` `:`）判定为真正的收尾引号；否则判为游离引号、转义成 `\\"`。
+    覆盖描述性中文里内嵌引号的主流坏样本；引号紧贴分隔符的歧义样本无法完美还原，
+    但作为兜底最坏也只是仍解析失败（不比不修复更糟）。
+    """
+    out: list[str] = []
+    in_str = False
+    i, n = 0, len(s)
+    while i < n:
+        c = s[i]
+        if not in_str:
+            out.append(c)
+            if c == '"':
+                in_str = True
+            i += 1
+            continue
+        # 字符串内部
+        if c == "\\" and i + 1 < n:            # 已转义序列：整对原样保留
+            out.append(c)
+            out.append(s[i + 1])
+            i += 2
+            continue
+        if c == '"':
+            j = i + 1
+            while j < n and s[j] in " \t\r\n":
+                j += 1
+            if j >= n or s[j] in ",}]:":       # 后接结构分隔符 → 真正收尾
+                out.append('"')
+                in_str = False
+            else:                              # 游离引号 → 转义
+                out.append('\\"')
+            i += 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def parse_llm_json(text: str) -> dict:
+    """从 LLM 响应里稳健地解析出 JSON 对象，容忍常见脏输出：```json``` 围栏、
+    前后解释文字、字符串内未转义的英文双引号、以及串内裸控制字符（strict=False）。
+
+    仍无法解析时抛 json.JSONDecodeError（它是 ValueError 子类）——由各 caller 的
+    `except json.JSONDecodeError` 兜成 status=failed，保留原始错误信息便于诊断。
+    """
+    text = text.strip()
+    if text.startswith("```"):
+        # 剥 ```json ... ``` / ``` ... ```
+        text = text.strip("`")
+        if text.lower().startswith("json"):
+            text = text[4:]
+        text = text.strip().rstrip("`").strip()
+    # 兜底：截取第一个 { 到最后一个 } 之间（剥掉前后缀解释文字）
+    if not text.startswith("{"):
+        s = text.find("{")
+        e = text.rfind("}")
+        if s >= 0 and e > s:
+            text = text[s : e + 1]
+    try:
+        return json.loads(text, strict=False)
+    except json.JSONDecodeError as first_err:
+        # 兜底修复游离引号后再试一次；仍失败则抛**原始**错误（列号对得上原文）
+        try:
+            return json.loads(_escape_stray_quotes(text), strict=False)
+        except json.JSONDecodeError:
+            raise first_err
