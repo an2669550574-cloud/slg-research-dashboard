@@ -33,7 +33,7 @@ export function useMaterialAnalysis(opts: {
   const current = (detail.data ?? material ?? undefined) as MaterialOut | undefined
 
   const analyzeMut = useMutation({
-    mutationFn: () => materialsApi.analyze(id!),
+    mutationFn: (model?: string) => materialsApi.analyze(id!, model),
     onSuccess: (m) => {
       qc.setQueryData(['material', id], m)
       qc.invalidateQueries({ queryKey: ['materials'] })
@@ -73,11 +73,13 @@ export function MaterialAnalysisBody({
   status: string
   isRunning: boolean
   seekTo: (ts: number) => void
-  onAnalyze: () => void
+  onAnalyze: (model: string) => void
   onAdopt: () => void
   analyzeDisabled: boolean
   adoptDisabled: boolean
 }) {
+  // 下次分析用的模型（默认 sonnet，可升 opus）。与已分析的 current.analysis_model 无关。
+  const [selModel, setSelModel] = useState<string>(ANALYZE_MODELS[0].value)
   return (
     <div className="space-y-5">
       {/* ── 状态条 ── */}
@@ -88,8 +90,10 @@ export function MaterialAnalysisBody({
         cost={current.analysis_cost_usd}
         model={current.analysis_model}
         analyzedAt={current.analyzed_at}
-        onAnalyze={onAnalyze}
+        onAnalyze={() => onAnalyze(selModel)}
         disabled={analyzeDisabled}
+        selModel={selModel}
+        setSelModel={setSelModel}
       />
 
       {/* ── Brief ── */}
@@ -213,12 +217,31 @@ function Section({ title, children, action }: { title: string; children: React.R
   )
 }
 
+const ANALYZE_MODELS = [
+  { value: 'claude-sonnet-4.5', label: 'Sonnet · 默认（快 · 省 ~$0.04）' },
+  { value: 'claude-opus-4.7', label: 'Opus · 更强（更细 · 更贵）' },
+] as const
+
+/** 下次分析用的模型选择器（对齐创意迁移的白名单：sonnet / opus）。 */
+function ModelSelect({ value, onChange, disabled }: {
+  value: string; onChange: (m: string) => void; disabled: boolean
+}) {
+  return (
+    <select value={value} onChange={e => onChange(e.target.value)} disabled={disabled}
+      title="选择本次分析使用的模型"
+      className="bg-elevated border border-default rounded-md px-2 py-1.5 text-[11px] text-primary focus:outline-none focus:border-accent disabled:opacity-50">
+      {ANALYZE_MODELS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+    </select>
+  )
+}
+
 function StatusBlock({
-  status, running, error, cost, model, analyzedAt, onAnalyze, disabled,
+  status, running, error, cost, model, analyzedAt, onAnalyze, disabled, selModel, setSelModel,
 }: {
   status: string; running: boolean; error: string | null
   cost: number | null; model: string | null; analyzedAt: string | null
   onAnalyze: () => void; disabled: boolean
+  selModel: string; setSelModel: (m: string) => void
 }) {
   if (running) {
     return (
@@ -239,10 +262,13 @@ function StatusBlock({
           <div className="text-sm text-primary">分析失败</div>
         </div>
         {error && <div className="text-xs text-secondary mb-3 break-words">{error}</div>}
-        <button onClick={onAnalyze} disabled={disabled}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-accent hover:brightness-110 disabled:opacity-50 text-xs font-semibold text-white">
-          <RefreshCw size={12} /> 重试
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <ModelSelect value={selModel} onChange={setSelModel} disabled={disabled} />
+          <button onClick={onAnalyze} disabled={disabled}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-accent hover:brightness-110 disabled:opacity-50 text-xs font-semibold text-white">
+            <RefreshCw size={12} /> 重试
+          </button>
+        </div>
       </div>
     )
   }
@@ -251,11 +277,14 @@ function StatusBlock({
       <div className="rounded-lg border border-default bg-elevated/30 px-4 py-3">
         <div className="flex items-center justify-between gap-2 mb-1.5">
           <div className="eyebrow text-emerald-400">已分析</div>
-          <button onClick={onAnalyze} disabled={disabled}
-            title="重新分析（会重新消耗 LLM 预算）"
-            className="flex items-center gap-1 text-[11px] text-muted hover:text-primary">
-            <RefreshCw size={11} /> 重新分析
-          </button>
+          <div className="flex items-center gap-2">
+            <ModelSelect value={selModel} onChange={setSelModel} disabled={disabled} />
+            <button onClick={onAnalyze} disabled={disabled}
+              title="重新分析（会重新消耗 LLM 预算）"
+              className="flex items-center gap-1 text-[11px] text-muted hover:text-primary">
+              <RefreshCw size={11} /> 重新分析
+            </button>
+          </div>
         </div>
         <div className="font-data text-[11px] text-muted space-y-0.5">
           {analyzedAt && <div>时间：{new Date(analyzedAt).toLocaleString()}</div>}
@@ -269,11 +298,14 @@ function StatusBlock({
   return (
     <div className="rounded-lg border border-dashed border-default bg-elevated/20 px-4 py-4 text-center">
       <Sparkles size={20} className="text-muted mx-auto mb-2" />
-      <p className="text-sm text-secondary mb-3">尚未分析。点击下方按钮触发 LLM 视频分析。</p>
-      <button onClick={onAnalyze} disabled={disabled}
-        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md bg-accent hover:brightness-110 disabled:opacity-50 text-sm font-semibold text-white">
-        <Sparkles size={14} /> 开始分析
-      </button>
+      <p className="text-sm text-secondary mb-3">尚未分析。选择模型并点击下方按钮触发 LLM 视频分析。</p>
+      <div className="flex items-center justify-center gap-2 flex-wrap">
+        <ModelSelect value={selModel} onChange={setSelModel} disabled={disabled} />
+        <button onClick={onAnalyze} disabled={disabled}
+          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md bg-accent hover:brightness-110 disabled:opacity-50 text-sm font-semibold text-white">
+          <Sparkles size={14} /> 开始分析
+        </button>
+      </div>
     </div>
   )
 }
