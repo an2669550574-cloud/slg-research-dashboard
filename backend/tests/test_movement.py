@@ -46,15 +46,16 @@ async def test_new_entrant_fires_single_alert(client, caplog):
 @pytest.mark.asyncio
 async def test_surge_within_topn(client, caplog):
     from app.services.movement import detect_and_alert_movement
-    await _seed("2026-05-15", [("a", 18, None, SLG_PUB)])
-    await _seed("2026-05-16", [("a", 3, None, SLG_PUB)])  # 18->3，升15 ≥ 阈值10
+    # 昨日 #14 仍在 TopN(15) 内 → 今日 #14→#3 判窜升；若昨日 #16(>TopN) 则应判 new_entrant。
+    await _seed("2026-05-15", [("a", 14, None, SLG_PUB)])
+    await _seed("2026-05-16", [("a", 3, None, SLG_PUB)])  # 14->3，升11 ≥ 阈值10
 
     with caplog.at_level(logging.INFO, logger="app.services.movement"):
         s = await detect_and_alert_movement("US", "ios", "2026-05-16")
 
     assert len(s["surges"]) == 1
     assert s["surges"][0]["name"] == "a"
-    assert s["surges"][0]["prev_rank"] == 18 and s["surges"][0]["cur_rank"] == 3
+    assert s["surges"][0]["prev_rank"] == 14 and s["surges"][0]["cur_rank"] == 3
     assert not s["new_entrants"]
     assert len(_errors(caplog)) == 1
 
@@ -227,7 +228,7 @@ async def test_reentry_window_zero_disables(client, monkeypatch):
 async def test_reentry_only_counts_topn_history(client):
     """窗口内只在榜尾(>TopN)出现过、从未进 TopN → 仍是真首发，不误标回归。"""
     from app.services.movement import detect_movement
-    await _seed("2026-05-10", [("a", 1, None, SLG_PUB), ("climber", 35, None, SLG_PUB)])  # 35>topn(20)
+    await _seed("2026-05-10", [("a", 1, None, SLG_PUB), ("climber", 35, None, SLG_PUB)])  # 35>topn(15)
     await _seed("2026-05-15", [("a", 1, None, SLG_PUB)])
     await _seed("2026-05-16", [("a", 1, None, SLG_PUB), ("climber", 6, None, SLG_PUB)])   # 首进 TopN
     s = await detect_movement("US", "ios", "2026-05-16")
@@ -236,7 +237,7 @@ async def test_reentry_only_counts_topn_history(client):
 
 
 # ── 连涨趋势（sustained climb）：补 surge 单日阈值盲区，多日稳步累计爬升 ──
-# 默认 win=5 / min_drop=10 / climb_topn=40 / min_snaps=3 / RANK_JUMP=10。
+# 默认 win=5 / min_drop=10 / climb_topn=30 / min_snaps=3 / RANK_JUMP=10。
 # 稳定锚（anchor #1 每天）避免 today_missing 稀疏闸门，且自身 net=0 不误报连涨。
 
 async def _seed_days(app_id, day_rank, publisher=SLG_PUB, country="US", platform="ios"):
@@ -258,7 +259,7 @@ async def test_sustained_climb_detected(client):
     assert "wao" in cl, "稳步连涨应命中"
     assert cl["wao"]["start_rank"] == 40 and cl["wao"]["cur_rank"] == 28
     assert cl["wao"]["span_days"] == 5 and cl["wao"]["start_date"] == "2026-05-12"
-    # 单日够不到阈值 → 不该同时被 surge/new_entrant 报（今日 #28>TopN20 也不在两段）
+    # 单日够不到阈值 → 不该同时被 surge/new_entrant 报（今日 #28>TopN15 也不在两段）
     assert [e["name"] for e in s["surges"]] == []
     assert "wao" not in {e["name"] for e in s["new_entrants"]}
 
@@ -277,10 +278,12 @@ async def test_climb_excludes_single_day_surge(client):
 @pytest.mark.asyncio
 async def test_climb_excludes_faded_peak(client):
     """曾爬到高位又回落（今日非窗口新高）→ 不算「正在连涨」。
-    #45→#30→#28→#26→#33：累计升 12≥阈值，但今日 #33 > 窗口最好 #26 → 排除。"""
+    #40→#33→#27→#30：累计升 10≥阈值、今日 #30≤climb_topn(30) 进候选、无单日 surge，
+    但今日 #30 > 窗口最好 #27 → 走 faded-peak 分支排除（今日名次刻意压在 climb_topn 内，
+    确保是 faded 逻辑而非 topn 闸门把它挡掉）。"""
     from app.services.movement import detect_movement
-    await _seed_days("fade", {"2026-05-12": 45, "2026-05-13": 30, "2026-05-14": 28,
-                              "2026-05-15": 26, "2026-05-16": 33})
+    await _seed_days("fade", {"2026-05-13": 40, "2026-05-14": 33,
+                              "2026-05-15": 27, "2026-05-16": 30})
     s = await detect_movement("US", "ios", "2026-05-16")
     assert [e["name"] for e in s["climbs"]] == [], "回落中的不算连涨"
 
@@ -299,15 +302,15 @@ async def test_climb_excludes_vshape_recovery(client):
 
 @pytest.mark.asyncio
 async def test_climb_allows_dip_above_start(client):
-    """真实样本 Z Route 式：内部有小抖动（#42→#45）但始终 ≤ 起点 #51 → 仍算稳步连涨。
-    起点即窗口最差、今日新高、无单日 surge。"""
+    """真实样本 Z Route 式：内部有小抖动（#32→#36）但始终 ≤ 起点 #40 → 仍算稳步连涨。
+    起点即窗口最差、今日 #30≤climb_topn(30) 且为窗口新高、无单日 surge。"""
     from app.services.movement import detect_movement
-    await _seed_days("zroute", {"2026-05-11": 51, "2026-05-12": 42, "2026-05-13": 45,
-                                "2026-05-14": 45, "2026-05-15": 42, "2026-05-16": 40})
+    await _seed_days("zroute", {"2026-05-12": 40, "2026-05-13": 32, "2026-05-14": 36,
+                                "2026-05-15": 33, "2026-05-16": 30})
     s = await detect_movement("US", "ios", "2026-05-16")
     cl = {e["name"]: e for e in s["climbs"]}
     assert "zroute" in cl, "起点内小抖动但不跌破起点 → 仍是连涨"
-    assert cl["zroute"]["start_rank"] == 51 and cl["zroute"]["cur_rank"] == 40
+    assert cl["zroute"]["start_rank"] == 40 and cl["zroute"]["cur_rank"] == 30
 
 
 @pytest.mark.asyncio
@@ -342,8 +345,8 @@ async def test_climb_non_slg_ignored(client):
 
 @pytest.mark.asyncio
 async def test_climb_beyond_topn_ignored(client):
-    """今日名次 > climb_topn(40) → 榜尾长尾，不报（真新高但太靠后无监控价值）。
-    #60→#58→#55→#52→#48：稳步、累计升 12，但今日 #48>40。"""
+    """今日名次 > climb_topn(30) → 榜尾长尾，不报（真新高但太靠后无监控价值）。
+    #60→#58→#55→#52→#48：稳步、累计升 12，但今日 #48>30。"""
     from app.services.movement import detect_movement
     await _seed_days("tail", {"2026-05-12": 60, "2026-05-13": 58, "2026-05-14": 55,
                               "2026-05-15": 52, "2026-05-16": 48})

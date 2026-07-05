@@ -138,7 +138,12 @@ class Settings(BaseSettings):
     # 只在定时任务路径触发，手动刷新不告警，避免刷屏。
     COMPETITOR_ALERT_ENABLED: bool = True
     # 只关注 TopN 内的异动；榜尾对竞品监控无意义，且收入仅 Top20 有值。
-    COMPETITOR_ALERT_TOPN: int = 20
+    # 2026-07-05 由 20→15 收紧减量：只盯更靠头部的竞品进退，砍掉 #16–20 的中段抖动。
+    # 空降/窜升/跌出/收入异动四类 + 回归门控候选集**共用此单一闸门**（movement.py:115 的
+    # `r.rank > topn` 一处 continue 同时门控四类）——故**收入异动也随之收窄到 Top15**：#16–20
+    # 的收入异动不再单列（有意减量，非漏报；那本就是中段、领导关注度低）。注：revenue 值 ST 只
+    # 供到 Top20，Top15 落其内数据仍完整。展示层 DIGEST_MOVEMENT_TOPN 另有上限，两层独立。
+    COMPETITOR_ALERT_TOPN: int = 15
     # 名次环比变化 ≥ 该值才算「窜升/暴跌」，过滤日常抖动。
     COMPETITOR_RANK_JUMP: int = 10
     # 收入环比 |变化%| ≥ 该值才报（两日都需有收入数据）。
@@ -163,9 +168,11 @@ class Settings(BaseSettings):
     # ≥10=surge；多日累计 ≥10 且无单日 surge=连涨。真实校准：10 抓到 War and Order + Z Route
     # 两例稳步爬（20 天 2 例，高信号低噪），12 只剩 1 例。
     COMPETITOR_CLIMB_MIN_DROP: int = 10
-    # 今日名次 ≤ 该值才纳入连涨候选。刻意比 surge 的 TopN(20) 宽——US/iOS top20 被头部 SLG
-    # 霸榜极稳，真正的稳步爬升发生在中段向上（#40→#28），top20 内几乎无连涨信号。
-    COMPETITOR_CLIMB_TOPN: int = 40
+    # 今日名次 ≤ 该值才纳入连涨候选。刻意比 surge 的 TopN(15) 宽——US/iOS 头部被 SLG 霸榜极稳，
+    # 真正的稳步爬升发生在中段向上（#40→#28），头部内几乎无连涨信号。2026-07-05 由 40→30
+    # 随主 TopN 一并收紧减量：连涨也只关注爬进 Top30 的中段动量，砍掉 #31–40 的深尾长爬
+    # （War and Order #40→#28 这类经典样本今日 ≤30 仍能命中）。
+    COMPETITOR_CLIMB_TOPN: int = 30
     # 窗口内至少 N 个快照才判连涨（baseline 充分性）。< N = 数据太稀疏（次市场/冷启动），
     # 跳过不误报。日更市场 5 天窗口天然满足，双周市场天然不足 → 结构性只对日更市场生效。
     COMPETITOR_CLIMB_MIN_SNAPSHOTS: int = 3
