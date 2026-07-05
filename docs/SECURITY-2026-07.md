@@ -151,12 +151,12 @@ P0-1（Caddy 认证，当天，收益最大）
 
 | 项 | 状态 | 备注 |
 |---|---|---|
-| P0-1 Caddy 认证 | ⬜ **待做（需你）** | 依赖钉钉 webview 真机验证（§七 #3）——我做不了 |
+| P0-1 Caddy 认证 | ❌ **决定不做**（2026-07-05 用户裁定） | 受众内部、权衡取舍不设访客登录。**前提知情**：站点仍公网可发现（CT 日志 + nip.io 域名即 IP），「内部用」是意图非访问边界；防线转由限流 + #194 成本护栏兜底 |
 | P0-2 fail-closed | ✅ **已发现早已实现** | `main.py:24-31` 启动即对 prod 无 API_KEY 抛 `RuntimeError` 拒起；security.py 的 per-request skip 仅 mock 模式可达。**剩 ADMIN_DELETE 无启动闸**（低优先，在 API_KEY 墙后） |
 | P0-3 LLM 成本护栏 | ✅ **本次落地**（`feat/llm-budget-hardening`） | 拆记账漏洞修复 + 月封顶 + 触顶告警 + 日预算调低。见 §八 |
 | P0-4 全局限流 | ✅ **已发现早已配** | prod `RATE_LIMIT_DEFAULT=120/minute` + config `RATE_LIMIT_AI_SYNC=10/hour`。剩「AI 端点单独更严限流」但已被 P0-3 预算闸门覆盖，降级为可选 |
-| P1-1 key 移出 bundle | ⬜ **待做（需决策）** | 与 P0-1 重叠；P0-1 上后可降级为纯轮换 |
-| P1-2 真域名 + Cloudflare | ⬜ **待做（需你）** | 需你注册域名 + 配 DNS——我做不了 |
+| P1-1 key 移出 bundle | ❌ **决定不做**（随 P0-1） | 本质也是登录/认证范畴；不设门则 key 是否在 bundle 意义有限 |
+| P1-2 真域名 + Cloudflare | ⬜ **待你启动（与登录无关）** | 独立价值：隐藏源站 IP + 顺带治钉钉手机端白屏（[[project_dashboard_mobile_reachability]]，用户原「暂不修」）。需你注册域名 + 配 DNS。runbook 现成 |
 | P1-3 媒体签名解耦 | ✅ **本次落地**（`feat/media-signing-decouple`） | `MEDIA_SIGNING_SECRET` 独立密钥，见 §八 |
 | P2 审计日志 / 按人 key / CSP | ⬜ 缓 | 视 P0/P1 后剩余风险；Caddy 已有 Security header 段，CSP 可增量 |
 
@@ -181,4 +181,5 @@ P0-1（Caddy 认证，当天，收益最大）
 - **`feat/media-signing-decouple`**（1 commit，pytest ✓）：`MEDIA_SIGNING_SECRET` 独立密钥，`media._secret()` 优先读它、未配回退 API_KEY。后端签 URL、前端不碰密钥 → **零前端改动**；旧链接 TTL 6h 内自动重签。
 - **`docs/security-hardening-plan`**：本文件。
 - **部署注意**：三分支均**零迁移纯代码**，回滚走纯代码。`LLM_*` / `MEDIA_SIGNING_SECRET` 改后须 `compose --env-file .env up -d backend` 重读。prod 若配 `MEDIA_SIGNING_SECRET`，开着页面的用户媒体 URL 会在下次列表刷新（≤6h）自动重签，无需干预。
-- **待你决策/操作**：P0-1 Caddy basic_auth（需钉钉真机验证）、P1-2 买域名 + Cloudflare（需注册/DNS）、P1-1 前端 key 运行时化（看 P0-1 体感）。**P0-1 + P1-2 的可套用 diff + step-by-step + 真机验证 + 回滚见配套手册 [`SECURITY-CADDY-DOMAIN.md`](SECURITY-CADDY-DOMAIN.md)**。
+- **认证决定不做（2026-07-05 用户裁定）**：P0-1 Caddy basic_auth / P0-1b 门页 / P1-1 前端 key 运行时化全部**不做**——受众内部、权衡取舍不设访客登录。**知情前提**：站点仍公网可发现（CT + nip.io 域名即 IP），不设门 = 接受调研数据/素材对发现者可见；「成本不可控」由 #194 成本护栏 + 限流 120/min 兜底（正因不设门，这层更关键）。
+- **仍待你启动（与登录无关）**：P1-2 买域名 + Cloudflare——隐藏源站 IP + 顺带治钉钉手机端白屏。可套用 diff + step-by-step + 回滚见配套手册 [`SECURITY-CADDY-DOMAIN.md`](SECURITY-CADDY-DOMAIN.md) Part B（Part A 的 Caddy 认证按上条不做）。
