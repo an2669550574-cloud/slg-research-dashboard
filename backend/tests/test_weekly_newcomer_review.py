@@ -31,14 +31,14 @@ async def _seed_ranks(app_id, points, country="US", platform="ios", chart_type="
 
 
 async def _seed_log(app_id, name, rank, publisher, detected_days_ago, as_of,
-                    country="US", platform="ios"):
+                    country="US", platform="ios", subgenre_cn=None):
     database = _live("app.database")
     MarketNewcomerLog = _live("app.models.newcomer").MarketNewcomerLog
     now = database.utcnow_naive()
     async with database.AsyncSessionLocal() as db:
         db.add(MarketNewcomerLog(
             country=country, platform=platform, app_id=app_id, chart_type="grossing",
-            as_of=as_of, rank=rank, name=name, publisher=publisher,
+            as_of=as_of, rank=rank, name=name, publisher=publisher, subgenre_cn=subgenre_cn,
             first_detected_at=now - timedelta(days=detected_days_ago)))
         await db.commit()
 
@@ -54,9 +54,9 @@ async def test_weekly_review_layers_climbing_dropped(client):
     now = _live("app.database").utcnow_naive()
     d5, d3, d1 = _dates(now, [5, 3, 1])  # 三个近日快照
 
-    # 起飞：检出 #60 → 现 #40（accumulate ↑20）
+    # 起飞：检出 #60 → 现 #40（accumulate ↑20）；带中文子品类，验可读性标签
     await _seed_ranks("riser", [(d5, 60), (d3, 50), (d1, 40)])
-    await _seed_log("riser", "起飞新品", 60, SLG_PUB, 5, d5)
+    await _seed_log("riser", "起飞新品", 60, SLG_PUB, 5, d5, subgenre_cn="数字门SLG")
     # 掉榜：检出 #45、d3 还在 #48，d1 消失（combo 最新 d1 无它）
     await _seed_ranks("faded", [(d5, 45), (d3, 48)])
     await _seed_log("faded", "掉榜新品", 45, SLG_PUB, 5, d5)
@@ -77,8 +77,10 @@ async def test_weekly_review_layers_climbing_dropped(client):
     assert "起飞新品" in text and "🚀 起飞" in text
     assert "掉榜新品" in text and "✝️ 已掉榜" in text
     assert "非SLG新品" not in text
-    # 起飞明细带「检出 #60 → 现 #40」
-    assert "检出 #60 → 现 **#40**" in text
+    # 起飞明细：白话排名「#60 → **#40**，X 天涨 20 名」+ 中文子品类标签 + 卡片说明句
+    assert "#60 → **#40**" in text and "涨 20 名" in text
+    assert "· 数字门SLG" in text
+    assert "畅销榜排名" in text
 
 
 @pytest.mark.asyncio
