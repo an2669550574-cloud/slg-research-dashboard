@@ -748,10 +748,10 @@ def build_industry_lines(articles: list, cap: int) -> list[str]:
 
 async def _recent_radar_arrivals(days: int, cap: int = 8) -> list[dict]:
     """商店雷达近 days 天的非基线新上架（publisher_itunes_apps，零 ST）→ 紧凑 dict 列表。
-    平淡日维护者卡兜底段用；按 first_seen_at 倒序、封顶 cap。_platform_tag/_sf_text 在下方
-    「应用商店雷达」节定义（模块级，call-time 解析，前引无碍）。"""
+    平淡日维护者卡兜底段用；按 first_seen_at 倒序、封顶 cap。_platform_tag/_sf_text/
+    _radar_store_country 在下方「应用商店雷达」节定义（模块级，call-time 解析，前引无碍）。"""
     from datetime import timedelta
-    from app.models.newcomer import MarketNewcomerLog
+    from app.models.newcomer import MarketNewcomerLog, NewcomerVideo
     cutoff = utcnow_naive() - timedelta(days=days)
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(
@@ -762,9 +762,11 @@ async def _recent_radar_arrivals(days: int, cap: int = 8) -> list[dict]:
             .order_by(PublisherItunesApp.first_seen_at.desc())
             .limit(cap)
         )).all()
-        # P1-1：这些雷达新上架若已写影子行并被中文化，带上 📝 摘要（track_id ≡ app_id）。
+        # P1-1：这些雷达新上架若已写影子行并被中文化 / 搜到实机视频，带上 📝 摘要 + 🎬 视频
+        # （track_id ≡ 影子行 app_id ≡ NewcomerVideo.app_id）。
         track_ids = [app.track_id for app, _ in rows if app.track_id]
         summaries: dict[str, str] = {}
+        videos: dict[str, dict] = {}
         if track_ids:
             for aid, sc in (await db.execute(
                 select(MarketNewcomerLog.app_id, MarketNewcomerLog.summary_cn).where(
@@ -772,23 +774,52 @@ async def _recent_radar_arrivals(days: int, cap: int = 8) -> list[dict]:
                     MarketNewcomerLog.summary_cn.is_not(None))
             )).all():
                 summaries.setdefault(aid, sc)
+            for v in (await db.execute(
+                select(NewcomerVideo)
+                .where(NewcomerVideo.app_id.in_(track_ids),
+                       NewcomerVideo.hidden_at.is_(None))
+                .order_by(NewcomerVideo.app_id, NewcomerVideo.rank.is_(None),
+                          NewcomerVideo.rank, NewcomerVideo.id)
+            )).scalars().all():
+                slot = videos.setdefault(v.app_id, {"count": 0, "url": None})
+                slot["count"] += 1
+                if slot["url"] is None and v.url:
+                    slot["url"] = v.url
     return [{"name": app.name, "entity": entity_name, "platform_tag": _platform_tag(app),
              "genre": app.genre or "", "sf": _sf_text(app),
-             "summary": summaries.get(app.track_id)} for app, entity_name in rows]
+             "app_id": app.track_id,
+             "platform": "android" if (app.storefronts or "") == "gp" else "ios",
+             "country": _radar_store_country(app),
+             "summary": summaries.get(app.track_id),
+             "video": videos.get(app.track_id)} for app, entity_name in rows]
 
 
 def build_radar_recent_lines(items: list[dict], cap: int) -> list[str]:
     """商店雷达近期新上架 → 紧凑行（平淡日维护者卡兜底段）。是厂商开发者账号清单 diff 的
     catch，非我方 tracked 竞品排名动态，故独立段 + 明确标注。"""
+    videos = {it["app_id"]: it["video"]
+              for it in items if it.get("app_id") and it.get("video")}
     out: list[str] = []
     for it in items[:cap]:
         genre = f" · {it['genre']}" if it.get("genre") else ""
         line = (f"🛒 **{_md_name(it['name'])}** — {_md_name(it['entity'])}"
                 f"（{it['platform_tag']}）{genre}{it.get('sf') or ''}")
+        parts = [line]
         # P1-1：软启动新品已中文化则补一句话 📝 摘要（雷达段此前只有裸名+区）。
         if it.get("summary"):
-            line = _block([line, f"📝 {_md_name(it['summary'], maxlen=60)}"])
-        out.append(line)
+            parts.append(f"📝 {_md_name(it['summary'], maxlen=60)}")
+        # 商店页直达（iOS 数字 id → App Store / GP 包名 → Google Play）+ 实机视频动作行，
+        # 与新品行同款；雷达影子行不进看板新品网格，故详情页入口只能是真商店链接。
+        # 💻 = 外网、手机端受限，走底部图例。
+        aid = it.get("app_id") or ""
+        segs = []
+        if (url := _store_url(aid, it.get("country") or "us", it.get("platform") or "")):
+            segs.append(f"💻 [商店页]({url})")
+        if (vseg := _video_seg(videos, aid)):
+            segs.append(vseg)
+        if segs:
+            parts.append(" · ".join(segs))
+        out.append(_block(parts))
     return out
 
 
@@ -1784,6 +1815,15 @@ def _platform_tag(app) -> str:
     # 不等于美区在架；iOS 侧由 itunes country 参数硬过滤，真实可见区由 _sf_text 输出
     # （可见区 US / ⚠️ 仅 JP 可见），此处不重复。
     return "🤖 Google Play · 美区视角" if (app.storefronts or "") == "gp" else "🍎 App Store"
+
+
+def _radar_store_country(app) -> str:
+    """iOS 商店链接的地区路径：优先 us，否则首个可见 storefront（软启动区，避免 us 路径 404）。
+    GP 行 storefronts=='gp' → 无地区意义，_store_url 安卓分支忽略 country。"""
+    sfs = [s for s in (app.storefronts or "").split(",") if s and s != "gp"]
+    if "us" in sfs:
+        return "us"
+    return sfs[0] if sfs else "us"
 
 
 def build_appstore_digest(
