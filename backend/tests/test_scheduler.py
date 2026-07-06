@@ -180,6 +180,74 @@ def test_combo_due_primary_and_secondary_use_own_intervals(monkeypatch):
     assert not all(scheduler._combo_due_today("JP", "ios", d) for d in days)
 
 
+# ── 次市场错峰同步（stagger）：把双周次市场从「全挤同一天」摊到窗口内不同天 ──
+
+_STAGGER_COMBOS = "US:ios,JP:ios,JP:android,KR:ios,KR:android,DE:ios,DE:android,RU:ios,RU:android"
+
+
+def _use_stagger_combos(monkeypatch, enabled=True):
+    from app.config import settings
+    monkeypatch.setattr(settings, "SYNC_RANKING_COMBOS", _STAGGER_COMBOS)
+    monkeypatch.setattr(settings, "SYNC_RANKING_COMBOS_PRIMARY", "US:ios")
+    monkeypatch.setattr(settings, "SYNC_SECONDARY_INTERVAL_DAYS", 14)
+    monkeypatch.setattr(settings, "SYNC_SECONDARY_STAGGER", enabled)
+
+
+def test_secondary_stagger_first_country_phase_zero(monkeypatch):
+    """第一个次市场国家 phase=0（与未错峰旧行为对齐，兼容既有 cadence 测试）。"""
+    from app import scheduler
+    _use_stagger_combos(monkeypatch)
+    assert scheduler._secondary_stagger_offset("JP", 14) == 0
+
+
+def test_secondary_stagger_countries_spread_across_window(monkeypatch):
+    """四个次市场国家均匀铺在双周窗口内不同天：JP@0 / KR@3 / DE@7 / RU@10。"""
+    from app import scheduler
+    _use_stagger_combos(monkeypatch)
+    offs = {c: scheduler._secondary_stagger_offset(c, 14) for c in ("JP", "KR", "DE", "RU")}
+    assert offs == {"JP": 0, "KR": 3, "DE": 7, "RU": 10}
+    # 四国在 14 天窗口内的首个到点日各不相同 → 不再同一天「全有/全没」。
+    d0 = date(2026, 6, 1)
+    firsts = {c: next(i for i in range(14)
+                      if scheduler._combo_due_today(c, "ios", d0 + timedelta(days=i)))
+              for c in ("JP", "KR", "DE", "RU")}
+    assert len(set(firsts.values())) == 4
+
+
+def test_secondary_stagger_same_country_both_platforms_same_day(monkeypatch):
+    """同一国家的 ios/android 同天同步（该国当日市场全景，不拆成两天）。"""
+    from app import scheduler
+    _use_stagger_combos(monkeypatch)
+    d0 = date(2026, 6, 1)
+    for i in range(14):
+        d = d0 + timedelta(days=i)
+        assert (scheduler._combo_due_today("KR", "ios", d)
+                == scheduler._combo_due_today("KR", "android", d))
+
+
+def test_secondary_stagger_preserves_frequency(monkeypatch):
+    """错峰不改频率：每个次市场国家在任意连续 interval 天内仍恰好到点一次（零额外 ST 配额）。"""
+    from app import scheduler
+    _use_stagger_combos(monkeypatch)
+    d0 = date(2026, 6, 1)
+    for c in ("JP", "KR", "DE", "RU"):
+        window = [scheduler._combo_due_today(c, "ios", d0 + timedelta(days=i)) for i in range(14)]
+        assert sum(window) == 1, f"{c} 应每 14 天恰好同步一次"
+
+
+def test_secondary_stagger_disabled_falls_back_to_same_day(monkeypatch):
+    """开关关闭：offset 恒 0，退回旧行为——四国同一天全部到点或全部不到点。"""
+    from app import scheduler
+    _use_stagger_combos(monkeypatch, enabled=False)
+    for c in ("JP", "KR", "DE", "RU"):
+        assert scheduler._secondary_stagger_offset(c, 14) == 0
+    d0 = date(2026, 6, 1)
+    for i in range(14):
+        d = d0 + timedelta(days=i)
+        due = {scheduler._combo_due_today(c, "ios", d) for c in ("JP", "KR", "DE", "RU")}
+        assert len(due) == 1, "关错峰后四国应同天到点"
+
+
 def _date_with_parity(interval: int, due: bool) -> date:
     """找一个对 interval 取模"到点/不到点"符合 due 的日期，避免硬编码 ordinal。"""
     d = date(2026, 6, 1)

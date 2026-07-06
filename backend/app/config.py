@@ -106,6 +106,15 @@ class Settings(BaseSettings):
     # 用量：US 2组×每日 ≈ 61/月 + JP/KR 4组×月 ≈ 4/月 ≈ 65/月拉榜。
     SYNC_PRIMARY_INTERVAL_DAYS: int = 1
     SYNC_SECONDARY_INTERVAL_DAYS: int = 30
+    # 次市场「错峰同步」：默认所有次市场按 SECONDARY 间隔取同一个模，会**全挤在同一天**
+    # 同步（真实事故：JP/KR/DE/RU 双周同步全在 07-05 那天，其余 13 天 digest 只剩 US、
+    # movement「只有美国」）。开启后给每个次市场国家一个相位偏移，把它们摊到 interval
+    # 窗口内不同天——同一国家的 ios/android 同天（该国当日市场全景），不同国家均匀铺开
+    # （14 天 / 4 国 → JP@0 / KR@3 / DE@7 / RU@10）。**每国仍每 interval 天同步一次、
+    # 总频率不变 → 零额外 ST 配额**，只是让日常 digest 每隔几天轮到一个国家的异动，而非
+    # 双周一次「全有/全没」。相位随 SYNC_RANKING_COMBOS 出现序确定（纯函数、跨重启一致），
+    # 第一个次市场国家 phase=0（与未错峰行为对齐）。False = 退回旧的全挤同一天。
+    SYNC_SECONDARY_STAGGER: bool = True
     # 日榜销量(下载/收入)抓取间隔（天）。ST 销量估算本身 T-1/T-2、日间波动小。
     # 非抓取日榜行 dl/rev 落 NULL（库内诚实），日榜读路径用该 app 上次已知值
     # 兜底显示，详情页趋势自然退化成稀疏数据点。
