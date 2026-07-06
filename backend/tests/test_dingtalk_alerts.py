@@ -1223,6 +1223,31 @@ def test_radar_recent_lines_render():
     assert lines[1] == "🛒 **军团纪元** — 网易（🤖 Google Play · 美区视角）"
 
 
+def test_radar_recent_lines_store_link_and_video():
+    """雷达行带 app_id → 拼商店页直达（iOS 数字 id→App Store / GP 包名→Google Play），
+    有视频则内联 🎬 动作行；缺 app_id 的老形态行保持无链接（向后兼容）。"""
+    from app.services.release_alerts import build_radar_recent_lines
+    items = [
+        {"name": "Frost Siege", "entity": "Century Games", "platform_tag": "🍎 App Store",
+         "genre": "Strategy", "sf": " · ⚠️ 仅 PH 可见（疑似软启动）",
+         "app_id": "1600000001", "platform": "ios", "country": "ph",
+         "summary": "冰原争霸题材数字门 SLG",
+         "video": {"count": 2, "url": "https://youtu.be/abc"}},
+        {"name": "Game of Sky", "entity": "IGG", "platform_tag": "🤖 Google Play · 美区视角",
+         "genre": "Strategy", "sf": "",
+         "app_id": "com.igg.android.gameofsky", "platform": "android", "country": "us",
+         "summary": None, "video": None},
+    ]
+    lines = build_radar_recent_lines(items, cap=10)
+    # iOS：软启动区路径入 App Store 链接 + 📝 摘要 + 🎬 视频，均 \n\n 分段
+    assert "💻 [商店页](https://apps.apple.com/ph/app/id1600000001)" in lines[0]
+    assert "🎬 实机视频 2 条 💻 [看第一条](https://youtu.be/abc)" in lines[0]
+    assert "📝 冰原争霸题材数字门 SLG" in lines[0]
+    # GP：包名入 Google Play 链接，无视频则动作行只有商店页
+    assert "💻 [商店页](https://play.google.com/store/apps/details?id=com.igg.android.gameofsky)" in lines[1]
+    assert "🎬" not in lines[1]
+
+
 def test_digest_radar_section_both_audiences():
     """商店雷达兜底段两卡都发（#178 上线时仅维护者卡；2026-07-03 应领导反馈放开）。"""
     from app.services.release_alerts import build_daily_digest
