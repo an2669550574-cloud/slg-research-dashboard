@@ -1638,13 +1638,17 @@ async def build_weekly_newcomer_review(days: int, cap: int) -> Optional[tuple[st
 
     rep_rows = list(reps.values())
     traj = await compute_trajectories(rep_rows)
+    # C 可读性（#198 同款）：中文玩法子品类标签，让外文新品名一眼可辨品类（数字门SLG/塔防/…），
+    # 顺带暴露误标（塔防等非 SLG 混进来时一眼可见）。
+    subgenre_by_app = await _subgenres_for_apps({r.app_id for r in rep_rows})
     climbing: list[dict] = []
     surviving = dropped = 0
     for r in rep_rows:
         tj = traj.get(r.id) or {}
         trend = tj.get("trend")
         if trend == "climbing":
-            climbing.append({"name": r.name or r.app_id, "detect_rank": r.rank, **tj})
+            climbing.append({"name": r.name or r.app_id, "detect_rank": r.rank,
+                             **tj, "subgenre_cn": subgenre_by_app.get(r.app_id)})
         elif trend == "dropped":
             dropped += 1
         elif tj.get("on_chart"):
@@ -1653,14 +1657,17 @@ async def build_weekly_newcomer_review(days: int, cap: int) -> Optional[tuple[st
 
     # 掉榜明细单列（值得注意的「昙花一现」）：峰值靠前的优先。
     dropped_items = sorted(
-        ({"name": r.name or r.app_id, "detect_rank": r.rank, **(traj.get(r.id) or {})}
+        ({"name": r.name or r.app_id, "detect_rank": r.rank,
+          **(traj.get(r.id) or {}), "subgenre_cn": subgenre_by_app.get(r.app_id)}
          for r in rep_rows if (traj.get(r.id) or {}).get("trend") == "dropped"),
         key=lambda x: (x.get("peak_rank") is None, x.get("peak_rank") or 999),
     )
     total = len(rep_rows)
     today = utcnow_naive().strftime("%Y-%m-%d")
     head = (f"### 📈 SLG 新品周察 · 近 {days} 天\n\n"
-            f"> 检出 **{total}** 款 SLG 新品：🚀 起飞 {len(climbing)} · "
+            f"> 近 {days} 天新上架的 SLG 竞品检出后走势如何——哪些在往畅销榜头部冲、哪些已凉。"
+            f"名次 = 畅销榜排名，越小越靠前。\n\n"
+            f"检出 **{total}** 款 SLG 新品：🚀 起飞 {len(climbing)} · "
             f"✅ 在榜 {surviving} · ✝️ 掉榜 {dropped}")
     sections = [head]
 
@@ -1668,44 +1675,45 @@ async def build_weekly_newcomer_review(days: int, cap: int) -> Optional[tuple[st
         # 起飞按累计升幅降序（升幅 = 检出名次 - 当前名次，越大越靠前）。
         climbing.sort(key=lambda x: (x["detect_rank"] or 999) - (x.get("current_rank") or 999),
                       reverse=True)
-        lines = ["\n\n**🚀 起飞（名次持续上升）**"]
+        lines = ["\n\n**🚀 起飞（畅销榜名次持续上冲）**"]
         for x in climbing[:cap]:
             gain = (x["detect_rank"] or 0) - (x.get("current_rank") or 0)
-            span = f" · {x['days_tracked']}天" if x.get("days_tracked") else ""
-            lines.append(f"- **{_md_name(x['name'])}** 检出 #{x['detect_rank']} → 现 "
-                         f"**#{x.get('current_rank')}**（↑{gain}{span}）")
+            span = f"{x['days_tracked']} 天涨 {gain} 名" if x.get("days_tracked") else f"涨 {gain} 名"
+            lines.append(f"- **{_md_name(x['name'])}**{_sg_label(x)} · "
+                         f"#{x['detect_rank']} → **#{x.get('current_rank')}**，{span}")
         sections.append("\n".join(lines))
 
     if dropped_items:
         lines = ["\n\n**✝️ 已掉榜（昙花一现）**"]
         for x in dropped_items[:cap]:
-            pk = f" · 峰值 #{x['peak_rank']}" if x.get("peak_rank") else ""
+            pk = f" · 最高冲到 #{x['peak_rank']}" if x.get("peak_rank") else ""
             ls = f" · 末次在榜 {x['last_seen']}" if x.get("last_seen") else ""
-            lines.append(f"- **{_md_name(x['name'])}** 检出 #{x['detect_rank']}{pk}{ls}")
+            lines.append(f"- **{_md_name(x['name'])}**{_sg_label(x)} · 检出时 #{x['detect_rank']}{pk}{ls}")
         sections.append("\n".join(lines))
 
     return f"SLG 新品周察 {today}", "".join(sections)
 
 
 async def send_weekly_newcomer_review() -> bool:
-    """周级 job 入口：拼一张「SLG 新品周察」卡，两群都发（SLG-only、已核实竞品，领导可读）。
+    """周级 job 入口：拼一张「SLG 新品周察」卡，**仅维护者群**。
 
-    未配任一 webhook / 未开开关 / 窗口内无 SLG 新品 → 静默 no-op。无幂等台账（周级、
+    2026-07-06 用户裁定：这是分析/趋势向的生命周期分层卡（近 N 天几十款新品的起飞/在榜/
+    掉榜），不是已核实竞品的当日动态——领导群只保留每日 digest（movement + 新品情报），不收
+    这张，避免领导注意力被分析卡稀释。此前（#188 上线时）两群都发。
+
+    未配维护者 webhook / 未开开关 / 窗口内无 SLG 新品 → 静默 no-op。无幂等台账（周级、
     misfire 重发无实质危害，与每日必达卡的领导群幂等守卫不同轴，故不引新表）。零 ST。
     """
     if not settings.DIGEST_WEEKLY_REVIEW_ENABLED:
         return False
-    if not (dingtalk.is_enabled() or dingtalk.leader_target_configured()):
+    if not dingtalk.is_enabled():
         return False
     card = await build_weekly_newcomer_review(
         settings.DIGEST_WEEKLY_REVIEW_DAYS, settings.DIGEST_WEEKLY_REVIEW_CAP)
     if card is None:
         logger.info("weekly newcomer review: no SLG newcomers in window, skip")
         return False
-    sent = await dingtalk.send_markdown(*card, target="maintainer")
-    if dingtalk.leader_target_configured():
-        sent = await dingtalk.send_markdown(*card, target="leader") or sent
-    return sent
+    return await dingtalk.send_markdown(*card, target="maintainer")
 
 
 # ── 微信公众号登录过期提醒 ─────────────────────────────────────────────────
