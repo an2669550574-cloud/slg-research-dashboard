@@ -30,12 +30,38 @@ def _due_by_interval(today: date, interval_days: int) -> bool:
     return today.toordinal() % interval_days == 0
 
 
+def _secondary_stagger_offset(country: str, interval_days: int) -> int:
+    """次市场错峰相位（天）：把「按同一模全挤同一天同步」的次市场摊到 interval 窗口内
+    不同天。同一国家的 ios/android 同天（该国当日市场全景），不同国家均匀铺开
+    （interval=14、4 国 → JP@0 / KR@3 / DE@7 / RU@10）。**每国仍每 interval 天同步
+    一次、总频率不变 → 零额外 ST 配额**，只是让日常 digest 每隔几天轮到一个国家。
+
+    纯函数、无状态：相位随 SYNC_RANKING_COMBOS 出现序确定（跨重启/多副本一致）。
+    第一个次市场国家 phase=0（与未错峰的旧行为对齐，兼容既有 cadence 测试）。
+    SYNC_SECONDARY_STAGGER=False 或 interval<=1（每天同步、无需错峰）→ 恒 0。
+    """
+    if not settings.SYNC_SECONDARY_STAGGER or interval_days <= 1:
+        return 0
+    primary = settings.sync_primary_combos_set
+    countries: list[str] = []
+    for c, p in settings.sync_combos_list:
+        if (c, p) in primary or c in countries:
+            continue
+        countries.append(c)
+    if country not in countries:
+        return 0
+    return (countries.index(country) * interval_days) // len(countries)
+
+
 def _combo_due_today(country: str, platform: str, today: date) -> bool:
     """该 combo 今天是否应同步：主市场按 SYNC_PRIMARY_INTERVAL_DAYS，
-    次市场按 SYNC_SECONDARY_INTERVAL_DAYS。默认都按周。"""
+    次市场按 SYNC_SECONDARY_INTERVAL_DAYS + 错峰相位（见 _secondary_stagger_offset）。"""
     if (country, platform) in settings.sync_primary_combos_set:
         return _due_by_interval(today, settings.SYNC_PRIMARY_INTERVAL_DAYS)
-    return _due_by_interval(today, settings.SYNC_SECONDARY_INTERVAL_DAYS)
+    interval = settings.SYNC_SECONDARY_INTERVAL_DAYS
+    offset = _secondary_stagger_offset(country, interval)
+    # 相位平移：等价 (ordinal - offset) % interval == 0，复用 _due_by_interval 的边界处理。
+    return _due_by_interval(date.fromordinal(today.toordinal() - offset), interval)
 
 
 def _sales_due_today(today: date) -> bool:
