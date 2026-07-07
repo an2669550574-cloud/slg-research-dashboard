@@ -300,3 +300,85 @@ def test_build_newcomer_lines_no_articles_no_suffix():
     market = {"newcomers": [{"name": "X", "app_id": "1", "rank": 1, "revenue": 0, "is_slg": True}]}
     lines = build_newcomer_lines(market, {}, articles={})
     assert all("📰" not in ln for ln in lines)
+
+
+# ── 行业动态：每号拉一次列表 + 本地关键词匹配（治并发限流，见 search_industry_articles）──
+
+@pytest.mark.asyncio
+async def test_industry_articles_local_keyword_filter(monkeypatch):
+    """每号拉列表后本地按关键词子串匹配（标题/摘要含任一词、大小写无关），无关文过滤。"""
+    async def fake_enabled():
+        return {"阿杜聊游戏": "F1==", "金角游戏": "F2==", "无关号": "F3=="}
+
+    async def fake_list(client, name, fakeid, cutoff_ts, count):
+        data = {
+            "F1==": [WechatArticle(title="休闲游戏出海新机会", link="l1", author=name)],
+            "F2==": [WechatArticle(title="小游戏SLG新变量", link="l2", author=name),
+                     WechatArticle(title="行业八卦周报", link="l3", author=name)],  # 不含关键词
+            "F3==": [WechatArticle(title="完全无关的美妆推文", link="l4", author=name)],
+        }
+        return data[fakeid]
+
+    monkeypatch.setattr(wa, "_enabled_accounts", fake_enabled)
+    monkeypatch.setattr(wa, "_list_account_articles", fake_list)
+
+    res = await wa.search_industry_articles(["出海", "slg"], limit=10, days=3)
+    # 含"出海" / 含"SLG"(小写关键词匹配大写标题) 命中；八卦、美妆被过滤
+    assert {a.title for a in res} == {"休闲游戏出海新机会", "小游戏SLG新变量"}
+
+
+@pytest.mark.asyncio
+async def test_industry_articles_empty_keywords_and_no_accounts(monkeypatch):
+    async def fake_enabled():
+        return {"x": "F=="}
+    monkeypatch.setattr(wa, "_enabled_accounts", fake_enabled)
+    assert await wa.search_industry_articles([], limit=4) == []
+    assert await wa.search_industry_articles(["  "], limit=4) == []
+
+    async def empty_enabled():
+        return {}
+    monkeypatch.setattr(wa, "_enabled_accounts", empty_enabled)
+    assert await wa.search_industry_articles(["出海"], limit=4) == []
+
+
+@pytest.mark.asyncio
+async def test_industry_articles_dedups_by_link(monkeypatch):
+    """同 link 跨号重复只留一条。"""
+    async def fake_enabled():
+        return {"A": "F1==", "B": "F2=="}
+
+    async def fake_list(client, name, fakeid, cutoff_ts, count):
+        return [WechatArticle(title="出海新游同文", link="same", author=name)]
+
+    monkeypatch.setattr(wa, "_enabled_accounts", fake_enabled)
+    monkeypatch.setattr(wa, "_list_account_articles", fake_list)
+    res = await wa.search_industry_articles(["出海"], limit=10)
+    assert len(res) == 1
+
+
+@pytest.mark.asyncio
+async def test_list_account_articles_time_window_and_html(monkeypatch):
+    """_list_account_articles：按 create_time 过滤过时文章 + 清洗标题 html 高亮。"""
+    import time as _t
+    now = int(_t.time())
+
+    class FakeResp:
+        def raise_for_status(self): pass
+        def json(self):
+            return {"success": True, "data": {"articles": [
+                {"title": "新<em class=\"highlight\">游戏</em>出海", "digest": "d",
+                 "link": "l1", "create_time": now - 3600},          # 1h 前 → 留
+                {"title": "旧文", "digest": "d", "link": "l2",
+                 "create_time": now - 10 * 86400},                  # 10 天前 → 过滤
+            ]}}
+
+    class FakeClient:
+        async def get(self, url, params=None):
+            assert params["fakeid"] == "F=="        # 用列表端点、带 fakeid、不带 query
+            assert "query" not in params
+            return FakeResp()
+
+    cutoff = now - 3 * 86400
+    out = await wa._list_account_articles(FakeClient(), "号", "F==", cutoff, 20)
+    assert len(out) == 1
+    assert out[0].link == "l1" and out[0].title == "新游戏出海"   # html 清洗掉高亮标签

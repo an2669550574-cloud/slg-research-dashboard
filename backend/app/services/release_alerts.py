@@ -1531,11 +1531,13 @@ async def send_daily_digest() -> bool:
         # A：SLG 行业动态（公众号广搜，零 ST；未启用/连不上降级空）。跨天重复靠时窗控。
         if settings.WECHAT_INDUSTRY_ENABLED and settings.WECHAT_ENABLED:
             try:
-                from app.services.wechat_articles import search_multi_keywords
+                # 每号拉一次列表 + 本地关键词匹配（避免 词×号 笛卡尔积并发打到 wechat-api
+                # 限流、把阿杜聊游戏/金角游戏这类活跃号的料吞掉，见 search_industry_articles）。
+                from app.services.wechat_articles import search_industry_articles
                 ind_kws = [k.strip() for k in settings.WECHAT_INDUSTRY_KEYWORDS.split(",") if k.strip()]
                 if ind_kws:
-                    raw = await search_multi_keywords(ind_kws, limit=settings.WECHAT_INDUSTRY_MAX,
-                                                      days=settings.WECHAT_INDUSTRY_DAYS)
+                    raw = await search_industry_articles(ind_kws, limit=settings.WECHAT_INDUSTRY_MAX,
+                                                         days=settings.WECHAT_INDUSTRY_DAYS)
                     # 去掉①已按新品名精确挂上的文章（免与新品行 📰 重复，同卡内）+ ②往日已推过的
                     # 文章（跨天去重台账，让领导群每天见到没推过的）。
                     shown = {a.link for arts in articles_by_app.values() for a in arts}

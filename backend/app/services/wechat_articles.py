@@ -250,3 +250,79 @@ async def search_multi_keywords(
         all_results.extend(articles)
 
     return _dedup_sort(all_results, limit)
+
+
+# 行业动态段专用：每号只拉一次「最近文章列表」端点（不带 query），本地按关键词子串匹配。
+# 比逐关键词 × 逐号 search（35 号 × 12 词 ≈ 420 次/轮）省一个数量级——调用量降到号数，
+# 根治「并发齐发打到 wechat-api 限流、靠后的号被吞」（实测活跃号阿杜聊游戏/金角游戏的料被漏）。
+_INDUSTRY_LIST_CONCURRENCY = 6   # 限并发：避免 35 号列表齐发又触发限流
+_INDUSTRY_LIST_COUNT = 20        # 每号拉最近 N 篇（覆盖 days 时窗内的发文）
+
+
+async def _list_account_articles(
+    client: httpx.AsyncClient, name: str, fakeid: str, cutoff_ts: int, count: int,
+) -> List[WechatArticle]:
+    """拉单个号最近文章列表（`/api/public/articles`，不带 query），按时窗过滤。
+    失败只 warning 返空（一个号挂不拖累其余）。"""
+    try:
+        resp = await client.get(
+            f"{settings.WECHAT_API_BASE}/api/public/articles",
+            params={"fakeid": fakeid, "count": count},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        _logger.warning("列表 %s 失败: %s", name, e)
+        return []
+    out: List[WechatArticle] = []
+    if data.get("success"):
+        for a in data.get("data", {}).get("articles", []):
+            ct = a.get("create_time", 0)
+            if ct and ct < cutoff_ts:
+                continue
+            out.append(WechatArticle(
+                title=_strip_html(a.get("title")),
+                digest=_strip_html(a.get("digest")),
+                link=a.get("link", ""),
+                author=name,
+                cover=a.get("cover", ""),
+                publish_time=ct,
+            ))
+    return out
+
+
+async def search_industry_articles(
+    keywords: List[str], limit: int = 4, days: int = 3,
+) -> List[WechatArticle]:
+    """平淡日「行业动态」段广搜：**每个订阅号只拉一次最近文章列表**（不带 query），本地按
+    关键词**子串匹配**（标题或摘要含任一关键词、大小写不敏感）+ 时窗过滤 + 去重。
+
+    不复用 `search_multi_keywords`：那个 N 词 × M 号的笛卡尔积一次性 gather 出几百个并发
+    请求，触发 wechat-api 风控/限流，靠后遍历的号被吞（漏掉阿杜聊游戏/金角游戏这类活跃号的
+    料）。本函数把调用量从 号×词 降到 号，semaphore 限并发根治限流；本地子串匹配也比
+    wechat-api 的标题精确匹配更宽容（短词/部分词都能命中）。零 ST（走 wechat-api）。
+    """
+    kws = [k.strip().lower() for k in keywords if k and k.strip()]
+    if not kws:
+        return []
+    accounts = await _enabled_accounts()
+    if not accounts:
+        return []
+    cutoff = int(time.time() - days * 86400)
+    sem = asyncio.Semaphore(_INDUSTRY_LIST_CONCURRENCY)
+
+    async def _one(client, name, fakeid):
+        async with sem:
+            return await _list_account_articles(client, name, fakeid, cutoff, _INDUSTRY_LIST_COUNT)
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        groups = await asyncio.gather(*[
+            _one(client, name, fakeid) for name, fakeid in accounts.items()
+        ])
+    matched: List[WechatArticle] = []
+    for group in groups:
+        for a in group:
+            hay = f"{a.title} {a.digest or ''}".lower()
+            if any(kw in hay for kw in kws):
+                matched.append(a)
+    return _dedup_sort(matched, limit)
