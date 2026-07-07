@@ -302,29 +302,57 @@ def test_build_newcomer_lines_no_articles_no_suffix():
     assert all("📰" not in ln for ln in lines)
 
 
-# ── 行业动态：每号拉一次列表 + 本地关键词匹配（治并发限流，见 search_industry_articles）──
+# ── 行业动态：每号拉一次列表 + 核心词过滤 + 打分排序（治并发限流 + 群推送精选）──
+
+def test_natural_day_cutoff_uses_beijing_calendar_days():
+    """窗口 = 北京时区近 N 个自然日的 00:00（非滚动 N×24h，避免切掉 N 天前当天早上的文）。"""
+    from app.services.wechat_articles import _natural_day_cutoff
+    import datetime as dt
+    bj = dt.timezone(dt.timedelta(hours=8))
+    now = dt.datetime(2026, 7, 7, 11, 0, tzinfo=bj).timestamp()   # digest 实跑时刻（北京 11:00）
+    # days=5 → 起点 北京 07-03 00:00（覆盖 07-03~07-07 五个自然日）
+    assert _natural_day_cutoff(5, now) == int(dt.datetime(2026, 7, 3, 0, 0, tzinfo=bj).timestamp())
+    assert _natural_day_cutoff(1, now) == int(dt.datetime(2026, 7, 7, 0, 0, tzinfo=bj).timestamp())
+    # 关键：07-04 08:00 的文，滚动 72h（cutoff 北京 07-04 11:00）会切掉，自然日 days=5 窗内（≥07-03）
+    assert dt.datetime(2026, 7, 4, 8, 0, tzinfo=bj).timestamp() >= _natural_day_cutoff(5, now)
+
+
+def test_industry_score_core_word_gate_and_weights():
+    """打分：SLG 强信号 > 新游 > 泛词、标题命中×2；has_core=只蹭出海/海外泛词→False（不推）。"""
+    from app.services.wechat_articles import _industry_score
+    kws = ["出海", "海外", "新游", "slg", "新品", "4x"]
+    s, core = _industry_score(WechatArticle(title="点点互动测3款SLG新品", link="l", author="x"), kws)
+    assert core is True and s == 3 * 2 + 2 * 2                # slg 标题×2 + 新品 标题×2
+    _, core2 = _industry_score(WechatArticle(title="黑神话悟空海外音乐会首演", link="l", author="x"), kws)
+    assert core2 is False                                     # 只命中泛词「海外」→ 无核心，不推
+    s3, core3 = _industry_score(
+        WechatArticle(title="一篇分析", digest="深扒某款新游留存", link="l", author="x"), kws)
+    assert core3 is True and s3 == 2                          # 「新游」仅摘要命中 ×1
+
 
 @pytest.mark.asyncio
-async def test_industry_articles_local_keyword_filter(monkeypatch):
-    """每号拉列表后本地按关键词子串匹配（标题/摘要含任一词、大小写无关），无关文过滤。"""
+async def test_industry_articles_core_filter_and_ranking(monkeypatch):
+    """群推送精选：必须含 SLG/新游核心词（滤掉纯蹭「出海/海外」的泛新闻），按相关度分降序取 top。"""
     async def fake_enabled():
-        return {"阿杜聊游戏": "F1==", "金角游戏": "F2==", "无关号": "F3=="}
+        return {"A": "F1==", "B": "F2==", "C": "F3=="}
 
     async def fake_list(client, name, fakeid, cutoff_ts, count):
         data = {
-            "F1==": [WechatArticle(title="休闲游戏出海新机会", link="l1", author=name)],
-            "F2==": [WechatArticle(title="小游戏SLG新变量", link="l2", author=name),
-                     WechatArticle(title="行业八卦周报", link="l3", author=name)],  # 不含关键词
-            "F3==": [WechatArticle(title="完全无关的美妆推文", link="l4", author=name)],
+            "F1==": [WechatArticle(title="点点互动测3款SLG新品", link="l1", author=name)],         # 核心，分 10
+            "F2==": [WechatArticle(title="休闲游戏出海新机会", link="l2", author=name),             # 只「出海」泛 → 滤
+                     WechatArticle(title="海外新游｜Kingdom 沙漠4X SLG", link="l3", author=name)],   # 核心，分 18
+            "F3==": [WechatArticle(title="黑神话悟空海外音乐会", link="l4", author=name)],            # 只「海外」泛 → 滤
         }
         return data[fakeid]
 
     monkeypatch.setattr(wa, "_enabled_accounts", fake_enabled)
     monkeypatch.setattr(wa, "_list_account_articles", fake_list)
 
-    res = await wa.search_industry_articles(["出海", "slg"], limit=10, days=3)
-    # 含"出海" / 含"SLG"(小写关键词匹配大写标题) 命中；八卦、美妆被过滤
-    assert {a.title for a in res} == {"休闲游戏出海新机会", "小游戏SLG新变量"}
+    res = await wa.search_industry_articles(
+        ["出海", "海外", "新游", "slg", "新品", "4x"], limit=10, days=5)
+    titles = [a.title for a in res]
+    assert set(titles) == {"点点互动测3款SLG新品", "海外新游｜Kingdom 沙漠4X SLG"}   # 纯泛词两篇被滤
+    assert titles[0] == "海外新游｜Kingdom 沙漠4X SLG"       # 分高(18>10)排前——按相关度非时间
 
 
 @pytest.mark.asyncio
@@ -348,11 +376,11 @@ async def test_industry_articles_dedups_by_link(monkeypatch):
         return {"A": "F1==", "B": "F2=="}
 
     async def fake_list(client, name, fakeid, cutoff_ts, count):
-        return [WechatArticle(title="出海新游同文", link="same", author=name)]
+        return [WechatArticle(title="出海新游同文", link="same", author=name)]  # 含「新游」核心词
 
     monkeypatch.setattr(wa, "_enabled_accounts", fake_enabled)
     monkeypatch.setattr(wa, "_list_account_articles", fake_list)
-    res = await wa.search_industry_articles(["出海"], limit=10)
+    res = await wa.search_industry_articles(["出海", "新游"], limit=10)
     assert len(res) == 1
 
 

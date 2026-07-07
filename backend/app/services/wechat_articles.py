@@ -9,6 +9,7 @@ import asyncio
 import logging
 import re
 import time
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 import httpx
@@ -258,6 +259,50 @@ async def search_multi_keywords(
 _INDUSTRY_LIST_CONCURRENCY = 6   # 限并发：避免 35 号列表齐发又触发限流
 _INDUSTRY_LIST_COUNT = 20        # 每号拉最近 N 篇（覆盖 days 时窗内的发文）
 
+_BJ = timezone(timedelta(hours=8))
+
+# 行业动态相关度：SLG/新游「核心词」——文章必须命中至少一个才推（滤掉只蹭「出海/海外」的
+# 行业泛新闻，如「黑神话悟空海外音乐会」）。权重表给打分排序用：SLG 强信号 > 新游 > 泛词。
+_INDUSTRY_CORE_KW = {"新游", "首发", "公测", "新品", "测试", "slg", "4x", "三国", "策略", "率土"}
+_INDUSTRY_KW_WEIGHTS = {
+    "slg": 3, "4x": 3, "三国": 2, "策略": 2, "率土": 2,
+    "新游": 2, "首发": 2, "公测": 2, "新品": 2, "测试": 1,
+    "出海": 1, "海外": 1, "买量": 1, "畅销榜": 1,
+}
+
+
+def _natural_day_cutoff(days: int, now_ts: float) -> int:
+    """近 N 个「自然日」窗口起点（UTC 时间戳）：北京时区下 `今天-(days-1)` 的 00:00。
+    比「滚动 N×24h」多覆盖最早那天的全天——治「digest 在北京 11:00 跑时、N 天前上午发的文
+    被 72h 滚动窗切掉」（time.time()/create_time 均为标准 UTC 戳、比较无时区问题，问题在
+    窗口是滚动而非按自然日）。days<=0 视作 1 天。"""
+    bj_now = datetime.fromtimestamp(now_ts, _BJ)
+    start_bj = datetime.combine(
+        bj_now.date() - timedelta(days=max(days, 1) - 1),
+        datetime.min.time(), tzinfo=_BJ)
+    return int(start_bj.timestamp())
+
+
+def _industry_score(a: "WechatArticle", kws: List[str]) -> tuple:
+    """行业动态文章相关度分 + 是否含 SLG/新游核心信号。
+    - score：命中关键词权重和，**标题命中 ×2**（标题最能代表主题）；
+    - has_core：是否命中任一 `_INDUSTRY_CORE_KW`（纯命中出海/海外/买量等泛词 → False）。
+    """
+    t = (a.title or "").lower()
+    d = (a.digest or "").lower()
+    score = 0
+    has_core = False
+    for kw in kws:
+        in_t = kw in t
+        in_d = kw in d
+        if not (in_t or in_d):
+            continue
+        w = _INDUSTRY_KW_WEIGHTS.get(kw, 1)
+        score += w * 2 if in_t else w
+        if kw in _INDUSTRY_CORE_KW:
+            has_core = True
+    return score, has_core
+
 
 async def _list_account_articles(
     client: httpx.AsyncClient, name: str, fakeid: str, cutoff_ts: int, count: int,
@@ -308,7 +353,7 @@ async def search_industry_articles(
     accounts = await _enabled_accounts()
     if not accounts:
         return []
-    cutoff = int(time.time() - days * 86400)
+    cutoff = _natural_day_cutoff(days, time.time())
     sem = asyncio.Semaphore(_INDUSTRY_LIST_CONCURRENCY)
 
     async def _one(client, name, fakeid):
@@ -319,10 +364,19 @@ async def search_industry_articles(
         groups = await asyncio.gather(*[
             _one(client, name, fakeid) for name, fakeid in accounts.items()
         ])
-    matched: List[WechatArticle] = []
+    # 去重 + 相关度打分筛选：**必须命中 SLG/新游核心词**（滤掉只蹭「出海/海外」的行业泛新闻），
+    # 按 `_industry_score` 降序（SLG 强信号 + 标题命中优先）取最相关的 top limit——而非取最新 N 篇。
+    # 群推送要精简，宁缺毋滥：都不含核心词的平淡日返回空段（降级由调用方处理）。
+    seen: set = set()
+    scored: list = []
     for group in groups:
         for a in group:
-            hay = f"{a.title} {a.digest or ''}".lower()
-            if any(kw in hay for kw in kws):
-                matched.append(a)
-    return _dedup_sort(matched, limit)
+            if not a.link or a.link in seen:
+                continue
+            score, has_core = _industry_score(a, kws)
+            if not has_core:
+                continue
+            seen.add(a.link)
+            scored.append((score, a.publish_time or 0, a))
+    scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    return [a for _, _, a in scored[:limit]]

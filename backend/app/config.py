@@ -389,10 +389,11 @@ class Settings(BaseSettings):
     # 四类）。逗号分隔，可在 backend/.env 覆盖。空 = 关闭该段。宁少而准，别用光秃秃「SLG」招噪。
     WECHAT_INDUSTRY_KEYWORDS: str = (
         "SLG 新游,策略新游 上线,SLG 首发,SLG 出海,策略手游 海外,SLG 版号,SLG 投融资,SLG 买量 素材")
-    # 只取最近 N 天的文章（"动态"要新）。跨天重复由下方「已推 link 台账」持久去重兜底，时窗
-    # 只控搜索范围（不再是唯一防重手段）。
-    WECHAT_INDUSTRY_DAYS: int = 3
-    # 行业段最多展示几条。
+    # 取最近 N 个**自然日**的文章（北京时区 `今天-(N-1)` 的 00:00 起，见 `_natural_day_cutoff`；
+    # 非滚动 N×24h——那样会切掉 N 天前当天早上的文）。跨天重复由「已推 link 台账」持久去重兜底。
+    # 5 = 覆盖近 5 个自然日：wechat-api 抓取有 1~2 天滞后 + 优质海外新游文常慢一两天，3 太紧。
+    WECHAT_INDUSTRY_DAYS: int = 5
+    # 行业段最多展示几条（按相关度打分取 top，见 `_industry_score`：SLG/新游核心词过滤 + 加权排序）。
     WECHAT_INDUSTRY_MAX: int = 4
     # 行业动态段跨天去重：发过的文章 link 落 wechat_article_sent 台账，后续广搜结果里已推的
     # link 全过滤掉，让领导群每天见到没推过的文章（此前只靠 WECHAT_INDUSTRY_DAYS 时窗，连续
