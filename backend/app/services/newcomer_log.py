@@ -307,24 +307,26 @@ async def prune_newcomer_log(retention_days: Optional[int] = None) -> int:
     return deleted or 0
 
 
-async def attribute_entities(rows) -> dict[int, tuple[int, str]]:
-    """读时归属：log 行 → 已建档主体。{row.id: (entity_id, entity_name)}。
+async def attribute_entities(rows) -> dict[int, tuple[int, str, bool]]:
+    """读时归属：log 行 → 已建档主体。{row.id: (entity_id, entity_name, entity_is_slg)}。
 
     复用 newcomers._load_entity_matchers（与「厂商新品」同一套归属口径）。
     **读时计算**而非落库——建档发生在检出之后，存档会过期；活算让
     「建档 → 历史卡片立刻显示已归属」零回写。量级几十主体，开销可忽略。
+    第三元 entity_is_slg：归属展示对全部实体生效，但把「已归属」当 SLG 信号
+    用时必须过它（is_slg=False 的调研/资本系档案不算竞品）。
     """
     from app.services.newcomers import _kw_hit, _load_entity_matchers
     from app.services.slg_publishers import _tokens
 
     matchers = await _load_entity_matchers()
-    out: dict[int, tuple[int, str]] = {}
+    out: dict[int, tuple[int, str, bool]] = {}
     for r in rows:
         pub_tokens = _tokens(r.publisher)
         for m in matchers:
             if r.app_id in m["app_ids"] or (
                 pub_tokens and any(_kw_hit(pub_tokens, kw) for kw in m["kw_tokens"])
             ):
-                out[r.id] = (m["entity_id"], m["entity_name"])
+                out[r.id] = (m["entity_id"], m["entity_name"], m["is_slg"])
                 break
     return out

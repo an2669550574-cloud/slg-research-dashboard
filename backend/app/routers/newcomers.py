@@ -367,10 +367,12 @@ async def get_newcomer_history(
     from app.services.newcomer_log import attribute_entities, slg_app_ids_known
     attributed = await attribute_entities(rows)
     # is_slg 按 app_id 聚合活算（而非逐行）：同一游戏跨 combo 判定分裂（本地化
-    # publisher 串 miss）时，任一行为 1 / 任一行归属到主体 / log 记忆（响应窗口外的
-    # 行，如另一榜、更早检出）曾判 1 → 该 app 全部行算 SLG。前端 rep 分桶零改动受益。
+    # publisher 串 miss）时，任一行为 1 / 任一行归属到 **is_slg 主体** / log 记忆
+    # （响应窗口外的行，如另一榜、更早检出）曾判 1 → 该 app 全部行算 SLG。
+    # 归属到 is_slg=False 档案（调研/资本系）只展示 entity_name、不当 SLG 信号。
     slg_app_ids = ({r.app_id for r in rows if r.is_slg}
-                   | {r.app_id for r in rows if r.id in attributed})
+                   | {r.app_id for r in rows
+                      if r.id in attributed and attributed[r.id][2]})
     slg_app_ids |= await slg_app_ids_known(
         {r.app_id for r in rows} - slg_app_ids)
     # 已晋升 tracked 的 app（games 表读时活算）：卡面/抽屉晋升入口据此显隐。
@@ -399,8 +401,8 @@ async def get_newcomer_history(
                 # 落库后建档的主体读时也算 SLG——is_slg 按 app_id 聚合活算（存档值只作冗余）
                 is_slg=r.app_id in slg_app_ids,
                 is_tracked=r.app_id in tracked_ids,
-                entity_id=attributed.get(r.id, (None, None))[0],
-                entity_name=attributed.get(r.id, (None, None))[1],
+                entity_id=attributed.get(r.id, (None, None, False))[0],
+                entity_name=attributed.get(r.id, (None, None, False))[1],
                 screenshots=json.loads(r.screenshot_urls) if r.screenshot_urls else [],
                 trajectory=(NewcomerTrajectory(**trajectories[r.id])
                             if r.id in trajectories else None),

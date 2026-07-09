@@ -204,15 +204,26 @@ reset_index_to_seed()
 async def load_index_from_db() -> int:
     """从 publisher_aliases / publisher_app_ids 重建内存索引。返回加载的马甲条数。
 
+    **alias 按实体 is_slg 过滤**：主体库里有大量 is_slg=False 的调研/资本系档案
+    （沐瞳/HABBY/卓杭等，建档为看资本树非竞品口径），它们的 alias 若进白名单，
+    其非 SLG 产品会被错标 SLG 混进「仅 SLG」视图与 movement 候选（2026-07-09 实锤：
+    Moonton/HABBY 判 True）。app_id 钉选**不过滤**——钉选语义 = 「该单品是 SLG」，
+    与实体旗标无关（如 Square Enix 档案 is_slg=False，但 Ember Storia 钉选计 SLG，
+    与种子里 Warner Bros/Scopely 的多品类大厂范式一致）。
+
     DB 全空（极早期 / 未 seed）时**保留种子兜底不清空**——否则 is_slg 会全 False，
     movement 把昨日 TopN SLG 全员错报为跌出。startup 在 seed 之后调，正常不会空。
     """
     from sqlalchemy import select
     from app.database import AsyncSessionLocal
-    from app.models.publisher import PublisherAlias, PublisherAppId
+    from app.models.publisher import PublisherAlias, PublisherAppId, PublisherEntity
 
     async with AsyncSessionLocal() as db:
-        keywords = (await db.execute(select(PublisherAlias.keyword))).scalars().all()
+        keywords = (await db.execute(
+            select(PublisherAlias.keyword)
+            .join(PublisherEntity, PublisherEntity.id == PublisherAlias.entity_id)
+            .where(PublisherEntity.is_slg.is_(True))
+        )).scalars().all()
         app_id_list = (await db.execute(select(PublisherAppId.app_id))).scalars().all()
     if not keywords and not app_id_list:
         return 0  # 不覆盖种子兜底

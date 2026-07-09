@@ -287,6 +287,10 @@ async def _load_entity_matchers() -> list[dict]:
         {
             "entity_id": e.id,
             "entity_name": e.name,
+            # 实体竞品旗标：归属（entity_name 展示）对全部实体生效，但消费方把
+            # 「已归属」当 SLG 信号用时必须看这个（is_slg=False 的调研/资本系档案
+            # 如沐瞳/HABBY，其产品归属可显示、不算 SLG）。
+            "is_slg": bool(e.is_slg),
             "kw_tokens": kw_by_entity.get(e.id, []),
             "app_ids": ids_by_entity.get(e.id, set()),
         }
