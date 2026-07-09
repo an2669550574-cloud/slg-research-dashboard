@@ -200,12 +200,17 @@ async def translate_pending_newcomers(cap: int | None = None) -> int:
         # description_cn 用最新行的译文覆盖全部——同 app 跨国描述偶有差异，但这是竞品
         # 速览、headline 价值在 summary，按 app 翻一次省 LLM 是有意取舍（cost 硬上限
         # NEWCOMER_TRANSLATE_DAILY_CAP × flash 模型 < $0.15/天，不并入 LLM_DAILY_BUDGET）。
+        # subgenre 为 None（词表外/LLM 没给）时**不写该列**：同 app 在新 combo 再检出会
+        # 触发重译，无条件覆盖会把先前已有的有效子品类抹成 NULL（⚔️ 同赛道/视频救回随之
+        # 失效）——summary/description 覆盖是刻意取舍，子品类回退不是。
+        vals: dict = {"summary_cn": summary, "description_cn": translation}
+        if subgenre is not None:
+            vals["subgenre_cn"] = subgenre
         async with AsyncSessionLocal() as db:
             await db.execute(
                 update(MarketNewcomerLog)
                 .where(MarketNewcomerLog.app_id == app_id)
-                .values(summary_cn=summary, description_cn=translation,
-                        subgenre_cn=subgenre))
+                .values(**vals))
             await db.commit()
         done += 1
     if done:

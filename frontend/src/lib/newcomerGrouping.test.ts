@@ -12,7 +12,7 @@ function row(p: Partial<NewcomerHistoryItem> & { app_id: string }): NewcomerHist
     first_detected_at: '2026-06-01T00:00:00Z',
     store_url: null, release_date: null, genre: null, rating: null,
     rating_count: null, price: null, description: null,
-    summary_cn: null, description_cn: null, screenshots: [],
+    summary_cn: null, description_cn: null, subgenre_cn: null, screenshots: [],
     version: null, current_version_date: null, languages: null,
     enrich_source: null, entity_id: null, entity_name: null, is_reentry: false,
     trajectory: null,
@@ -110,5 +110,18 @@ describe('groupPublisherByApp', () => {
       pubRow({ app_id: 'a', entity_name: '甲', country: 'JP' }),
     ])
     expect(groups.map(g => g.app_id)).toEqual(['a', 'b'])
+  })
+})
+
+describe('groupByApp subgenre coalesce', () => {
+  it('takes first non-null subgenre_cn across rows (may only exist on some combos)', () => {
+    const groups = groupByApp([
+      row({ app_id: '222', country: 'US', rank: 10, subgenre_cn: null }),
+      row({ app_id: '222', country: 'JP', rank: 20, subgenre_cn: '基地建设SLG' }),
+      row({ app_id: '333', country: 'US', rank: 5, subgenre_cn: null }),
+    ])
+    const byId = new Map(groups.map(g => [g.app_id, g]))
+    expect(byId.get('222')!.subgenre).toBe('基地建设SLG')
+    expect(byId.get('333')!.subgenre).toBeNull()
   })
 })

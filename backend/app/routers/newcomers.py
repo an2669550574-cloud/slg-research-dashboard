@@ -276,6 +276,9 @@ class NewcomerHistoryItem(BaseModel):
     # 中文化（LLM 网关，只对 is_slg 新品）：一句话摘要 + 描述全文中译；未翻为 NULL。
     summary_cn: Optional[str] = None
     description_cn: Optional[str] = None
+    # 玩法子品类（LLM 受控词表，按核心机制非题材：数字门SLG/基地建设SLG/塔防/…）。
+    # 已花 LLM 算出并驱动 ⚔️ 同赛道/赛道脉搏，这里透出给卡片/抽屉直读。未分类为 NULL。
+    subgenre_cn: Optional[str] = None
     screenshots: list[str] = []
     # 版本号 / 版本更新日 / 支持语言（iTunes 富化有，GP 留 NULL）。切片 3.1。
     version: Optional[str] = None
@@ -385,7 +388,7 @@ async def get_newcomer_history(
                     "id", "country", "platform", "app_id", "chart_type", "as_of", "name",
                     "publisher", "icon_url", "rank", "revenue", "first_detected_at",
                     "store_url", "release_date", "genre", "rating", "rating_count",
-                    "price", "description", "summary_cn", "description_cn",
+                    "price", "description", "summary_cn", "description_cn", "subgenre_cn",
                     "version", "current_version_date",
                     "languages", "enrich_source", "is_reentry")},
                 # 落库后建档的主体读时也算 SLG——is_slg 按 app_id 聚合活算（存档值只作冗余）
