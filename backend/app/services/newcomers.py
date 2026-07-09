@@ -373,6 +373,13 @@ async def gate_publisher_newcomers_by_release_date(
       2) PublisherItunesApp.release_date —— 雷达账号下 app（track_id = iOS 数字 app_id）；
       3) enrich_miss=True 时，对仍缺的 app_id 现打一次免费 iTunes/GP lookup（限速）。
     每行回填 `release_date`（供前端展示「新」的判定依据）；返回过滤后的列表。
+
+    **评价数兜底**（release_date 三层全 miss 时）：GP 详情页永远拿不到上架日（Android
+    富化硬编码 None，prod gp 源 32/32 全 NULL）——「缺失按新处理」对 Android 等于门控
+    整体失效，老包直通 digest 厂商新品段（#161 同类噪声）。这里复用雷达 ingest 的同一
+    代理：`_is_established`（rating_count ≥ ITUNES_RELEASES_ESTABLISHED_RATING_COUNT，
+    大量存量评价 = 明显老品）判老即剔除；评价数也缺/低 = 真软启动新品，保留不丢信号。
+    rating_count 源与 release_date 同：log 富化缓存优先，enrich_miss lookup 顺带补。
     """
     if not newcomers:
         return newcomers
@@ -383,6 +390,7 @@ async def gate_publisher_newcomers_by_release_date(
 
     app_ids = [n["app_id"] for n in newcomers if n.get("app_id")]
     rd_by_app: dict[str, str] = {}
+    rc_by_app: dict[str, int] = {}   # rating_count 缓存（release_date 全 miss 时的老品代理）
     async with AsyncSessionLocal() as db:
         # 1) 检出历史缓存（任一非空 release_date）。
         for aid, rd in (await db.execute(
@@ -392,6 +400,16 @@ async def gate_publisher_newcomers_by_release_date(
             )
         )).all():
             rd_by_app.setdefault(aid, rd)
+        # 评价数缓存（GP JSON-LD/iTunes 富化已落库，零增量请求）：取该 app 最大值
+        #（同 app 跨 combo 多行，评价数因抓取时点略异，取 max 最接近现状）。
+        for aid, rc in (await db.execute(
+            select(MarketNewcomerLog.app_id, MarketNewcomerLog.rating_count).where(
+                MarketNewcomerLog.app_id.in_(app_ids),
+                MarketNewcomerLog.rating_count.is_not(None),
+            )
+        )).all():
+            if rc is not None and rc > rc_by_app.get(aid, -1):
+                rc_by_app[aid] = rc
         # 2) 雷达 app 缓存（track_id ≡ iOS 数字 app_id）。
         miss_ids = [a for a in app_ids if a not in rd_by_app]
         if miss_ids:
@@ -404,22 +422,32 @@ async def gate_publisher_newcomers_by_release_date(
                 rd_by_app.setdefault(tid, rd)
 
     # 3) 仍缺的 → 免费 lookup（限速）。mock 模式不出外网；失败/拿不到 → 留缺失（保留行）。
+    #    Android（GP）永远拿不到 release_date，但同一响应带 rating_count → 顺带补进
+    #    评价数缓存，别让这次请求白打。已知评价数的 Android miss 行跳过 lookup
+    #    （拿不到 rd、rc 也已有，纯浪费——治「同一老包每天 digest 白打一次 GP 页」）。
     if enrich_miss and not settings.USE_MOCK_DATA:
         from app.services.newcomer_log import enrich_fields
-        still_miss = [a for a in app_ids if a not in rd_by_app]
+        still_miss = [a for a in app_ids if a not in rd_by_app
+                      and not (platform.lower() == "android" and a in rc_by_app)]
         for i, aid in enumerate(still_miss):
             if i > 0:
                 await asyncio.sleep(_ENRICH_DELAY_S)
             data = await enrich_fields(aid, country.lower(), platform.lower())
             if data and data.get("release_date"):
                 rd_by_app[aid] = data["release_date"]
+            if data and data.get("rating_count") is not None:
+                rc_by_app.setdefault(aid, data["rating_count"])
 
+    from app.services.itunes_releases import _is_established
     cutoff = (utcnow_naive() - timedelta(days=max_age_days)).strftime("%Y-%m-%d")
     out = []
     for n in newcomers:
-        rd = rd_by_app.get(n.get("app_id"))
+        aid = n.get("app_id")
+        rd = rd_by_app.get(aid)
         if rd and rd < cutoff:
             continue  # 真实上架日早于阈值 → 老产品，剔除
+        if not rd and _is_established(rc_by_app.get(aid)):
+            continue  # 上架日无从判断但存量评价巨大 → 老品（评价数代理，同雷达 ingest）
         out.append({**n, "release_date": rd})
     return out
 
