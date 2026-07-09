@@ -100,6 +100,27 @@ async def _first_appearances(
                 GameRanking.date < as_of,
             ).order_by(GameRanking.date.desc()).limit(window)
         )).scalars().all()
+        # 日历天下限（max(W 快照, N 日历天)）：US 转日更后 W=4 只等于 4 天历史，
+        # 「新面孔」退化成「4 天没见」——reentry 噪声占检出 1/4，白耗富化/翻译。
+        # 锚 as_of（非今天，保证同输入同输出）往前 N 天内的**全部**快照并入 baseline；
+        # 次市场双周一拍 N 天内本就 ≤W 个快照，行为不变。N<=0 关闭，退回纯快照数。
+        if prior_dates and settings.NEWCOMER_BASELINE_DAYS > 0:
+            try:
+                floor_date = (datetime.strptime(as_of, "%Y-%m-%d")
+                              - timedelta(days=settings.NEWCOMER_BASELINE_DAYS)
+                              ).strftime("%Y-%m-%d")
+                calendar_dates = (await db.execute(
+                    select(distinct(GameRanking.date)).where(
+                        GameRanking.country == country,
+                        GameRanking.platform == platform,
+                        GameRanking.chart_type == chart_type,
+                        GameRanking.date < as_of,
+                        GameRanking.date >= floor_date,
+                    )
+                )).scalars().all()
+                prior_dates = list(set(prior_dates) | set(calendar_dates))
+            except ValueError:
+                pass  # as_of 非法日期串（理论不出现）：退回纯快照数口径
         if not prior_dates:
             summary["no_baseline"] = True
             return summary
