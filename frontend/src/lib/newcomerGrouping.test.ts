@@ -15,6 +15,7 @@ function row(p: Partial<NewcomerHistoryItem> & { app_id: string }): NewcomerHist
     summary_cn: null, description_cn: null, subgenre_cn: null, screenshots: [],
     version: null, current_version_date: null, languages: null,
     enrich_source: null, entity_id: null, entity_name: null, is_reentry: false,
+    is_tracked: false,
     trajectory: null,
     ...p,
   }

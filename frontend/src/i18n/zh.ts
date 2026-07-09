@@ -232,6 +232,7 @@ export const zh = {
     // 一键晋升深度追踪（P0-2）：建为 tracked 竞品，iOS 自动获版本更新 / 分地区上线追踪 + 详情页趋势
     promote: '转入深度追踪',
     promoteHint: '建为追踪竞品：iOS 自动获得版本更新 / 分地区上线追踪 + 详情页趋势（安卓仅详情页趋势，无版本源）',
+    trackedBadge: '已深度追踪',
     promoteConfirm: (name: string) => `把「${name}」转入深度追踪？会在竞品库建档，iOS 后续每日自动追踪版本更新、周级追踪分地区上线（零配额）。`,
     promoted: (name: string) => `已转入深度追踪：${name} · 版本 / 分地区将随下轮同步补齐`,
     promoteExists: '该产品已在深度追踪中',

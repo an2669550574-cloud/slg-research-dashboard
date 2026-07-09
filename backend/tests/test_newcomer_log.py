@@ -476,3 +476,25 @@ async def test_history_attribution_to_non_slg_entity_not_counted_as_slg(client):
     it = next(i for i in items if i["app_id"] == "cap_x")
     assert it["entity_name"] == "资本系档案丙"   # 归属展示保留
     assert it["is_slg"] is False, "归属到非 SLG 档案不该被当 SLG 信号"
+
+
+@pytest.mark.asyncio
+async def test_history_returns_is_tracked_flag(client):
+    """/history 透出 is_tracked（games 表读时活算）：已晋升的 app 标 True，其余 False。"""
+    database = _live("app.database")
+    MarketNewcomerLog = _live("app.models.newcomer").MarketNewcomerLog
+    Game = _live("app.models.game").Game
+    now = database.utcnow_naive()
+    today = now.strftime("%Y-%m-%d")
+    async with database.AsyncSessionLocal() as db:
+        db.add(MarketNewcomerLog(country="US", platform="ios", app_id="trk_yes",
+                                 chart_type="grossing", as_of=today, rank=20,
+                                 name="已晋升新品", publisher="厂A", is_slg=True))
+        db.add(MarketNewcomerLog(country="US", platform="ios", app_id="trk_no",
+                                 chart_type="grossing", as_of=today, rank=30,
+                                 name="未晋升新品", publisher="厂B", is_slg=True))
+        db.add(Game(app_id="trk_yes", name="已晋升新品", platform="ios", country="US"))
+        await db.commit()
+    items = (await client.get("/api/newcomers/history?days=7")).json()["items"]
+    by = {i["app_id"]: i["is_tracked"] for i in items}
+    assert by["trk_yes"] is True and by["trk_no"] is False
