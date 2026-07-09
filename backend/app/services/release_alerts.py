@@ -535,6 +535,7 @@ def build_newcomer_lines(market: dict, publisher: dict,
     # 不静默丢。已识别 SLG（is_slg=true）不受此限（数量少 + 是核心情报，且多被 publisher 层覆盖）。
     lead_total = sum(1 for n in market_real if not n.get("is_slg"))
     lead_shown = 0
+    shown_market_ids: set = set()   # 已渲染的市场行 app_id——publisher 层按此去重
     for n in market_real[:10]:
         aid = n.get("app_id")
         is_lead_row = not n.get("is_slg")
@@ -542,6 +543,7 @@ def build_newcomer_lines(market: dict, publisher: dict,
             if lead_shown >= settings.DIGEST_MARKET_LEAD_TOPN:
                 continue   # 超额待识别新厂：不逐条列，循环后统一折叠（见下方 lead_hidden）
             lead_shown += 1
+        shown_market_ids.add(aid)
         # #99 忽略名单过滤后，is_slg=false 多是「真新厂商线索」而非噪声——维护者卡升级文案带
         # 行动指引（建议建档）+ 行内商店页直达；领导卡 lead_cta=False 剥掉这套维护者动作。
         is_lead = is_lead_row and lead_cta
@@ -565,7 +567,11 @@ def build_newcomer_lines(market: dict, publisher: dict,
         base = (settings.DASHBOARD_BASE_URL or "").rstrip("/")
         tail = f"，[看板核查]({base}/newcomers)" if base else ""   # 看板深链手机可达，不标 💻
         lines.append(f"> …另有 **{lead_hidden}** 个未识别新面孔上榜{tail}")
-    publisher_real = [n for n in (publisher.get("newcomers") or []) if not n.get("is_reentry")]
+    # 同 combo 两层按 app_id 互斥（对齐 free 层 merged 写法）：已建档主体的新品进了
+    # 市场层 Top50 时，✨ 市场行与 🏢 厂商行会把同一游戏渲染两遍——市场行先到先得
+    # （厂商归属已在其 meta 行内），主体层只补市场层没露出的深名次行。
+    publisher_real = [n for n in (publisher.get("newcomers") or [])
+                      if not n.get("is_reentry") and n.get("app_id") not in shown_market_ids]
     for n in publisher_real[:10]:
         aid = n.get("app_id")
         rank = f"#{n['rank']}" if n.get("rank") else "进榜"
@@ -586,7 +592,8 @@ def build_free_newcomer_lines(market: dict, publisher: dict,
                               articles: Optional[dict] = None,
                               entities: Optional[dict] = None,
                               own_matches: Optional[dict] = None,
-                              videos: Optional[dict] = None) -> list[str]:
+                              videos: Optional[dict] = None,
+                              summaries: Optional[dict] = None) -> list[str]:
     """下载榜新品 → 人读行（ADR 0001 切片 2）。
 
     **钉钉只推 is_slg=True**（下载榜噪声大：休闲/工具类装机榜混入多）——非 SLG 的
@@ -597,6 +604,7 @@ def build_free_newcomer_lines(market: dict, publisher: dict,
     from app.services.slg_publishers import is_slg
     articles = articles or {}
     entities = entities or {}
+    summaries = summaries or {}
     merged: dict[str, dict] = {}
     for n in (market.get("newcomers") or []):
         if n.get("is_slg") and not n.get("is_reentry"):
@@ -621,6 +629,8 @@ def build_free_newcomer_lines(market: dict, publisher: dict,
         lines.append(_block([
             f"⬇️ **{_md_name(n['name'])}** 下载榜 **{rank}**{_sg_label(n)}{_own_tag(aid, own_matches)}",
             f"> {inner}" if inner else "",
+            # 下载榜是「收入未起、下载先爆」的最早期信号，领导最缺先验——📝 与收入榜行对齐
+            f"📝 {summaries.get(aid)}" if summaries.get(aid) else "",
             action,
         ]))
     return lines
@@ -1052,7 +1062,8 @@ def build_daily_digest(per_combo: list[dict], today: str,
         free_blocks = (build_free_newcomer_lines(c.get("free_market") or {},
                                                  c.get("free_publisher") or {},
                                                  articles=articles, entities=entities,
-                                                 own_matches=own_matches, videos=videos_by_app)
+                                                 own_matches=own_matches, videos=videos_by_app,
+                                                 summaries=summaries)
                        if (c.get("free_market") or c.get("free_publisher")) else [])
         if not mv_all and not nc_blocks and not free_blocks:
             continue

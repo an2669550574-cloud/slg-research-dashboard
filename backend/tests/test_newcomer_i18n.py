@@ -192,3 +192,40 @@ def test_digest_newcomer_line_carries_summary():
     lines = build_newcomer_lines(market, {}, summaries={"g1": "末日生存 SLG，丧尸题材"})
     body = "\n".join(lines)
     assert "末日喧嚣" in body and "📝 末日生存 SLG，丧尸题材" in body
+
+
+@pytest.mark.asyncio
+async def test_retranslate_does_not_regress_existing_subgenre(app, monkeypatch):
+    """同 app 新 combo 触发重译、LLM 这次没给词表内 subgenre → 不得把先前有效的
+    subgenre_cn 覆盖成 NULL（⚔️ 同赛道/视频救回吊在这列上）。"""
+    from app.config import settings
+    from app.database import AsyncSessionLocal
+    from app.models.newcomer import MarketNewcomerLog
+    from app.services import newcomer_i18n as ni
+    monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
+    monkeypatch.setattr(settings, "TAISHI_API_KEY", "k")
+    calls: list = []
+    # 这次 LLM 返回不含 subgenre（等价于词表外 → None）
+    monkeypatch.setattr(ni.llm_gateway, "get_client", lambda: _Client(_FAKE_JSON, calls))
+
+    # 旧行：已翻过 + 已有有效子品类（不会进待翻集）
+    async with AsyncSessionLocal() as db:
+        db.add(MarketNewcomerLog(country="US", platform="ios", app_id="g9",
+                                 as_of="2026-07-01", name="末日围城", is_slg=True,
+                                 description="raw", summary_cn="旧摘要",
+                                 subgenre_cn="数字门SLG"))
+        # 新 combo 行：summary_cn NULL → 触发该 app 重译
+        db.add(MarketNewcomerLog(country="JP", platform="ios", app_id="g9",
+                                 as_of="2026-07-08", name="末日围城", is_slg=True,
+                                 description="raw jp"))
+        await db.commit()
+
+    done = await ni.translate_pending_newcomers()
+    assert done == 1
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import select
+        rows = (await db.execute(select(MarketNewcomerLog).where(
+            MarketNewcomerLog.app_id == "g9"))).scalars().all()
+    assert all("二战题材 SLG" in (r.summary_cn or "") for r in rows)  # summary 照常覆盖
+    assert any(r.subgenre_cn == "数字门SLG" for r in rows), \
+        "词表外返回不得把已有子品类抹成 NULL"

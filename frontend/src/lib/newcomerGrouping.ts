@@ -18,6 +18,8 @@ export interface GroupedNewcomer {
   anyReentry: boolean
   /** 任一检出来自下载榜（chart='all' 时用于卡片打榜类型徽标）。 */
   anyFree: boolean
+  /** 玩法子品类：跨行 coalesce 取首个非空（按 app 翻译产出，可能只落在部分行）。 */
+  subgenre: string | null
 }
 
 /** 把扁平的逐市场检出按 app_id 收成卡片。保留首次出现顺序（服务端已按
@@ -44,6 +46,7 @@ export function groupByApp(items: NewcomerHistoryItem[]): GroupedNewcomer[] {
       earliestAsOf: earliest.as_of,
       anyReentry: rows.some(r => r.is_reentry === true),
       anyFree: rows.some(r => r.chart_type === 'free'),
+      subgenre: rows.map(r => r.subgenre_cn).find(v => !!v) ?? null,
     }
   })
 }

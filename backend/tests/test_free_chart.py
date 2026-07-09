@@ -236,3 +236,14 @@ def test_free_publisher_line_respects_row_level_is_slg():
     joined = "\n".join(lines)
     assert "라스트 퍼리" in joined
     assert "무관한 퍼즐" not in joined
+
+
+def test_free_lines_include_summary():
+    """下载榜行带 📝 一句话摘要（与收入榜行对齐）：下载榜是最早期信号，领导最缺先验。"""
+    from app.services.release_alerts import build_free_newcomer_lines
+    market = {"newcomers": [
+        {"app_id": "fs1", "rank": 8, "name": "废土黎明", "publisher": "厂", "is_slg": True},
+    ]}
+    lines = build_free_newcomer_lines(market, {}, summaries={"fs1": "末日题材基地建设 SLG，主打联盟攻城"})
+    joined = "\n".join(lines)
+    assert "📝 末日题材基地建设 SLG" in joined

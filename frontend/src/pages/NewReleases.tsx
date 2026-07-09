@@ -27,7 +27,9 @@ export default function NewReleases() {
   // 历史视图筛选：默认全市场全平台合并（卡片自带 combo 徽标），Top100 / 90 天。
   const [mktPlatform, setMktPlatform] = useLocalStorageState<'all' | Platform>('slg.nc.platform', 'all')
   const [mktCountry, setMktCountry] = useLocalStorageState<'all' | Country>('slg.nc.country', 'all')
-  const [topn, setTopn] = useLocalStorageState<50 | 100>('slg.nc.topn', 100)
+  // Top 档位真过滤：此前 topn=100 传 undefined（完全不过滤），「Top 100」按钮点亮却混入
+  // 101-200 的主体深榜行——标签与口径不符。现 50/100 都真传，另加「全部」档显式看全量。
+  const [topn, setTopn] = useLocalStorageState<50 | 100 | 'all'>('slg.nc.topn', 100)
   const [days, setDays] = useLocalStorageState<30 | 90>('slg.nc.days', 90)
   // 信号筛选：真首发(默认) / 回归 / 全部。PR #93 把回归识别出来后默认隐藏，
   // 回归独立 tab 给运营回看「老游戏卷土重来」的情报信号。
@@ -45,7 +47,7 @@ export default function NewReleases() {
     queryKey: ['newcomerHistory', mktCountry, mktPlatform, topn, days, signal, chart],
     queryFn: () => newcomersApi.history({
       days,
-      topn: topn === 100 ? undefined : topn,
+      topn: topn === 'all' ? undefined : topn,
       country: mktCountry === 'all' ? undefined : mktCountry,
       platform: mktPlatform === 'all' ? undefined : mktPlatform,
       signal,
@@ -261,13 +263,13 @@ export default function NewReleases() {
               ))}
             </div>
             <div className="flex gap-1 bg-elevated rounded-lg p-1">
-              {([50, 100] as const).map(n => (
+              {([50, 100, 'all'] as const).map(n => (
                 <button
                   key={n}
                   onClick={() => setTopn(n)}
                   className={`px-2.5 py-1.5 rounded-md text-xs font-medium font-data transition-colors ${topn === n ? 'bg-brand-600 text-white' : 'text-secondary hover:text-primary'}`}
                 >
-                  Top {n}
+                  {n === 'all' ? t.newcomers.allLabel : `Top ${n}`}
                 </button>
               ))}
             </div>
@@ -420,6 +422,7 @@ export default function NewReleases() {
                   </div>
                 )}
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-data text-muted">
+                  {gr.subgenre && <span className="px-1.5 py-0.5 bg-elevated rounded text-accent" title={t.newcomers.subgenreHint}>{gr.subgenre}</span>}
                   {g.genre && <span className="px-1.5 py-0.5 bg-elevated rounded text-secondary">{g.genre}</span>}
                   {g.rating != null && g.rating > 0 && (
                     <span className="inline-flex items-center gap-0.5 text-amber-400">

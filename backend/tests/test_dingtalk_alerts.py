@@ -1362,3 +1362,24 @@ async def test_leader_digest_once_per_day(client, monkeypatch):
     c = Counter(sent)
     assert c["maintainer"] == 2   # 维护者群不设限，两次都发
     assert c["leader"] == 1       # 领导群当天只发一次
+
+
+def test_newcomer_lines_dedupe_market_and_publisher_layers():
+    """同 combo 两层按 app_id 互斥：已建档主体的新品同时进市场层 Top50 时，
+    只渲染 ✨ 市场行一遍，🏢 主体行让位；主体独有的深名次行照常渲染。"""
+    from app.services.release_alerts import build_newcomer_lines
+    market = {"newcomers": [
+        {"app_id": "dup1", "rank": 12, "name": "王国远征", "publisher": "Century Games",
+         "is_slg": True},
+    ]}
+    publisher = {"newcomers": [
+        {"app_id": "dup1", "rank": 12, "name": "王国远征", "publisher": "Century Games",
+         "entity_id": 1, "entity_name": "点点互动"},
+        {"app_id": "deep1", "rank": 144, "name": "深榜新品", "publisher": "Century Games",
+         "entity_id": 1, "entity_name": "点点互动"},
+    ]}
+    lines = build_newcomer_lines(market, publisher)
+    joined = "\n".join(lines)
+    assert joined.count("王国远征") == 1, "同一游戏两层各渲一遍 = 重复行"
+    assert "✨" in joined.split("深榜新品")[0]   # 市场行先到先得
+    assert "深榜新品" in joined                  # 主体独有深名次行保留
