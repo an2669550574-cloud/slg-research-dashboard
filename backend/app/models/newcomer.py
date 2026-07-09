@@ -131,3 +131,31 @@ class NewcomerVideoSearch(Base):
     name: Mapped[str] = mapped_column(String(300))
     result_count: Mapped[int] = mapped_column(Integer, default=0)
     searched_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)
+
+
+class RssChartSeen(Base):
+    """RSS 早鸟信号层的「已见」台账（ADR 0005）。
+
+    一行 = 某国 iOS 策略畅销 RSS 榜（免费 Apple 源，零 ST）里出现过的一个 app。
+    与 itunes_releases 的 is_baseline 同哲学：首次拉取整榜落台账不报（无从判「新」），
+    之后每天 diff——不在台账的 = 榜上新面孔候选，再过 ST 已见/检出已见/忽略名单三道闸
+    后才算「早鸟检出」。(country, app_id) 唯一；last_seen/last_rank 随每日拉取更新，
+    供后续观察「早鸟检出后的走势」。
+    """
+    __tablename__ = "rss_chart_seen"
+    __table_args__ = (
+        UniqueConstraint("country", "app_id", name="uq_rss_seen_country_app"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    country: Mapped[str] = mapped_column(String(10), index=True)
+    app_id: Mapped[str] = mapped_column(String(200), index=True)
+    name: Mapped[str] = mapped_column(String(300))
+    publisher: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    first_seen_date: Mapped[str] = mapped_column(String(20))
+    first_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    last_seen_date: Mapped[str] = mapped_column(String(20))
+    last_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # 首轮基线 / ST 已见等「不作为早鸟信号」的行 = True；真早鸟检出 = False。
+    is_baseline: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)

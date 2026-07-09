@@ -995,6 +995,21 @@ def _ranked_newcomer_buttons(per_combo: list[dict]) -> list[tuple[str, str]]:
     return btns
 
 
+def build_rss_earlybird_lines(items: list[dict], cap: int) -> list[str]:
+    """「⚡ RSS 早鸟」段（ADR 0005）：次市场当日 RSS 策略畅销榜的新面孔——ST 快照
+    还没到（双周一拍），这是最早的免费信号。已识别 SLG 优先、按名次升序；仅维护者卡
+    （早鸟未过 ST 口径核实，对领导是噪声风险；确认后自然经 ST 检出进正常通道）。"""
+    out: list[str] = []
+    ordered = sorted(items, key=lambda x: (not x.get("is_slg"), x.get("rank") or 999))
+    for it in ordered[:cap]:
+        tag = "" if it.get("is_slg") else "  ⚠️ 待识别"
+        pub = f" · {_md_name(it['publisher'])}" if it.get("publisher") else ""
+        out.append(f"⚡ **{_md_name(it['name'])}** "
+                   f"{_market_label(it['country'], 'ios')} 策略畅销 **#{it.get('rank')}**"
+                   f"{pub}{tag}")
+    return out
+
+
 def build_daily_digest(per_combo: list[dict], today: str,
                        articles: Optional[dict] = None,
                        entities: Optional[dict] = None,
@@ -1006,7 +1021,8 @@ def build_daily_digest(per_combo: list[dict], today: str,
                        audience: str = "maintainer",
                        own_matches: Optional[dict] = None,
                        industry_articles: Optional[list] = None,
-                       radar_items: Optional[list] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
+                       radar_items: Optional[list] = None,
+                       rss_items: Optional[list[dict]] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
     """全 combo 检测结果 → (title, markdown, btns)。全空 → None（不发）。
 
     per_combo: [{country, platform, movement: dict|None, market: dict|None, publisher: dict|None}]
@@ -1109,6 +1125,16 @@ def build_daily_digest(per_combo: list[dict], today: str,
             sections.append(
                 "【🔍 待建档新厂线索】（下载榜疑似 SLG、白名单未收录 → 请人工核查建档）"
                 "\n\n" + "\n\n".join(lead_lines))
+    # RSS 早鸟段（ADR 0005）：次市场当日 RSS 策略畅销榜的新面孔，ST 快照未到时的
+    # 最早免费信号。仅维护者卡——未过 ST 口径核实，领导卡不加（减量宪法）；ST 双周
+    # 快照到位后同一 app 会经正常检出通道进两卡（届时 RSS 影子行已让它带上翻译/视频）。
+    if rss_items and not is_leader:
+        rss_lines = build_rss_earlybird_lines(rss_items, cap)
+        if rss_lines:
+            total += len(rss_lines)
+            sections.append(
+                "【⚡ RSS 早鸟】（次市场当日榜 · ST 快照未到 · Apple RSS 免费源）"
+                "\n\n" + "\n\n".join(rss_lines))
     # 平淡日兜底段之一：商店雷达近期新上架（见 send_daily_digest 平淡日闸门）。厂商开发者
     # 账号清单 diff 的 catch。#178 上线时仅维护者卡；2026-07-03 应领导反馈「卡太单薄」
     # 改为**两卡都发**（平淡日才触发，正常日不占领导注意力）。
@@ -1280,6 +1306,16 @@ async def send_daily_digest() -> bool:
         await sync_newcomer_videos()
     except Exception:
         logger.exception("Newcomer video drain (in digest) crashed")
+    # RSS 早鸟（ADR 0005）：拉次市场当日 RSS 策略畅销榜 diff 台账，真早鸟落影子行
+    # （riding 富化/翻译/视频管道）。放 webhook 闸门**之前**——台账/影子行不依赖
+    # webhook；返回的 items 给下方维护者卡「⚡ RSS 早鸟」段（misfire 补跑台账已见 →
+    # items 空 → 不重复推）。零 ST；失败静默降级（旧版 RSS 随时可能退役）。
+    rss_earlybird_items: list[dict] = []
+    try:
+        from app.services.rss_earlybird import sync_rss_earlybird
+        rss_earlybird_items = (await sync_rss_earlybird()).get("items") or []
+    except Exception:
+        logger.exception("RSS earlybird sync (in digest) crashed")
     # 维护者群或领导群任一配了 webhook 就跑（两群独立，不因没配 maintainer 就漏发领导卡）。
     if not (dingtalk.is_enabled() or dingtalk.leader_target_configured()):
         return False
@@ -1591,7 +1627,8 @@ async def send_daily_digest() -> bool:
                                   video_items=video_items, region_changes=region_changes,
                                   summaries=summaries_by_app, lead_items=lead_items,
                                   audience=audience, own_matches=own_matches,
-                                  industry_articles=industry_articles, radar_items=radar_items)
+                                  industry_articles=industry_articles, radar_items=radar_items,
+                                  rss_items=rss_earlybird_items)
 
     sent_any = False
     msg_m = _render("maintainer")
