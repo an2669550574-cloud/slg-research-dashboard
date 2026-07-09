@@ -33,9 +33,9 @@
 
 > **prod 直改配方（不发版、零 ST；prod 现在 Cloudflare 后需绕过 CF/Bot-Fight）**：服务器上
 > `D=$(grep ^SLG_DOMAIN .env|cut -d= -f2); K=$(grep ^API_KEY= .env|cut -d= -f2-)` 后：
-> 改 is_slg → `curl --resolve $D:443:127.0.0.1 -k -H "X-API-Key:$K" -X PUT https://$D/api/publishers/{id} -d '{"is_slg":false}'`；
+> 改 is_slg → `curl --resolve $D:443:127.0.0.1 -k -H "X-API-Key:$K" -X PUT https://$D/api/publishers/{id} -d '{"is_slg":false}'`；**（#224 起）改 is_slg=false 即从白名单摘除该主体全部 alias**——`load_index_from_db` 现按 `entity.is_slg` 门控加载 alias（旧行为=加载全部 alias、只能靠删 alias 收噪声，已修）。**app_id 钉选不受此门控**（钉选语义=单品即 SLG，多品类大厂 is_slg=false + pin 单品的范式照常生效）。
 > 删误钉 pin → `DELETE https://$D/api/publishers/{entity_id}/app-ids/{row_id}`（行 id 查 `publisher_app_ids`，非 app_id）。
-> 删 alias → `DELETE https://$D/api/publishers/{entity_id}/aliases/{alias_id}`（行 id 查 `publisher_aliases`）——治「母体靠 alias 名称匹配把名下非 SLG 全拉进卡」（比 is_slg flag 更根本：`load_index_from_db` 加载 alias **不按 entity.is_slg 门控**，泄漏面 = 有没有 alias 行）。
+> 删 alias → `DELETE https://$D/api/publishers/{entity_id}/aliases/{alias_id}`（行 id 查 `publisher_aliases`）——针对「is_slg=true 主体的某条 alias 过宽误命中」（is_slg=false 主体已被上面的旗标门控整体摘除，无需删 alias）。
 > `--resolve …127.0.0.1` 直连源站绕 CF；端点自动 `load_index_from_db`。是「多品类大厂/母体错标 is_slg=1 全量放噪声」的订正手段。**订正史**：2026-07-05 降级 Moonton/CyberJoy 等 9 个 + 删 2 误钉 pin（治 digest 外文噪声刷屏）；2026-07-06 删 Tilting Point(22)/Rudel(104) 两个「有 alias 但名下无追踪 SLG、实测 newcomer/movement 全空」的休眠 alias（预防性，回滚=POST 回 keyword）——同轮核查确认 Level Infinite(27)/Scopely(29)=pin-only 不泄漏、Stillfront(24) alias 只命中真 SLG(Supremacy: Call of War)故留。
 
 ## 数据存哪、怎么改

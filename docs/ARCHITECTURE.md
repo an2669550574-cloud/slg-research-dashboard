@@ -129,7 +129,8 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 
 | 配置 | 值 | 含义 |
 |---|---|---|
-| `NEWCOMER_WINDOW` | 4 | 回看几个快照作 baseline。US daily ≈ 4 天，JP/KR/DE/RU weekly ≈ 4 周 |
+| `NEWCOMER_WINDOW` | 4 | 回看几个快照作 baseline。实际取 `max(W 快照, NEWCOMER_BASELINE_DAYS 日历天)`（见下行） |
+| `NEWCOMER_BASELINE_DAYS` | 30 | baseline 日历天下限（#222）：US 转日更后 W=4 只 ≈4 天、「新面孔」退化成「4 天没见」（reentry 占检出 25% 白耗富化/翻译）→ 锚 as_of 往前 30 天内**全部**快照并入 baseline；次市场双周一拍 30 天内本就 ≤4 快照、行为不变。<=0 关闭退回纯快照数 |
 | `NEWCOMER_TOPN` | 50 | 全市场新面孔：名次 ≤ 此值才算「新进榜」 |
 | `PUBLISHER_NEWCOMER_TOPN` | 200 | 厂商主体新品：名次 ≤ 此值（比 50 宽——主体可信，名次较深也值得看，但砍 #201+ 长尾） |
 | `PUBLISHER_NEWCOMER_MIN_BASELINE` | 3 | 厂商新品 baseline 充分性门控（#161）：本地快照 < 此值视为 no_baseline 不报 |
@@ -139,7 +140,7 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 
 `no_baseline`（冷库/首次同步、无历史快照）一律返回空——绝不把首图全员当新品。
 
-> **厂商新品老产品门控（#161，A+B 双门控）**：「新」用「首次出现在本地 `game_rankings`」判定，是真实上线日的**零配额代理**——但对快照稀疏的次市场（DE/RU 双周同步）失真：combo 只采了 1~2 个快照时，"首次进本地榜" ≈ "首次被采到"，整批 2013–2017 老 SLG 被误报（prod 实测 45 项中 41 项是老产品，`is_reentry` 只滤掉 4 个）。两道门控：**B baseline 充分性**（`detect_publisher_newcomers`，快照 < `PUBLISHER_NEWCOMER_MIN_BASELINE`=3 → no_baseline，纯本地、三消费方[页面/digest/落库]都受益）；**A 真实上架日门控**（`gate_publisher_newcomers_by_release_date`，剔除早于 `ITUNES_RELEASES_OLD_RELEASE_DAYS`=180d 上架的，缓存优先 `MarketNewcomerLog`→`PublisherItunesApp`、miss 才打免费 lookup、缺失保留，端点+digest 各调用，落库不调以保留底）。prod 实测 45→8 全真新品。
+> **厂商新品老产品门控（#161，A+B 双门控）**：「新」用「首次出现在本地 `game_rankings`」判定，是真实上线日的**零配额代理**——但对快照稀疏的次市场（DE/RU 双周同步）失真：combo 只采了 1~2 个快照时，"首次进本地榜" ≈ "首次被采到"，整批 2013–2017 老 SLG 被误报（prod 实测 45 项中 41 项是老产品，`is_reentry` 只滤掉 4 个）。两道门控：**B baseline 充分性**（`detect_publisher_newcomers`，快照 < `PUBLISHER_NEWCOMER_MIN_BASELINE`=3 → no_baseline，纯本地、三消费方[页面/digest/落库]都受益）；**A 真实上架日门控**（`gate_publisher_newcomers_by_release_date`，剔除早于 `ITUNES_RELEASES_OLD_RELEASE_DAYS`=180d 上架的，缓存优先 `MarketNewcomerLog`→`PublisherItunesApp`、miss 才打免费 lookup、缺失保留，端点+digest 各调用，落库不调以保留底）。prod 实测 45→8 全真新品。**Android 评价数兜底（#221）**：GP 详情页永远拿不到 release_date（prod 32/32 全 NULL）→ A 门控对安卓形同虚设、老包直通「厂商新品」段。故 release_date 三层全 miss 时退回评价数代理 `_is_established`（`rating_count`≥`ITUNES_RELEASES_ESTABLISHED_RATING_COUNT`=10000 判老剔除，与雷达 #176 同常量同哲学，rating_count 已随富化落库零增量）；已知评价数的安卓 miss 行跳过 lookup（拿不到 rd 白打）。iOS 有真实上架日不受影响。
 
 ### is_reentry：真首发 vs 回归（PR #93/#94）
 
@@ -199,6 +200,10 @@ US-only 非次市场同步日 + 美区平淡时卡很薄（实测某日仅 2 异
 与上面「**故意不按 is_slg 过滤**」不冲突，是**两类信号的精准切分**：is_slg 白名单滞后维护、会漏掉真新厂（如新出海 SLG），按它过滤是误杀；忽略名单是逐条人工确认的非 SLG，过滤安全，且**不影响未建档的真 SLG**——不在名单里的新厂仍照常浮现（DEQU《Order of Kings》就是这样被新品监测捞出、2026-06-22 建档的）。`detect_publisher_newcomers`（已建档主体新品）天然 entity-scoped，不受影响。
 
 **两处过滤口径（PR #99/#101）**：`detect_newcomers`（live `/` + 检出沉淀 sink + digest）在**检测时**过滤；`/history`（前端「全市场新面孔」视图读的就是这个）在**读时**过滤——后者让前端点「忽略」后该发行商行**立即消失**（日志行原样保留、不删表）。前端新品卡 is_slg=false 时同时给「建档」+「忽略」双动作：建档转主体、忽略写 `publisher_ignores`，与缺口卡同一闭环。
+
+### is_slg 跨 combo 一致性（#219，级联 7 下游）
+
+`is_slg` 原按每行的本地化 publisher 串**逐行判定**，次市场商店返回韩/日/俄文厂商名 → 同一 app_id 跨 combo 判定分裂（prod 实锤：Last Furry KR-ios=1 但 JP/KR 其余 combo=0）。这条不一致级联污染 7 个下游：领导卡 market 过滤 / 下载榜 is_slg 门控 / subgenre 回补候选 / 视频搜集门控 / 周察卡 / 翻译优先级 / 前端默认视图分桶。两步治理（全零配额）：① **非拉丁 alias substring 匹配**（`slg_publishers._alias_raw_substrings`，`_tokens` 按 `[a-z0-9]` 分词会把 CJK alias 滤成空 token 丢弃——人工建韩/日文马甲原本也命不中；len≥2 护栏）；② **app_id 级 OR 传播**（`newcomer_log.slg_app_ids_known`：任一 log 行 is_slg=1 或已 tracked → 该 app_id 全体算 SLG，iOS 数字 id / GP 包名全球唯一故安全）——落库继承记忆 + 前进式对齐既有行、digest 拼卡前统一回写、`/history` 读时聚合活算、视频门控 / subgenre 候选 / 周察卡各消费一次；迁移 0040 一次性对齐存量分裂行。**白名单加载按 entity.is_slg 门控（#224）**：`load_index_from_db` 只收 is_slg=true 主体的 alias（治沐瞳/HABBY 等资本系档案 alias 污染），但 **app_id 钉选不过滤**（单品即 SLG）；`attribute_entities` 随之返回 `entity_is_slg`，`/history` 归属到 is_slg=false 档案只展示 entity_name、不当 SLG 信号。
 
 ### 每日 digest 群推送封顶（PR #101）
 
@@ -319,11 +324,11 @@ digest 给新品行附行业公众号文章（`_match_articles_to_apps`）。匹
 
 **新品检测按 chart_type 各自 baseline（切片 2）**：`_first_appearances`/`detect_newcomers`/`detect_publisher_newcomers` 接 `chart_type` 参数（默认 grossing）。`record_market_newcomers` 对开了下载榜的 combo 两榜各检出各落库（`market_newcomer_log.chart_type`，alembic 0027，四元组唯一）。`/newcomers/history?chart=grossing|free|all`（默认 grossing，前端零回归）。
 
-**digest 下载榜段只推 is_slg=True**：`build_free_newcomer_lines`（⬇️【下载榜新品 · SLG】段）按 is_slg 门控钉钉推送——下载榜噪声大，非 SLG 仍入库 + 看板可见但不进卡片（口径差异刻意，与「收入榜故意不按 is_slg 过滤」相对）。详见 [ADR 0001](adr/0001-rankings-chart-type-free-chart.md)。
+**digest 下载榜段只推 is_slg=True**：`build_free_newcomer_lines`（⬇️【下载榜新品 · SLG】段）按 is_slg 门控钉钉推送——下载榜噪声大，非 SLG 仍入库 + 看板可见但不进卡片（口径差异刻意，与「收入榜故意不按 is_slg 过滤」相对）。详见 [ADR 0001](adr/0001-rankings-chart-type-free-chart.md)。**#220 补**：下载榜行补 📝 `summary_cn`（下载先爆是最早期信号、领导最缺先验，原唯一裸奔段）；grossing 的 market×publisher 两层按 app_id 互斥（对齐 free 层 merged 写法，治已建档主体新品进 Top50 时 ✨ 市场行 + 🏢 厂商行重复渲染）。**仍开 backlog**：跨 combo（非同 combo）按 app_id 去重。
 
 **前端（切片 3）**：新品页加「收入榜 / 下载榜 / 两榜」筛选 chip（默认收入榜，对应 `/history?chart=`），下载榜检出卡片打 ⬇️「下载榜」徽标（`GroupedNewcomer.anyFree`）。
 
-**新品页 SLG 状态筛选 + 卡片中文摘要（PR #147，`NewReleases.tsx`）**：market 视图加「SLG 状态」筛选 chip——**已识别 SLG / 待识别新厂 / 全部**（带实时计数），**默认只看已识别 SLG**，把 `is_slg=false` 待识别新厂折进独立桶（治次市场非 SLG 噪声默认刷屏催建档）。纯前端按 `gr.rep.is_slg` 过滤分组（`/history` item 已带 is_slg，无需后端改）。卡片直接显 📝 `summary_cn`（原仅抽屉）。筛选 hint 点明 **`is_slg` 是厂商维度、非产品品类**（已识别 SLG 里仍可能混该厂的塔防/消除）。**权衡**：待识别默认收起 → 维护者靠 digest「待建档线索段」（见 § digest）做建档触点，不靠主动点 tab。「按产品品类彻底分真 SLG」（口径 B，LLM 品类门控）决议先不做、观察。
+**新品页 SLG 状态筛选 + 卡片中文摘要（PR #147，`NewReleases.tsx`）**：market 视图加「SLG 状态」筛选 chip——**已识别 SLG / 待识别新厂 / 全部**（带实时计数），**默认只看已识别 SLG**，把 `is_slg=false` 待识别新厂折进独立桶（治次市场非 SLG 噪声默认刷屏催建档）。纯前端按 `gr.rep.is_slg` 过滤分组（`/history` item 已带 is_slg，无需后端改）。卡片直接显 📝 `summary_cn`（原仅抽屉）。筛选 hint 点明 **`is_slg` 是厂商维度、非产品品类**（已识别 SLG 里仍可能混该厂的塔防/消除）。**权衡**：待识别默认收起 → 维护者靠 digest「待建档线索段」（见 § digest）做建档触点，不靠主动点 tab。「按产品品类彻底分真 SLG」（口径 B，LLM 品类门控）决议先不做、观察。**渲染层修补（#220）**：① `subgenre_cn` 透出 `/history` + 卡片 chip（原花 LLM 算出却只在赛道脉搏聚合条露出、卡片看不到）；② 「Top 100」筛选**真过滤**（原 `topn=100` 传 `undefined` = 完全不过滤、混入 rank 101-200 的主体深榜行，标签与口径不符）+ 加「全部」档；③ `GroupedNewcomer.subgenre` 跨行 coalesce 取首个非空（子品类按 app 翻译产出、可能只落部分 combo 行）。
 
 ### 竞品新品实机玩法视频自动搜集（ADR 0002，alembic 0029+0032）
 
@@ -350,6 +355,8 @@ digest 给新品行附行业公众号文章（`_match_articles_to_apps`）。匹
 ### 新品周察周报卡（`build_weekly_newcomer_review`，P0-1③，#188）
 
 周级独立卡（scheduler 周一 **04:40 UTC** `weekly_newcomer_review`）：回顾近 `DIGEST_WEEKLY_REVIEW_DAYS`(30) 天检出的 SLG 新品按走势分层——🚀 起飞(climbing) / ✅ 在榜存活 / ✝️ 掉榜(dropped)，起飞+掉榜段列明细（`DIGEST_WEEKLY_REVIEW_CAP`=8）。**live `is_slg` 过滤**（不读陈旧存档列）、一 app 一代表行（优先 US/iOS）、空窗口返回 None 不发空卡。**仅维护者卡**（#209，2026-07-06 用户裁定：这是分析/趋势向的生命周期分层卡，非当日已核实竞品动态，领导群只保留每日 digest；#188 上线时曾两卡都发）。**可读化（#209，与 #198 每日 digest 同款）**：起飞/掉榜行接中文玩法子品类标签 `_sg_label`（复用 `_subgenres_for_apps`，外文名一眼辨品类、顺带暴露误标如塔防）+ 排名白话化（`#141 → #21，7 天涨 120 名`，head 加「名次=畅销榜排名」说明句）。`DIGEST_WEEKLY_REVIEW_ENABLED` 开关。**无幂等台账**（周级 misfire 重发无害，与领导群每日幂等 #179 不同轴，故意不引表）。**坑**：代表行优先 US/iOS 会掩盖同 app 跨市场走势分歧（Android 掉榜但 iOS 在榜→计在榜），v1 接受。零 ST。
+
+**晋升 push 触发（#223，裁定=入口摩擦非刻意）**：两个月 63 个 SLG 检出、0 晋升 tracked——一键晋升原只埋在看板抽屉第三层。起飞段（climbing）里**未 tracked** 的候选行尾加「⭐ 建议转深度追踪」+ 看板 `?focus=` 深链（落地即高亮卡片、抽屉内就是晋升按钮），把「看到→行动」压到两步（已 tracked 的不唠叨，`Game` 表读时判）。新品页同步把晋升按钮从抽屉提到卡面（`爬升×SLG×未追踪`，紧凑样式 `stopPropagation` 不误开抽屉）；`/history` 新增 `is_tracked`（games 表读时活算）驱动卡面按钮显隐 + 抽屉转「已深度追踪」徽标。**观察一个月仍 0 用则裁按钮去留。**
 
 ### 高潜新品一键晋升 tracked（P0-2，#188）
 
