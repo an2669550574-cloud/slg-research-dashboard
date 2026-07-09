@@ -557,3 +557,43 @@ async def test_enrich_endpoint_miss_returns_found_false(client, monkeypatch):
     assert d["found"] is False
     assert d["screenshots"] == []
     assert d["version"] is None
+
+
+@pytest.mark.asyncio
+async def test_gate_established_rating_count_proxy_for_missing_release_date(client):
+    """评价数兜底：release_date 三层全 miss（GP 侧永远拿不到）时，rating_count ≥
+    ESTABLISHED 阈值 = 明显老品剔除；评价数低/也缺 = 真软启动新品保留（不丢信号）；
+    有真实上架日且够新的行不受评价数影响（老游戏新上此区场景）。"""
+    from datetime import timedelta
+    from app.services.newcomers import gate_publisher_newcomers_by_release_date
+    from app.config import settings
+    from app.database import AsyncSessionLocal, utcnow_naive
+    from app.models.newcomer import MarketNewcomerLog
+
+    new_day = (utcnow_naive() - timedelta(days=10)).strftime("%Y-%m-%d")
+    big = settings.ITUNES_RELEASES_ESTABLISHED_RATING_COUNT + 5
+    async with AsyncSessionLocal() as db:
+        # GP 老包：rd NULL + 巨量评价（prod gp 源 32/32 全 NULL 的典型形态）
+        db.add(MarketNewcomerLog(country="KR", platform="android", app_id="com.old.pkg",
+                                 chart_type="grossing", as_of=new_day, name="老牌基建手游",
+                                 release_date=None, rating_count=big))
+        # 真软启动新品：rd NULL + 评价数很小
+        db.add(MarketNewcomerLog(country="KR", platform="android", app_id="com.soft.pkg",
+                                 chart_type="grossing", as_of=new_day, name="软启动新品",
+                                 release_date=None, rating_count=37))
+        # 新上架且评价爆量（爆款新品）：有 rd 且新 → 评价数不参与判定，保留
+        db.add(MarketNewcomerLog(country="KR", platform="android", app_id="com.hit.pkg",
+                                 chart_type="grossing", as_of=new_day, name="爆款新品",
+                                 release_date=new_day, rating_count=big))
+        await db.commit()
+
+    items = [
+        {"app_id": "com.old.pkg", "name": "老牌基建手游"},
+        {"app_id": "com.soft.pkg", "name": "软启动新品"},
+        {"app_id": "com.nodata.pkg", "name": "零信息新品"},
+        {"app_id": "com.hit.pkg", "name": "爆款新品"},
+    ]
+    out = await gate_publisher_newcomers_by_release_date(items, "KR", "android")
+    names = {n["name"] for n in out}
+    assert "老牌基建手游" not in names, "rd 缺失 + 巨量评价 = 老品应剔除"
+    assert {"软启动新品", "零信息新品", "爆款新品"} <= names
