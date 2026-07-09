@@ -110,3 +110,23 @@ def test_is_slg_falls_back_to_publisher_when_appid_not_pinned():
     assert is_slg("999999999", "Century Games Pte. Ltd.") is True   # 发行商路命中
     assert is_slg("999999999", "Supercell") is False                # 两路都不中
     assert is_slg(None, "FunPlus International AG") is True          # app_id 缺失不影响发行商路
+
+
+def test_non_ascii_alias_substring_match():
+    """非拉丁 alias（韩/日文马甲）走 substring 路径：_tokens 按 [a-z0-9] 分词会把
+    CJK keyword 滤成空 token，原实现直接丢弃——人工建韩文马甲也永远命不中。
+    次市场商店返回本地化 publisher 串是 is_slg 跨 combo 分裂的根因之一。"""
+    from app.services import slg_publishers as sp
+    sp._set_index(sp._seed_keywords() + ["조이시티", "ジョイシティ"], sp._seed_app_ids())
+    assert sp.is_slg_publisher("주식회사 조이시티") is True      # 韩文法人前缀 + 马甲
+    assert sp.is_slg_publisher("株式会社ジョイシティ") is True   # 日文连写
+    assert sp.is_slg_publisher("JOYCITY Corporation") is True   # token 路径不受影响
+    assert sp.is_slg_publisher("어떤 무관한 회사") is False
+    assert sp.is_slg_publisher("") is False and sp.is_slg_publisher(None) is False
+
+
+def test_non_ascii_alias_single_char_dropped():
+    """单字符非拉丁 alias 防过匹配：len<2 不进 substring 索引。"""
+    from app.services import slg_publishers as sp
+    sp._set_index(sp._seed_keywords() + ["조"], sp._seed_app_ids())
+    assert sp.is_slg_publisher("조이시티") is False

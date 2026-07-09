@@ -15,7 +15,7 @@ from typing import Optional
 
 import httpx
 from datetime import timedelta
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 
 from app.config import settings
 from app.database import AsyncSessionLocal, utcnow_naive
@@ -102,6 +102,29 @@ async def enrich_fields(app_id: str, country: str, platform: str) -> Optional[di
         return None
 
 
+async def slg_app_ids_known(app_ids: Optional[set[str]] = None) -> set[str]:
+    """app_id 级 SLG 记忆：任一 log 行 is_slg=1，或已是 tracked game 的 app_id 集合。
+
+    is_slg() 是按 publisher 串逐行判定的——次市场商店返回本地化厂商名（韩/日/俄文），
+    同一游戏跨 combo 判定会分裂（Last Furry KR-ios=1 / JP-ios=0 实锤）。iOS 数字
+    app_id 与 GP 包名都全球唯一，「任一 combo 判过 SLG」按 app_id OR 传播天然安全。
+    消费方：落库（新行继承记忆）、digest（拼卡前统一回写）、/history 读端、
+    subgenre 回补候选、视频 SLG 门控。传 app_ids 时只查这批（省一次全表扫）。
+    """
+    from app.models.game import Game
+    async with AsyncSessionLocal() as db:
+        q = select(MarketNewcomerLog.app_id).where(MarketNewcomerLog.is_slg.is_(True)).distinct()
+        gq = select(Game.app_id)
+        if app_ids is not None:
+            if not app_ids:
+                return set()
+            q = q.where(MarketNewcomerLog.app_id.in_(app_ids))
+            gq = gq.where(Game.app_id.in_(app_ids))
+        out = set((await db.execute(q)).scalars().all())
+        out |= set((await db.execute(gq)).scalars().all())
+    return out
+
+
 async def _record_one_chart(country: str, platform: str, chart_type: str) -> dict:
     """单个榜（chart_type）的检出 → 落库 → 富化。返回 {detected, recorded, enriched}。
 
@@ -130,6 +153,10 @@ async def _record_one_chart(country: str, platform: str, chart_type: str) -> dic
     if not newcomers:
         return out
 
+    # app_id 级 SLG 记忆（跨 combo/跨榜/跨天）：别的 combo 曾判 SLG 或已 tracked 的，
+    # 本 combo 本地化 publisher 串命不中白名单也照样标 1——治跨 combo is_slg 分裂。
+    known_slg = await slg_app_ids_known({n["app_id"] for n in newcomers})
+
     async with AsyncSessionLocal() as db:
         seen = set((await db.execute(
             select(MarketNewcomerLog.app_id).where(
@@ -151,7 +178,8 @@ async def _record_one_chart(country: str, platform: str, chart_type: str) -> dic
                 chart_type=chart_type,
                 as_of=as_of, name=n["name"], publisher=n.get("publisher"),
                 icon_url=n.get("icon_url"), rank=n.get("rank"),
-                revenue=n.get("revenue"), is_slg=bool(n.get("is_slg")),
+                revenue=n.get("revenue"),
+                is_slg=bool(n.get("is_slg")) or n["app_id"] in known_slg,
                 # PR #93+0022：固化检出时的真首发 vs 回归判断（None = no_baseline 路径
                 # 或 detect 缺字段；前端把缺省/None 当真首发处理）。
                 is_reentry=n.get("is_reentry"),
@@ -162,6 +190,15 @@ async def _record_one_chart(country: str, platform: str, chart_type: str) -> dic
                 out["enriched"] += 1
             db.add(row)
             out["recorded"] += 1
+        # 前进式对齐（log 自愈）：本轮 live 判 SLG 的 app，其既有行（更早写入的别的
+        # combo/榜，当时本地化名 miss 标了 0）一并置 1——存量分裂随每轮检出收敛。
+        live_slg = {n["app_id"] for n in newcomers if n.get("is_slg")}
+        if live_slg:
+            await db.execute(
+                update(MarketNewcomerLog)
+                .where(MarketNewcomerLog.app_id.in_(live_slg),
+                       MarketNewcomerLog.is_slg.is_(False))
+                .values(is_slg=True))
         await db.commit()
     if out["recorded"]:
         logger.info("newcomer log %s/%s/%s: %s", country, platform, chart_type, out)

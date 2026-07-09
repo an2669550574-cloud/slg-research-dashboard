@@ -220,3 +220,19 @@ def test_daily_digest_renders_free_section():
     assert out is not None
     _, text, _ = out
     assert "【下载榜新品 · SLG】" in text and "下载榜SLG" in text
+
+
+def test_free_publisher_line_respects_row_level_is_slg():
+    """主体行门控认行级 is_slg（digest 拼卡前已做跨 combo OR 传播回写）：
+    本地化 publisher 串 live 判定 miss、但别的 combo 判过 SLG 的行不再被剥离。"""
+    from app.services.release_alerts import build_free_newcomer_lines
+    publisher = {"newcomers": [
+        {"app_id": "kp1", "rank": 20, "name": "라스트 퍼리: 서바이벌",
+         "publisher": "스타유니온", "is_reentry": False, "is_slg": True},   # 传播后行级 True
+        {"app_id": "kp2", "rank": 21, "name": "무관한 퍼즐",
+         "publisher": "노이즈사", "is_reentry": False},                     # 无行级标记、live 也 miss
+    ]}
+    lines = build_free_newcomer_lines({"newcomers": []}, publisher)
+    joined = "\n".join(lines)
+    assert "라스트 퍼리" in joined
+    assert "무관한 퍼즐" not in joined

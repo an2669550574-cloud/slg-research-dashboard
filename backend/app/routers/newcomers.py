@@ -359,8 +359,15 @@ async def get_newcomer_history(
     from app.services.newcomers import _load_ignore_keys, _is_ignored
     ignore_pub_keys, ignore_app_ids = await _load_ignore_keys()
     rows = [r for r in rows if not _is_ignored(r.app_id, r.publisher, ignore_pub_keys, ignore_app_ids)]
-    from app.services.newcomer_log import attribute_entities
+    from app.services.newcomer_log import attribute_entities, slg_app_ids_known
     attributed = await attribute_entities(rows)
+    # is_slg 按 app_id 聚合活算（而非逐行）：同一游戏跨 combo 判定分裂（本地化
+    # publisher 串 miss）时，任一行为 1 / 任一行归属到主体 / log 记忆（响应窗口外的
+    # 行，如另一榜、更早检出）曾判 1 → 该 app 全部行算 SLG。前端 rep 分桶零改动受益。
+    slg_app_ids = ({r.app_id for r in rows if r.is_slg}
+                   | {r.app_id for r in rows if r.id in attributed})
+    slg_app_ids |= await slg_app_ids_known(
+        {r.app_id for r in rows} - slg_app_ids)
     # 检出后走势：每行 join game_rankings 算「现在名次到哪了/是否掉榜」（零 ST）。
     trajectories = await compute_trajectories(rows)
     # 数据新鲜度：每 combo 最近一次已同步快照日，让前端给陈旧 combo 加 stale 提示。
@@ -381,8 +388,8 @@ async def get_newcomer_history(
                     "price", "description", "summary_cn", "description_cn",
                     "version", "current_version_date",
                     "languages", "enrich_source", "is_reentry")},
-                # 落库后建档的主体读时也算 SLG——is_slg 活算（存档值只作冗余）
-                is_slg=r.is_slg or r.id in attributed,
+                # 落库后建档的主体读时也算 SLG——is_slg 按 app_id 聚合活算（存档值只作冗余）
+                is_slg=r.app_id in slg_app_ids,
                 entity_id=attributed.get(r.id, (None, None))[0],
                 entity_name=attributed.get(r.id, (None, None))[1],
                 screenshots=json.loads(r.screenshot_urls) if r.screenshot_urls else [],

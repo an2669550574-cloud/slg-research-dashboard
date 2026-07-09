@@ -53,10 +53,16 @@ async def classify_pending_app_subgenres(cap: int | None = None) -> int:
                    MarketNewcomerLog.subgenre_cn.is_(None))
             .order_by(MarketNewcomerLog.first_detected_at.desc())
         )).all()
+        # log 存档 is_slg（app_id 聚合）：live 判定对本地化 publisher 串会 miss（跨 combo
+        # 分裂），任一行存过 1 就该进候选——否则误标行永不分类，视频救回/⚔️ 连带失效。
+        archived_slg = set((await db.execute(
+            select(MarketNewcomerLog.app_id).where(
+                MarketNewcomerLog.is_slg.is_(True)).distinct())).scalars().all())
 
     skip = classified | has_sg
     # 候选池（app_id 去重）。tracked games 全纳入（都是主动录入的 SLG 竞品，不再 is_slg 门控——
-    # 有的 tracked 竞品 publisher 串命不中 alias，但它就是要追的 SLG）；log 侧按 live is_slg 门控。
+    # 有的 tracked 竞品 publisher 串命不中 alias，但它就是要追的 SLG）；log 侧按
+    # live is_slg OR 存档聚合 门控。
     cands: dict[str, tuple] = {}
     for app_id, name, cat, desc, _pub in games:
         if app_id in skip:
@@ -65,7 +71,7 @@ async def classify_pending_app_subgenres(cap: int | None = None) -> int:
     for app_id, name, genre, desc, pub in logs:
         if app_id in skip or app_id in cands:
             continue
-        if not is_slg(app_id, pub):
+        if not (is_slg(app_id, pub) or app_id in archived_slg):
             continue
         cands.setdefault(app_id, (name, genre, desc, "newcomer_log"))
     if not cands:

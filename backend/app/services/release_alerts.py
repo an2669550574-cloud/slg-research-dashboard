@@ -605,7 +605,9 @@ def build_free_newcomer_lines(market: dict, publisher: dict,
         aid = n.get("app_id")
         if n.get("is_reentry") or aid in merged:
             continue
-        if is_slg(aid, n.get("publisher")):  # 主体行也按 is_slg 门控（必须 SLG 才推）
+        # 主体行也按 is_slg 门控（必须 SLG 才推）。行级 is_slg 先查——digest 拼卡前
+        # 已做跨 combo OR 传播回写，比 live 判定多认得「别的 combo 判过 SLG」的行。
+        if n.get("is_slg") or is_slg(aid, n.get("publisher")):
             merged[aid] = n
     lines = []
     for n in list(merged.values())[:10]:
@@ -1340,6 +1342,31 @@ async def send_daily_digest() -> bool:
             logger.exception("daily digest detection failed for %s/%s", country, platform)
         per_combo.append(entry)
 
+    # is_slg 跨 combo OR 传播（拼卡前统一回写）：同一 app_id 任一 combo/层判 SLG，或
+    # log 记忆/tracked 曾判 SLG → 该 app 全部行置 True。治本地化 publisher 串导致的跨
+    # combo 分裂（Last Furry KR=1/JP=0 实锤）——领导卡 market 过滤、下载榜 is_slg 门控、
+    # 打分收集、关键词挑选都按行读 is_slg，这里一处回写全局生效。零外呼。
+    try:
+        from app.services.newcomer_log import slg_app_ids_known
+        _layers = ("market", "publisher", "free_market", "free_publisher")
+        _all_ids: set = set()
+        _slg_ids: set = set()
+        for c in per_combo:
+            for key in _layers:
+                for n in ((c.get(key) or {}).get("newcomers") or []):
+                    if aid := n.get("app_id"):
+                        _all_ids.add(aid)
+                        if n.get("is_slg"):
+                            _slg_ids.add(aid)
+        _slg_ids |= await slg_app_ids_known(_all_ids - _slg_ids)
+        for c in per_combo:
+            for key in _layers:
+                for n in ((c.get(key) or {}).get("newcomers") or []):
+                    if n.get("app_id") in _slg_ids:
+                        n["is_slg"] = True
+    except Exception:
+        logger.exception("is_slg cross-combo propagation failed (digest continues)")
+
     # 批量搜微信文章：关键词 = 当日新品（收入榜 + 下载榜两层）**游戏名**，按优先级确定性
     # 截断（_newcomer_search_keywords）。只用游戏名不用厂商名——文章回挂走 _name_matches
     # 按游戏名匹配，厂商名搜来的文章除非含游戏名否则挂不上，拿厂商名当词只会烧配额搜回不来。
@@ -1624,11 +1651,14 @@ async def build_weekly_newcomer_review(days: int, cap: int) -> Optional[tuple[st
             ).order_by(MarketNewcomerLog.first_detected_at.asc())
         )).scalars().all()
 
-    # 只看 SLG——用 live is_slg（避免存档 is_slg 陈旧，同 #181 教训）；跨 combo 按 app_id
-    # 取一条代表行（优先 US/iOS 主市场，否则最早检出——rows 已按 first_detected 升序）。
+    # 只看 SLG——live is_slg（新接入厂商旧行也认得，#181 教训）OR 存档聚合（任一行
+    # 存过 1 即全 app 算 SLG——本地化 publisher 串 live 命不中时靠别的 combo 的判定，
+    # 治跨 combo 分裂漏报）；跨 combo 按 app_id 取一条代表行（优先 US/iOS 主市场，
+    # 否则最早检出——rows 已按 first_detected 升序）。
+    archived_slg = {r.app_id for r in rows if r.is_slg}
     reps: dict[str, "MarketNewcomerLog"] = {}
     for r in rows:
-        if not is_slg(r.app_id, r.publisher):
+        if not (r.app_id in archived_slg or is_slg(r.app_id, r.publisher)):
             continue
         cur = reps.get(r.app_id)
         if cur is None:
