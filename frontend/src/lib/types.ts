@@ -340,6 +340,8 @@ export interface NewcomerHistoryItem {
   /** 检出时是否「回归」（baseline 之外曾出现）。0022 迁移前的历史行为 null —
    *  前端按真首发处理（默认 signal=true_new 仍会显示，老卡片照旧）。 */
   is_reentry: boolean | null
+  /** 是否已晋升 tracked（games 表读时活算）：晋升入口据此显隐。 */
+  is_tracked: boolean
   /** 检出后走势（读时算 game_rankings，零 ST）。无后续快照点时为 null / trend='unknown'。 */
   trajectory: NewcomerTrajectory | null
 }

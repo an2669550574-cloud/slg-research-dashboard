@@ -130,3 +130,31 @@ async def test_weekly_review_includes_archived_slg_when_live_miss(client):
     assert card is not None
     _, text = card
     assert "라스트 퍼리" in text and "🚀" in text
+
+
+@pytest.mark.asyncio
+async def test_weekly_review_suggests_promotion_for_untracked_climber(client):
+    """晋升 push 触发：起飞段未 tracked 的候选带「⭐ 建议转深度追踪」；已 tracked 的不唠叨。"""
+    database = _live("app.database")
+    ra = _live("app.services.release_alerts")
+    Game = _live("app.models.game").Game
+    now = database.utcnow_naive()
+    d3, today = _dates(now, [3, 0])
+    # 两个爬升新品：一个未 tracked、一个已 tracked
+    await _seed_ranks("pr_free01", [(d3, 90), (today, 40)])
+    await _seed_ranks("pr_done02", [(d3, 85), (today, 35)])
+    await _seed_log("pr_free01", "星际要塞：崛起", 90, SLG_PUB, 3, d3)
+    await _seed_log("pr_done02", "王国黎明", 85, SLG_PUB, 3, d3)
+    async with database.AsyncSessionLocal() as db:
+        db.add(Game(app_id="pr_done02", name="王国黎明", platform="ios", country="US"))
+        await db.commit()
+
+    card = await ra.build_weekly_newcomer_review(days=7, cap=5)
+    assert card is not None
+    _, text = card
+    # 未 tracked：行内带建议标
+    free_line = next(l for l in text.split("\n") if "星际要塞" in l)
+    assert "⭐ 建议转深度追踪" in free_line
+    # 已 tracked：不再建议
+    done_line = next(l for l in text.split("\n") if "王国黎明" in l)
+    assert "建议转深度追踪" not in done_line
