@@ -430,3 +430,25 @@ async def test_history_is_slg_aggregated_by_app_id(client):
     assert flags["agg_x"] == [True, True] or all(flags["agg_x"]), "分裂行读时应对齐为 SLG"
     assert len(flags["agg_x"]) == 2
     assert not any(flags["agg_y"]), "无 SLG 信号的 app 不该被误传播"
+
+
+@pytest.mark.asyncio
+async def test_history_returns_is_tracked_flag(client):
+    """/history 透出 is_tracked（games 表读时活算）：已晋升的 app 标 True，其余 False。"""
+    database = _live("app.database")
+    MarketNewcomerLog = _live("app.models.newcomer").MarketNewcomerLog
+    Game = _live("app.models.game").Game
+    now = database.utcnow_naive()
+    today = now.strftime("%Y-%m-%d")
+    async with database.AsyncSessionLocal() as db:
+        db.add(MarketNewcomerLog(country="US", platform="ios", app_id="trk_yes",
+                                 chart_type="grossing", as_of=today, rank=20,
+                                 name="已晋升新品", publisher="厂A", is_slg=True))
+        db.add(MarketNewcomerLog(country="US", platform="ios", app_id="trk_no",
+                                 chart_type="grossing", as_of=today, rank=30,
+                                 name="未晋升新品", publisher="厂B", is_slg=True))
+        db.add(Game(app_id="trk_yes", name="已晋升新品", platform="ios", country="US"))
+        await db.commit()
+    items = (await client.get("/api/newcomers/history?days=7")).json()["items"]
+    by = {i["app_id"]: i["is_tracked"] for i in items}
+    assert by["trk_yes"] is True and by["trk_no"] is False

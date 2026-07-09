@@ -452,6 +452,12 @@ export default function NewReleases() {
                       <Repeat size={10} />{t.newcomers.reentryBadge}
                     </span>
                   )}
+                  {/* 晋升 push 入口（P0-2 摩擦修复）：正在爬升且未追踪的 SLG = 最佳晋升
+                      时机，把按钮从抽屉第三层提到卡面（stopPropagation 不触发开抽屉） */}
+                  {g.is_slg && !g.is_tracked
+                    && gr.markets.some(m => m.trajectory?.trend === 'climbing') && (
+                    <PromoteToTrackedButton item={g} compact />
+                  )}
                   {g.entity_name ? (
                     <span className="inline-block px-2 py-0.5 rounded-md text-[11px] font-medium bg-brand-600/15 text-brand-500">
                       {t.newcomers.attributedTo(g.entity_name)}
@@ -581,10 +587,10 @@ function TrendBadge({ traj }: { traj: NewcomerTrajectory | null }) {
 /** 一键晋升深度追踪（P0-2）：把新品建为 tracked 竞品 → iOS 自动获版本更新 / 分地区上线
  *  追踪 + 详情页趋势（安卓无版本源、仅趋势）。复用 POST /games/——iOS 数字 app_id 本身
  *  即 trackId，version_tracker 自动识别，无需人工补 ios_track_id。已存在（400）→ 提示已追踪。 */
-function PromoteToTrackedButton({ item }: { item: {
+function PromoteToTrackedButton({ item, compact }: { item: {
   app_id: string; name: string; publisher: string | null; icon_url: string | null
-  platform: string; country: string
-} }) {
+  platform: string; country: string; is_tracked?: boolean
+}; compact?: boolean }) {
   const t = useT()
   const qc = useQueryClient()
   const mut = useMutation({
@@ -594,6 +600,8 @@ function PromoteToTrackedButton({ item }: { item: {
     }),
     onSuccess: (g) => {
       qc.invalidateQueries({ queryKey: ['games'] })
+      // is_tracked 是 /history 读时活算的——晋升后立刻刷新，卡面按钮转已追踪徽标
+      qc.invalidateQueries({ queryKey: ['newcomerHistory'] })
       toast.success(t.newcomers.promoted(g.name))
     },
     onError: (e: unknown) => {
@@ -602,14 +610,24 @@ function PromoteToTrackedButton({ item }: { item: {
       else toast.error(t.newcomers.promoteFailed)
     },
   })
-  const handle = () => {
+  if (item.is_tracked) {
+    return (
+      <span className={`inline-flex items-center gap-1 font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 ${compact ? 'px-2 py-0.5 rounded-md text-[11px]' : 'px-3 py-1.5 rounded-lg text-xs'}`}>
+        <Radar size={compact ? 10 : 12} />{t.newcomers.trackedBadge}
+      </span>
+    )
+  }
+  const handle = (ev: React.MouseEvent) => {
+    ev.stopPropagation()   // 卡面挂载时不触发卡片点击（开抽屉）
     if (!window.confirm(t.newcomers.promoteConfirm(item.name))) return
     mut.mutate()
   }
   return (
     <button onClick={handle} disabled={mut.isPending} title={t.newcomers.promoteHint}
-      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-default text-secondary hover:text-primary hover:border-strong transition-colors disabled:opacity-50">
-      <Radar size={12} />{t.newcomers.promote}
+      className={compact
+        ? 'inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-brand-600/15 text-brand-500 border border-brand-600/30 hover:bg-brand-600/25 transition-colors disabled:opacity-50'
+        : 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-default text-secondary hover:text-primary hover:border-strong transition-colors disabled:opacity-50'}>
+      <Radar size={compact ? 10 : 12} />{t.newcomers.promote}
     </button>
   )
 }

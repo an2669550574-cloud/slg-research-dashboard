@@ -210,6 +210,7 @@ export const en: Translations = {
     // One-click promote to deep tracking (P0-2): add as a tracked competitor; iOS auto-gains version / regional-launch tracking + detail trends
     promote: 'Track deeply',
     promoteHint: 'Add as a tracked competitor: iOS auto-gains version-update & regional-launch tracking + detail-page trends (Android: detail trends only, no version source)',
+    trackedBadge: 'Tracked',
     promoteConfirm: (name: string) => `Track "${name}" deeply? Adds it to the competitor set; iOS will auto-track version updates daily and regional launches weekly (zero quota).`,
     promoted: (name: string) => `Now tracking deeply: ${name} · version / regions fill in on next sync`,
     promoteExists: 'This app is already tracked',

@@ -291,6 +291,8 @@ class NewcomerHistoryItem(BaseModel):
     # 检出时是否「回归」（baseline 之外曾出现）。0022 迁移前的历史行为 None ——
     # 前端按真首发处理（向后兼容，缺省 = 老数据照旧显示）。
     is_reentry: Optional[bool] = None
+    # 是否已晋升 tracked（games 表读时活算）：卡面晋升按钮据此显隐、抽屉按钮转「已追踪」态。
+    is_tracked: bool = False
     # 检出后走势（读时算 game_rankings，零 ST）。无后续快照点时字段全空、trend='unknown'。
     trajectory: Optional[NewcomerTrajectory] = None
 
@@ -371,6 +373,9 @@ async def get_newcomer_history(
                    | {r.app_id for r in rows if r.id in attributed})
     slg_app_ids |= await slg_app_ids_known(
         {r.app_id for r in rows} - slg_app_ids)
+    # 已晋升 tracked 的 app（games 表读时活算）：卡面/抽屉晋升入口据此显隐。
+    from app.models.game import Game
+    tracked_ids = set((await db.execute(select(Game.app_id))).scalars().all())
     # 检出后走势：每行 join game_rankings 算「现在名次到哪了/是否掉榜」（零 ST）。
     trajectories = await compute_trajectories(rows)
     # 数据新鲜度：每 combo 最近一次已同步快照日，让前端给陈旧 combo 加 stale 提示。
@@ -393,6 +398,7 @@ async def get_newcomer_history(
                     "languages", "enrich_source", "is_reentry")},
                 # 落库后建档的主体读时也算 SLG——is_slg 按 app_id 聚合活算（存档值只作冗余）
                 is_slg=r.app_id in slg_app_ids,
+                is_tracked=r.app_id in tracked_ids,
                 entity_id=attributed.get(r.id, (None, None))[0],
                 entity_name=attributed.get(r.id, (None, None))[1],
                 screenshots=json.loads(r.screenshot_urls) if r.screenshot_urls else [],

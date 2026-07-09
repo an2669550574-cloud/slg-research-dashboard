@@ -1684,6 +1684,12 @@ async def build_weekly_newcomer_review(days: int, cap: int) -> Optional[tuple[st
     # C 可读性（#198 同款）：中文玩法子品类标签，让外文新品名一眼可辨品类（数字门SLG/塔防/…），
     # 顺带暴露误标（塔防等非 SLG 混进来时一眼可见）。
     subgenre_by_app = await _subgenres_for_apps({r.app_id for r in rep_rows})
+    # 晋升 push 触发（用户裁定：0 晋升是入口摩擦非刻意）：起飞段给未 tracked 的候选加
+    # 「⭐ 建议转深度追踪」+ 看板深链——climbing 信号系统早算出来了，只是没接行动入口。
+    # 周察卡是维护者卡，不动领导卡（减量宪法）。
+    from app.models.game import Game
+    async with AsyncSessionLocal() as db:
+        tracked_ids = set((await db.execute(select(Game.app_id))).scalars().all())
     climbing: list[dict] = []
     surviving = dropped = 0
     for r in rep_rows:
@@ -1691,6 +1697,7 @@ async def build_weekly_newcomer_review(days: int, cap: int) -> Optional[tuple[st
         trend = tj.get("trend")
         if trend == "climbing":
             climbing.append({"name": r.name or r.app_id, "detect_rank": r.rank,
+                             "app_id": r.app_id,
                              **tj, "subgenre_cn": subgenre_by_app.get(r.app_id)})
         elif trend == "dropped":
             dropped += 1
@@ -1722,8 +1729,15 @@ async def build_weekly_newcomer_review(days: int, cap: int) -> Optional[tuple[st
         for x in climbing[:cap]:
             gain = (x["detect_rank"] or 0) - (x.get("current_rank") or 0)
             span = f"{x['days_tracked']} 天涨 {gain} 名" if x.get("days_tracked") else f"涨 {gain} 名"
+            # 未 tracked 的起飞新品 = 最佳晋升时机：深链直达看板卡片（focus 高亮，
+            # 抽屉里就是一键晋升），「看到→行动」压到两步。已 tracked 的不唠叨。
+            promote = ""
+            if x.get("app_id") and x["app_id"] not in tracked_ids:
+                url = _dashboard_focus_url(x["app_id"], "market")
+                promote = (f" · [⭐ 建议转深度追踪]({url})" if url
+                           else " · ⭐ 建议转深度追踪")
             lines.append(f"- **{_md_name(x['name'])}**{_sg_label(x)} · "
-                         f"#{x['detect_rank']} → **#{x.get('current_rank')}**，{span}")
+                         f"#{x['detect_rank']} → **#{x.get('current_rank')}**，{span}{promote}")
         sections.append("\n".join(lines))
 
     if dropped_items:
