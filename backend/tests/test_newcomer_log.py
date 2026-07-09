@@ -430,3 +430,49 @@ async def test_history_is_slg_aggregated_by_app_id(client):
     assert flags["agg_x"] == [True, True] or all(flags["agg_x"]), "分裂行读时应对齐为 SLG"
     assert len(flags["agg_x"]) == 2
     assert not any(flags["agg_y"]), "无 SLG 信号的 app 不该被误传播"
+
+
+@pytest.mark.asyncio
+async def test_slg_index_respects_entity_flag(client):
+    """白名单索引按实体 is_slg 过滤：is_slg=False 的调研/资本系档案（如沐瞳）alias
+    不进 SLG 白名单；app_id 钉选不过滤（钉选语义=单品即 SLG，多品类大厂范式）。"""
+    sp = importlib.import_module("app.services.slg_publishers")
+    # is_slg=False 档案（带 alias + 钉选各一）
+    r = await client.post("/api/publishers/", json={
+        "name": "调研档案甲", "is_slg": False,
+        "aliases": [{"keyword": "moontest", "label": "MoonTest"}],
+        "app_ids": [{"app_id": "pin_under_zero", "note": "单品钉选"}]})
+    assert r.status_code == 201
+    # is_slg=True 竞品主体
+    r = await client.post("/api/publishers/", json={
+        "name": "竞品主体乙", "is_slg": True,
+        "aliases": [{"keyword": "warlordtest", "label": "WarlordTest"}]})
+    assert r.status_code == 201
+    # POST 端点已 load_index_from_db
+    assert sp.is_slg_publisher("MoonTest Technology") is False, "is_slg=0 实体 alias 不该进白名单"
+    assert sp.is_slg("pin_under_zero", "MoonTest Technology") is True, "钉选不过滤（单品即 SLG）"
+    assert sp.is_slg_publisher("WarlordTest Games Ltd.") is True
+
+
+@pytest.mark.asyncio
+async def test_history_attribution_to_non_slg_entity_not_counted_as_slg(client):
+    """/history：归属到 is_slg=False 档案的行——entity_name 照常展示（归属信息），
+    但不当 SLG 信号（is_slg 保持 False）。"""
+    database = _live("app.database")
+    MarketNewcomerLog = _live("app.models.newcomer").MarketNewcomerLog
+    r = await client.post("/api/publishers/", json={
+        "name": "资本系档案丙", "is_slg": False,
+        "aliases": [{"keyword": "capitaltest", "label": "CapitalTest"}]})
+    assert r.status_code == 201
+    now = database.utcnow_naive()
+    today = now.strftime("%Y-%m-%d")
+    async with database.AsyncSessionLocal() as db:
+        db.add(MarketNewcomerLog(country="US", platform="ios", app_id="cap_x",
+                                 chart_type="grossing", as_of=today, rank=40,
+                                 name="休闲爆款", publisher="CapitalTest Inc.",
+                                 is_slg=False))
+        await db.commit()
+    items = (await client.get("/api/newcomers/history?days=7")).json()["items"]
+    it = next(i for i in items if i["app_id"] == "cap_x")
+    assert it["entity_name"] == "资本系档案丙"   # 归属展示保留
+    assert it["is_slg"] is False, "归属到非 SLG 档案不该被当 SLG 信号"
