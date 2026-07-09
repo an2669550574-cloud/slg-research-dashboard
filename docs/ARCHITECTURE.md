@@ -363,6 +363,10 @@ digest 给新品行附行业公众号文章（`_match_articles_to_apps`）。匹
 
 修「信号越早富化越少」倒挂——雷达清单 diff 检出的软启动 SLG 新品（买量调研最佳窗）此前只落 `publisher_itunes_apps`、无中文摘要/subgenre/视频。`itunes_releases.ingest_artist_apps`（iTunes+GP 共享）检出真新上架（`is_baseline=false`）且属 SLG（`entity.is_slg` OR `is_slg(track_id)` app_id 钉）时收集富化字段 → `newcomer_log.record_radar_newcomers` 写 **`chart_type='radar'` 影子行**进 `market_newcomer_log`（富化字段本就随 iTunes lookup 拿到直接落库、只 LLM 字段留 NULL、rank/revenue NULL、`is_slg=True`；`(country,platform,app_id,'radar')` 幂等）。影子行天然被 translate / subgenre 回补 / 视频 drain 捡起（都源自 `market_newcomer_log`、不按 chart_type 过滤）。**坑（勿回头改）**：影子行是**富化通道不是榜**——`/history` 显式 `chart_type != 'radar'` 排除（含 chart=all），**绝不进新品页市场卡片网格**（避开 rank/country/走势全 NULL 边界坑）；富化出的 📝 摘要回显「商店雷达」区块（`/appstore` join `summary_cn`）+ digest 雷达段。`RADAR_NEWCOMER_ENRICH_ENABLED` 开关。**露出方案 =「仅雷达段补 📝」**（用户 2026-07-05 拍板，非接入市场网格）。零 ST。
 
+### RSS 早鸟信号层（`chart_type='rss'` 影子行 + `rss_chart_seen` 台账，ADR 0005）
+
+次市场 ST 快照双周一拍，新品检出平均滞后 ~7 天——Apple **旧版分类维度 RSS**（`itunes.apple.com/{cc}/rss/topgrossingapplications/limit=100/genre=7017/json`，2026-07-09 探针验证仍日更服务、genre 真实生效）做零 ST 的日级补偿。`services/rss_earlybird.sync_rss_earlybird`（digest 前置块触发，无独立 job）：日拉 `RSS_EARLYBIRD_COUNTRIES`（默认 jp,kr）策略畅销榜 → diff `rss_chart_seen` 台账（首轮基线不报，itunes_releases 同哲学）→ 过三道闸（ST 已见 = 该国 iOS game_rankings 全史 / 检出已见 / 忽略名单）→ 真早鸟写 **`chart_type='rss'` 影子行**（radar 同款范式：riding 富化/翻译/子品类/视频管道，`/history` 排除不进市场网格）+ **仅维护者卡**「⚡ RSS 早鸟」段（未过 ST 口径核实不进领导卡；ST 到位后经正常检出通道进两卡 = 确认信号）。**坑**：① 绝不写 game_rankings（防污染 baseline/movement/走势快照语义）；② 旧版 RSS 是弃用遗留服务随时可能 404——单国失败静默降级不拖 digest，全退役则功能自然停摆；③ 不计入平淡日阈值 `_primary_item_count`（早鸟未核实不该压掉兜底填充）。关闭 = `RSS_EARLYBIRD_COUNTRIES` 置空。零 ST，每日 2 次免费 Apple 请求。
+
 ### 赛道脉搏（`/newcomers/subgenre-pulse`，P1-2 stretch，#191）
 
 近 N 天新品按 `subgenre_cn` 分布 + 环比上一等长窗口——回答「哪个赛道在冒新品 / 升温降温」（数字门 SLG 整体在热还是冷）。按 app_id 去重（同 app 跨 combo/chart 算一个新品），用该 app **最早检出**定落哪个窗口；忽略名单过滤；radar 影子行也计入（软启动新品同样是赛道信号）。前端新品页市场视图折叠卡（CSS 横条 + 计数 + 升温 ↑/降温 ↓，窗口跟随页面 days 筛选，无分类数据不渲染）。**注**：环比需时间上积累 subgenre 分类数据才有意义（回补起步期上一窗口=0 → 全 ↑）。零 ST、零迁移（复用 `subgenre_cn`）。

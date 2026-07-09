@@ -203,6 +203,19 @@ class Settings(BaseSettings):
     # 拉回一个月（治 reentry 占检出 25% 的富化/翻译白耗），次市场双周一拍 30 天内
     # 本就 ≤4 个快照、行为不变。<=0 = 关闭日历维度，退回纯快照数口径。
     NEWCOMER_BASELINE_DAYS: int = 30
+
+    # ── RSS 早鸟信号层（ADR 0005）────────────────────────────────
+    # 次市场 ST 快照双周一拍，新品检出平均滞后 ~7 天；Apple 旧版分类维度 RSS
+    # （topgrossingapplications genre=7017，2026-07-09 探针验证仍日更服务）提供
+    # 零 ST 的日级补偿信号。每日随 digest 拉这些国家的 iOS 策略畅销 RSS 榜，
+    # diff「已见」台账（rss_chart_seen）+ 过 ST 已见/检出已见/忽略名单三道闸 →
+    # 真早鸟写 market_newcomer_log 影子行（chart_type='rss'，riding 翻译/子品类/
+    # 视频管道）+ 维护者卡「⚡ RSS 早鸟」段。逗号分隔国家码；空 = 关闭（一键回退）。
+    # **绝不写 game_rankings**（防污染 baseline/movement/走势的快照语义）。
+    # 注意旧版 RSS 是弃用状态的遗留服务，随时可能 404——sync 失败静默降级不拖 digest。
+    RSS_EARLYBIRD_COUNTRIES: str = "jp,kr"
+    # 每国拉多少名（旧版 RSS 实测封顶 100，请求 200 也只回 100）。
+    RSS_EARLYBIRD_LIMIT: int = 100
     # 最近一次同步里名次 ≤ 该值才算"新进榜"，过滤榜尾噪声。
     NEWCOMER_TOPN: int = 50
     # 历史沉淀口径（market_newcomer_log）：比日报 Top50 宽，页面可筛 Top50/100。
