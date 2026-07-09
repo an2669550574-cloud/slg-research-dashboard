@@ -195,8 +195,14 @@ class Settings(BaseSettings):
     # 与 COMPETITOR_*(movement 今日 vs 昨日 TopN 进退、且只看 SLG 白名单) 互补：
     # 那个抓"老熟人进退"，这个抓"全新面孔"且**故意不走 is_slg**——全新产品的发行商
     # 往往还没进 SLG 白名单(白名单滞后维护)，过滤会把最该看的新厂商新品筛掉。
-    # 回看多少个同步快照作"见过"基线。同步周级化后 ≈ 4 周历史。
+    # 回看多少个同步快照作"见过"基线。定值时同步还是周级（4 快照 ≈ 4 周历史）；
+    # US 转日更后 4 快照 = 4 天，「新面孔」会退化成「4 天没见」——故 baseline 实际取
+    # max(W 个快照, NEWCOMER_BASELINE_DAYS 个日历天内全部快照)，见 _first_appearances。
     NEWCOMER_WINDOW: int = 4
+    # baseline 的日历天下限（锚 as_of 往前数，非今天——保证检测确定性）：日更 combo
+    # 拉回一个月（治 reentry 占检出 25% 的富化/翻译白耗），次市场双周一拍 30 天内
+    # 本就 ≤4 个快照、行为不变。<=0 = 关闭日历维度，退回纯快照数口径。
+    NEWCOMER_BASELINE_DAYS: int = 30
     # 最近一次同步里名次 ≤ 该值才算"新进榜"，过滤榜尾噪声。
     NEWCOMER_TOPN: int = 50
     # 历史沉淀口径（market_newcomer_log）：比日报 Top50 宽，页面可筛 Top50/100。

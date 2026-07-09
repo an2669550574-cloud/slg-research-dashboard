@@ -597,3 +597,31 @@ async def test_gate_established_rating_count_proxy_for_missing_release_date(clie
     names = {n["name"] for n in out}
     assert "老牌基建手游" not in names, "rd 缺失 + 巨量评价 = 老品应剔除"
     assert {"软启动新品", "零信息新品", "爆款新品"} <= names
+
+
+@pytest.mark.asyncio
+async def test_baseline_calendar_floor_absorbs_recent_dropout(client):
+    """日历天下限（NEWCOMER_BASELINE_DAYS）：US 日更下「跌出榜 5 天又回来」的老面孔，
+    纯快照口径（W=4 → 仅 4 天）会判首现，日历口径把 30 天内全部快照并入 baseline →
+    不再产生检出；从未见过的真新面孔照常检出。"""
+    from app.services.newcomers import detect_newcomers
+
+    # 日更 combo：as_of=06-30，最近 4 个快照 06-26..06-29 + 一个 06-20 的孤立快照
+    #（含 dropout 老面孔——恰在 W=4 窗口外、30 天日历窗口内）
+    for d in ("2026-06-26", "2026-06-27", "2026-06-28", "2026-06-29"):
+        await _seed(d, [("cal_anchor", 1, None, SLG_PUB)], country="FI", platform="ios")
+    await _seed("2026-06-20", [("cal_anchor", 1, None, SLG_PUB),
+                               ("cal_dropout", 30, None, "某老厂")],
+                country="FI", platform="ios")
+    # 今日榜：dropout 回归 + 真新面孔
+    await _seed("2026-06-30", [("cal_anchor", 1, None, SLG_PUB),
+                               ("cal_dropout", 28, None, "某老厂"),
+                               ("cal_brandnew", 33, None, "全新工作室")],
+                country="FI", platform="ios")
+
+    s = await detect_newcomers("FI", "ios")
+    ids = {n["app_id"] for n in s["newcomers"]}
+    assert "cal_dropout" not in ids, "30 天内出现过的老面孔不该再判新（日历下限吸收）"
+    assert "cal_brandnew" in ids
+    # 06-20 的快照被并入 baseline（不止最近 4 个）
+    assert "2026-06-20" in s["baseline_dates"]
