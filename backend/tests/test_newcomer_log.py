@@ -349,3 +349,84 @@ async def test_history_filters_ignored_publishers(client):
     items = (await client.get("/api/newcomers/history?days=120&country=SE")).json()["items"]
     assert {i["app_id"] for i in items} == {"lead_app"}, \
         "被忽略的发行商应从 /history 过滤，未忽略线索保留"
+
+
+@pytest.mark.asyncio
+async def test_is_slg_appid_propagation_across_combos(client, monkeypatch):
+    """is_slg 跨 combo app_id 级 OR 传播（三段）：
+    ① 本地化 publisher（白名单 miss）的 combo 先检出 → 存 0；
+    ② 命中白名单的 combo 检出同一 app → 存 1，且前进式对齐把 ① 的旧行置 1；
+    ③ 第三个 miss 的 combo 再检出 → 落库时直接继承记忆标 1。"""
+    nl = importlib.import_module("app.services.newcomer_log")
+    database = _live("app.database")
+    GameRanking = _live("app.models.game").GameRanking
+    MarketNewcomerLog = _live("app.models.newcomer").MarketNewcomerLog
+    from sqlalchemy import select
+    now = database.utcnow_naive()
+    today = now.strftime("%Y-%m-%d")
+    prev = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    async def seed_combo(country, publisher):
+        async with database.AsyncSessionLocal() as db:
+            for d in (prev, today):
+                db.add(GameRanking(app_id=f"p_anchor_{country}", date=d, rank=1,
+                                   country=country, platform="ios",
+                                   name="锚点老面孔", publisher="某老厂"))
+            db.add(GameRanking(app_id="p_lastfurry", date=today, rank=30,
+                               country=country, platform="ios",
+                               name="라스트 퍼리: 서바이벌", publisher=publisher))
+            await db.commit()
+
+    async def row_is_slg(country):
+        async with database.AsyncSessionLocal() as db:
+            return (await db.execute(
+                select(MarketNewcomerLog.is_slg).where(
+                    MarketNewcomerLog.country == country,
+                    MarketNewcomerLog.app_id == "p_lastfurry"))).scalar_one()
+
+    monkeypatch.setattr(nl.settings, "USE_MOCK_DATA", True)  # 跳富化
+
+    # ① JP：日文本地化厂商名，白名单 miss → 0
+    await seed_combo("JP", "スターユニオン株式会社")
+    await nl.record_market_newcomers("JP", "ios")
+    assert await row_is_slg("JP") is False
+
+    # ② KR：英文名命中种子 alias（starunion）→ 1，并对齐 JP 旧行
+    await seed_combo("KR", "StarUnion")
+    await nl.record_market_newcomers("KR", "ios")
+    assert await row_is_slg("KR") is True
+    assert await row_is_slg("JP") is True, "前进式对齐应把先前 miss 的旧行置 1"
+
+    # ③ DE：韩文本地化名再 miss，但落库继承 app_id 记忆 → 1
+    await seed_combo("DE", "스타유니온")
+    await nl.record_market_newcomers("DE", "ios")
+    assert await row_is_slg("DE") is True, "新行应继承跨 combo SLG 记忆"
+
+
+@pytest.mark.asyncio
+async def test_history_is_slg_aggregated_by_app_id(client):
+    """/history 读端 is_slg 按 app_id 聚合活算：存量分裂行（同 app 一行 1 一行 0，
+    迁移/对齐前的历史态）读时对齐为 1；无任何 SLG 信号的 app 不受波及。"""
+    database = _live("app.database")
+    MarketNewcomerLog = _live("app.models.newcomer").MarketNewcomerLog
+    now = database.utcnow_naive()
+    today = now.strftime("%Y-%m-%d")
+    async with database.AsyncSessionLocal() as db:
+        db.add(MarketNewcomerLog(country="KR", platform="ios", app_id="agg_x",
+                                 chart_type="grossing", as_of=today, rank=50,
+                                 name="라스트 퍼리", publisher="StarUnion", is_slg=True))
+        db.add(MarketNewcomerLog(country="JP", platform="ios", app_id="agg_x",
+                                 chart_type="grossing", as_of=today, rank=60,
+                                 name="ラストファーリー", publisher="スターユニオン",
+                                 is_slg=False))
+        db.add(MarketNewcomerLog(country="JP", platform="ios", app_id="agg_y",
+                                 chart_type="grossing", as_of=today, rank=70,
+                                 name="無関係パズル", publisher="ノイズ社", is_slg=False))
+        await db.commit()
+    items = (await client.get("/api/newcomers/history?days=7")).json()["items"]
+    flags: dict[str, list] = {}
+    for i in items:
+        flags.setdefault(i["app_id"], []).append(i["is_slg"])
+    assert flags["agg_x"] == [True, True] or all(flags["agg_x"]), "分裂行读时应对齐为 SLG"
+    assert len(flags["agg_x"]) == 2
+    assert not any(flags["agg_y"]), "无 SLG 信号的 app 不该被误传播"

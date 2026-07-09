@@ -66,6 +66,11 @@ async def sync_newcomer_videos(daily_cap: int | None = None,
         slg_subgenre_ids = set((await db.execute(
             select(MarketNewcomerLog.app_id).where(
                 MarketNewcomerLog.subgenre_cn.like("%SLG%")))).scalars().all())
+        #  ③ log 存档 is_slg（按 app_id 聚合）：本地化 publisher 串 live 命不中、但别的
+        #     combo 检出时判过 SLG 的行（跨 combo 分裂）——没有这条，误标行连视频都不搜。
+        slg_logged_ids = set((await db.execute(
+            select(MarketNewcomerLog.app_id).where(
+                MarketNewcomerLog.is_slg.is_(True)).distinct())).scalars().all())
         # 人工忽略名单先行（与 newcomer_i18n / digest 缺口同名单同口径）：人工裁决的
         # 非 SLG 厂商/单品**不搜**——即使其行在忽略前已被 LLM 写过含 SLG 的
         # subgenre_cn，也不让题材救回复活它（review #181 发现：救回信号缺人工裁决前置）。
@@ -80,7 +85,8 @@ async def sync_newcomer_videos(daily_cap: int | None = None,
             if _is_ignored(app_id, publisher, ignore_pub_keys, ignore_app_ids):
                 continue
             # 非 SLG 新品跳过：不搜、不记台账——留待后续（厂商接入 / 题材分类）下轮再评估。
-            if not (is_slg(app_id, publisher) or app_id in slg_subgenre_ids):
+            if not (is_slg(app_id, publisher) or app_id in slg_subgenre_ids
+                    or app_id in slg_logged_ids):
                 continue
             gate = evaluate_search_gate(already_searched=False,
                                         used_today=used_today, daily_cap=cap)

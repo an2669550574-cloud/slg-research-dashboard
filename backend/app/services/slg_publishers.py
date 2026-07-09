@@ -152,15 +152,31 @@ def _tokens_split_camel(s: Optional[str]) -> list[str]:
 # ── 内存索引：运行时 is_slg 查这里。DB 为源，启动 load、CRUD 后 refresh。 ──
 _alias_tokens: list[tuple[str, ...]] = []  # 每个马甲 keyword 的连续 token 串
 _alias_squashes: set[str] = set()  # 每个 keyword 去法人后缀拼接后的 squash 键（连写回退用）
+# 非拉丁 alias（CJK/西里尔等）：_tokens 按 [a-z0-9] 分词会把它们滤成空 token，
+# 原实现直接丢弃——韩/日/俄文马甲人工建档也永远命不中（次市场商店返回本地化
+# publisher 串是 is_slg 跨 combo 不一致的根因之一）。这类 keyword 单独存原串
+# （小写、去首尾空白），匹配走 substring（CJK 无词边界概念，子串即正解）。
+_alias_raw_substrings: set[str] = set()
 _app_ids: set[str] = set()
 
 
 def _set_index(keywords, app_id_list) -> None:
     """用给定 keyword/app_id 集合重建内存索引（覆盖式）。"""
-    global _alias_tokens, _alias_squashes, _app_ids
-    tok_lists = [t for t in (_tokens(k) for k in keywords) if t]
+    global _alias_tokens, _alias_squashes, _alias_raw_substrings, _app_ids
+    tok_lists = []
+    raw_subs = set()
+    for k in keywords:
+        t = _tokens(k)
+        if t:
+            tok_lists.append(t)
+        else:
+            # ASCII 分词为空 = 纯非拉丁 keyword → substring 路径。len>=2 防单字符过匹配。
+            raw = (k or "").strip().lower()
+            if len(raw) >= 2:
+                raw_subs.add(raw)
     _alias_tokens = [tuple(t) for t in tok_lists]
     _alias_squashes = {s for s in (corp_squash(t) for t in tok_lists) if s}
+    _alias_raw_substrings = raw_subs
     _app_ids = set(app_id_list)
 
 
@@ -211,9 +227,16 @@ def is_slg_publisher(publisher: Optional[str]) -> bool:
     `lilithgames`）+ _tokens_split_camel（额外按 camelCase 边界切，让 `LilithGames`
     也能命中 `lilith` 单 token alias）。任一命中即 True。
 
+    非拉丁 alias（韩/日/俄文马甲）走 substring 路径：publisher 原串（小写）包含
+    该 keyword 即命中——CJK 无空格词边界，token 路径天然不适用。
+
     publisher 为空（如 Android 富化失败没抓到发行商）→ False：宁可在「仅 SLG」
     视图漏掉、让用户切「全部策略」补看，也不污染默认视图。
     """
+    if _alias_raw_substrings:
+        raw = (publisher or "").lower()
+        if raw and any(sub in raw for sub in _alias_raw_substrings):
+            return True
     primary = _tokens(publisher)
     if not primary:
         return False

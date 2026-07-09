@@ -105,3 +105,28 @@ async def test_weekly_review_excludes_out_of_window(client):
     await _seed_log("ancient", "窗口外老品", 20, SLG_PUB, 40, old)  # 40 天前检出
     card = await ra.build_weekly_newcomer_review(days=30, cap=8)
     assert card is None
+
+
+@pytest.mark.asyncio
+async def test_weekly_review_includes_archived_slg_when_live_miss(client):
+    """存档 is_slg 聚合兜底：本地化 publisher 串 live is_slg 命不中，但该行检出时
+    （别的 combo 判定传播）已存 is_slg=1 → 仍进周察卡，不再被 live 过滤漏掉。"""
+    database = _live("app.database")
+    ra = _live("app.services.release_alerts")
+    MarketNewcomerLog = _live("app.models.newcomer").MarketNewcomerLog
+    now = database.utcnow_naive()
+    detect_day, today = _dates(now, [3, 0])
+    # 检出 #80 → 现 #40：climbing，进「起飞」明细
+    await _seed_ranks("w_kr01", [(detect_day, 80), (today, 40)])
+    async with database.AsyncSessionLocal() as db:
+        db.add(MarketNewcomerLog(
+            country="US", platform="ios", app_id="w_kr01", chart_type="grossing",
+            as_of=detect_day, rank=80, name="라스트 퍼리: 서바이벌",
+            publisher="스타유니온",  # live is_slg miss（韩文串）
+            is_slg=True,             # 存档已判 SLG（跨 combo 传播/落库记忆）
+            first_detected_at=now - timedelta(days=3)))
+        await db.commit()
+    card = await ra.build_weekly_newcomer_review(days=7, cap=5)
+    assert card is not None
+    _, text = card
+    assert "라스트 퍼리" in text and "🚀" in text
