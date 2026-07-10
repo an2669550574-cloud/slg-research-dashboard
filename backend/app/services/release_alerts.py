@@ -464,7 +464,8 @@ def _newcomer_search_keywords(per_combo: list[dict], max_n: int) -> list[str]:
     return [nm for nm, _ in sorted(best.items(), key=lambda kv: kv[1])][:max_n]
 
 
-def _match_articles_to_apps(per_combo: list[dict], article_list: list) -> dict:
+def _match_articles_to_apps(per_combo: list[dict], article_list: list,
+                            extra_rows: Optional[list[dict]] = None) -> dict:
     """搜到的文章 → 按「标题/摘要含新品名」聚合到 app_id：{app_id: [WechatArticle]}。
 
     用 (c.get("market") or {}) 而非 c.get("market", {})——entry 的 market/publisher
@@ -472,6 +473,9 @@ def _match_articles_to_apps(per_combo: list[dict], article_list: list) -> dict:
 
     覆盖**全四层**新品来源（收入榜 + 下载榜市场/厂商）——下载榜新品名同样进了搜索关键词，
     回挂也必须含 free 两层，否则【下载榜新品】行永远拿不到 📰（F1：搜了却挂不上）。
+
+    extra_rows（ADR 0006 切片2）：榜单四层之外的补充名单（{name, app_id} dict 列表，现用
+    商店雷达近期新上架）——雷达新品名进了搜索关键词，回挂也要含它们，否则同 F1 坑。
 
     名 ↔ 文匹配走 _name_matches（词边界 / 最小名长），治裸 substring 的短名/通用名
     误挂 + 拉丁名大小写漏挂。
@@ -487,6 +491,12 @@ def _match_articles_to_apps(per_combo: list[dict], article_list: list) -> dict:
                 apps = name_to_apps.setdefault(nm, [])
                 if aid not in apps:
                     apps.append(aid)
+    for n in (extra_rows or []):
+        nm, aid = n.get("name"), n.get("app_id")
+        if nm and aid:
+            apps = name_to_apps.setdefault(nm, [])
+            if aid not in apps:
+                apps.append(aid)
     out: dict[str, list] = {}
     for a in article_list:
         text = (a.title or "") + " " + (a.digest or "")
@@ -806,9 +816,11 @@ async def _recent_radar_arrivals(days: int, cap: int = 8) -> list[dict]:
              "video": videos.get(app.track_id)} for app, entity_name in rows]
 
 
-def build_radar_recent_lines(items: list[dict], cap: int) -> list[str]:
-    """商店雷达近期新上架 → 紧凑行（平淡日维护者卡兜底段）。是厂商开发者账号清单 diff 的
-    catch，非我方 tracked 竞品排名动态，故独立段 + 明确标注。"""
+def build_radar_recent_lines(items: list[dict], cap: int,
+                             articles: Optional[dict] = None) -> list[str]:
+    """商店雷达近期新上架 → 紧凑行（维护者卡有则即显；领导卡仅平淡日兜底，ADR 0006 切片2）。
+    是厂商开发者账号清单 diff 的 catch，非我方 tracked 竞品排名动态，故独立段 + 明确标注。
+    articles: {app_id: [WechatArticle]}——雷达新品名也进了公众号搜索面，有文即挂 📰。"""
     videos = {it["app_id"]: it["video"]
               for it in items if it.get("app_id") and it.get("video")}
     out: list[str] = []
@@ -831,6 +843,10 @@ def build_radar_recent_lines(items: list[dict], cap: int) -> list[str]:
             segs.append(vseg)
         if segs:
             parts.append(" · ".join(segs))
+        # ADR 0006 切片2：📰 文章（复用新品行的 sanitize/两篇封顶；strip 掉其行内缩进
+        # 前缀——雷达行按 _block 空行分段，钉钉 markdown 单 \n 会粘连）。
+        if articles and (sfx := _articles_suffix(articles.get(aid))):
+            parts.append(sfx.strip())
         out.append(_block(parts))
     return out
 
@@ -1022,7 +1038,8 @@ def build_daily_digest(per_combo: list[dict], today: str,
                        own_matches: Optional[dict] = None,
                        industry_articles: Optional[list] = None,
                        radar_items: Optional[list] = None,
-                       rss_items: Optional[list[dict]] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
+                       rss_items: Optional[list[dict]] = None,
+                       quiet_day: bool = False) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
     """全 combo 检测结果 → (title, markdown, btns)。全空 → None（不发）。
 
     per_combo: [{country, platform, movement: dict|None, market: dict|None, publisher: dict|None}]
@@ -1135,11 +1152,13 @@ def build_daily_digest(per_combo: list[dict], today: str,
             sections.append(
                 "【⚡ RSS 早鸟】（次市场当日榜 · ST 快照未到 · Apple RSS 免费源）"
                 "\n\n" + "\n\n".join(rss_lines))
-    # 平淡日兜底段之一：商店雷达近期新上架（见 send_daily_digest 平淡日闸门）。厂商开发者
-    # 账号清单 diff 的 catch。#178 上线时仅维护者卡；2026-07-03 应领导反馈「卡太单薄」
-    # 改为**两卡都发**（平淡日才触发，正常日不占领导注意力）。
-    if radar_items:
-        radar_lines = build_radar_recent_lines(radar_items, cap)
+    # 商店雷达近期新上架（ADR 0006 切片2）：厂商开发者账号清单 diff 的 catch = 上榜前
+    # 早探测层。**维护者卡有则即显**（2026-07-09 起，原仅平淡日兜底——软启动新品是买量
+    # 调研最佳观察窗，不该只在平淡日露出）；**领导卡维持仅平淡日**（quiet_day 才渲染，
+    # 保 2026-07-03「卡太单薄」反馈的填充行为不回退；非平淡日不进领导卡=减量宪法：
+    # 早鸟未过 ST 口径核实，真上榜后走正常检出通道进领导卡）。
+    if radar_items and (not is_leader or quiet_day):
+        radar_lines = build_radar_recent_lines(radar_items, cap, articles=articles)
         if radar_lines:
             total += len(radar_lines)
             sections.append(
@@ -1414,16 +1433,45 @@ async def send_daily_digest() -> bool:
     except Exception:
         logger.exception("is_slg cross-combo propagation failed (digest continues)")
 
+    # 硬锚核心 US/iOS：区分『真平淡日』(已同步、确无事) vs『数据未就位』(今日无快照=同步可能失败)。
+    # detect_movement 仅在 today 未缺数据时赋值 entry["movement"]（today_missing 闸门），故它非 None
+    # 或 market.as_of==today 即核心 combo 今日有新快照。找不到该 combo（理论不应）→ 保守按已就位、不误报。
+    # （定义提前：雷达每日拉取 + 平淡日兜底闸门都要用它，确保填充不掩盖『数据未就位』。）
+    def _core_synced() -> bool:
+        for c in per_combo:
+            if c["country"] == "US" and c["platform"] == "ios":
+                return c.get("movement") is not None or (c.get("market") or {}).get("as_of") == today
+        return True
+
+    # 商店雷达近期新上架（ADR 0006 切片2）：**每日拉取**（原仅平淡日兜底）——上榜前早探测层，
+    # 维护者卡有则即显；领导卡仍仅平淡日渲染（audience 路由在 build_daily_digest 的 quiet_day
+    # 判断）。仍 gate 在 _core_synced：管道故障日不得被雷达段填成非空卡、掩盖『数据未就位』
+    # 告警（与平淡日填充同坑同防）。本地 publisher_itunes_apps 读取，零 ST。
+    radar_items: list = []
+    if (settings.DIGEST_RADAR_RECENT_DAYS > 0 and not settings.USE_MOCK_DATA
+            and _core_synced()):
+        try:
+            radar_items = await _recent_radar_arrivals(settings.DIGEST_RADAR_RECENT_DAYS)
+        except Exception:
+            logger.warning("radar recent arrivals failed", exc_info=True)
+
     # 批量搜微信文章：关键词 = 当日新品（收入榜 + 下载榜两层）**游戏名**，按优先级确定性
     # 截断（_newcomer_search_keywords）。只用游戏名不用厂商名——文章回挂走 _name_matches
     # 按游戏名匹配，厂商名搜来的文章除非含游戏名否则挂不上，拿厂商名当词只会烧配额搜回不来。
     articles_by_app: dict = {}
     keywords = _newcomer_search_keywords(per_combo, settings.WECHAT_MAX_KEYWORDS)
+    # 雷达新品名也进搜索面（ADR 0006 切片2：雷达行此前只有 🎬 没 📰）——排在榜单新品之后、
+    # 共用同一 WECHAT_MAX_KEYWORDS 预算（榜单新品优先，预算紧时雷达名先被截掉）。
+    for it in radar_items:
+        nm = it.get("name")
+        if nm and nm not in keywords and len(keywords) < settings.WECHAT_MAX_KEYWORDS:
+            keywords.append(nm)
     if keywords and settings.WECHAT_ENABLED and not settings.USE_MOCK_DATA:
         try:
             from app.services.wechat_articles import search_multi_keywords
             article_list = await search_multi_keywords(keywords, limit=20)
-            articles_by_app = _match_articles_to_apps(per_combo, article_list)
+            articles_by_app = _match_articles_to_apps(per_combo, article_list,
+                                                      extra_rows=radar_items)
         except Exception:
             logger.warning("wechat articles search failed", exc_info=True)
 
@@ -1575,33 +1623,18 @@ async def send_daily_digest() -> bool:
     # - leader 卡（剥离维护者杂讯）→ 领导群，**仅当独立配了 leader webhook** 才发
     #   （未配则只发 maintainer，维持今天的单卡行为，不把领导版卡重发进维护者群）。
     # critical=True：主卡是「每日必达」，终态失败升 Sentry ERROR 让维护者立刻补。
-    # 硬锚核心 US/iOS：区分『真平淡日』(已同步、确无事) vs『数据未就位』(今日无快照=同步可能失败)。
-    # detect_movement 仅在 today 未缺数据时赋值 entry["movement"]（today_missing 闸门），故它非 None
-    # 或 market.as_of==today 即核心 combo 今日有新快照。找不到该 combo（理论不应）→ 保守按已就位、不误报。
-    # （定义提前：平淡日兜底闸门要用它，确保填充不掩盖『数据未就位』。）
-    def _core_synced() -> bool:
-        for c in per_combo:
-            if c["country"] == "US" and c["platform"] == "ios":
-                return c.get("movement") is not None or (c.get("market") or {}).get("as_of") == today
-        return True
 
-    # 平淡日兜底填充（两卡都发，2026-07-03 起；#178 上线时仅维护者卡）：当日竞品实质信号
-    # < DIGEST_QUIET_THRESHOLD **且核心已同步**
-    # （真平淡、非管道故障）→ 补 C 商店雷达近期段（本地库，零 ST）+ A 行业动态段（公众号广搜，
-    # 零 ST）。gate 在 _core_synced 上是关键：否则同步故障日会被填成非空卡、掩盖『数据未就位』。
+    # 平淡日行业动态兜底（两卡都发，2026-07-03 起；#178 上线时仅维护者卡）：当日竞品实质
+    # 信号 < DIGEST_QUIET_THRESHOLD **且核心已同步**（真平淡、非管道故障）→ 补 A 行业动态段
+    # （公众号广搜，零 ST）。gate 在 _core_synced 上是关键：否则同步故障日会被填成非空卡、
+    # 掩盖『数据未就位』。（雷达段已升级为每日拉取，见上方 ADR 0006 切片2 块；is_quiet 仍
+    # 决定领导卡是否渲染雷达段 = 原平淡日填充行为。）
     industry_articles: list = []
-    radar_items: list = []
     is_quiet = (settings.DIGEST_QUIET_THRESHOLD > 0
                 and _primary_item_count(per_combo, version_changes, region_changes)
                     < settings.DIGEST_QUIET_THRESHOLD
                 and not settings.USE_MOCK_DATA and _core_synced())
     if is_quiet:
-        # C：商店雷达近期新上架（本地 publisher_itunes_apps，零 ST）。
-        if settings.DIGEST_RADAR_RECENT_DAYS > 0:
-            try:
-                radar_items = await _recent_radar_arrivals(settings.DIGEST_RADAR_RECENT_DAYS)
-            except Exception:
-                logger.warning("radar recent arrivals (quiet-day filler) failed", exc_info=True)
         # A：SLG 行业动态（公众号广搜，零 ST；未启用/连不上降级空）。跨天重复靠时窗控。
         if settings.WECHAT_INDUSTRY_ENABLED and settings.WECHAT_ENABLED:
             try:
@@ -1628,7 +1661,7 @@ async def send_daily_digest() -> bool:
                                   summaries=summaries_by_app, lead_items=lead_items,
                                   audience=audience, own_matches=own_matches,
                                   industry_articles=industry_articles, radar_items=radar_items,
-                                  rss_items=rss_earlybird_items)
+                                  rss_items=rss_earlybird_items, quiet_day=is_quiet)
 
     sent_any = False
     msg_m = _render("maintainer")

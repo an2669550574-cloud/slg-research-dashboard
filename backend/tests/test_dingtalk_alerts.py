@@ -1248,18 +1248,69 @@ def test_radar_recent_lines_store_link_and_video():
     assert "🎬" not in lines[1]
 
 
-def test_digest_radar_section_both_audiences():
-    """商店雷达兜底段两卡都发（#178 上线时仅维护者卡；2026-07-03 应领导反馈放开）。"""
+def test_digest_radar_section_audience_routing():
+    """雷达段路由（ADR 0006 切片2）：维护者卡有则即显（不再限平淡日）；领导卡仅
+    quiet_day=True（平淡日填充，2026-07-03 行为）才渲染，非平淡日剥离（减量宪法：
+    早鸟未过 ST 口径核实，上榜后走正常检出通道进领导卡）。"""
     from app.services.release_alerts import build_daily_digest
     items = [{"name": "Frost Siege", "entity": "Century Games", "platform_tag": "🍎 App Store",
               "genre": "Strategy", "sf": ""}]
     ver = [{"app_id": "1", "name": "万国觉醒", "old": "1.0", "new": "1.1", "date": "2026-07-01"}]
+    # 维护者：非平淡日也显示（有则即显）
     _, body_m, _ = build_daily_digest([], "2026-07-01", version_changes=ver,
                                       radar_items=items, audience="maintainer")
     assert "商店雷达 · 近期新上架" in body_m and "Frost Siege" in body_m
+    # 领导：非平淡日剥离
     _, body_l, _ = build_daily_digest([], "2026-07-01", version_changes=ver,
                                       radar_items=items, audience="leader")
-    assert "商店雷达 · 近期新上架" in body_l and "Frost Siege" in body_l
+    assert "商店雷达" not in body_l
+    # 领导：平淡日（quiet_day=True）保持原填充行为
+    _, body_lq, _ = build_daily_digest([], "2026-07-01", version_changes=ver,
+                                       radar_items=items, audience="leader", quiet_day=True)
+    assert "商店雷达 · 近期新上架" in body_lq and "Frost Siege" in body_lq
+
+
+def test_radar_recent_lines_articles():
+    """雷达行 📰 文章（ADR 0006 切片2）：articles 按 app_id 命中则挂（复用新品行
+    sanitize、两篇封顶、strip 行内缩进前缀成独立段）；未命中行无 📰。"""
+    from types import SimpleNamespace
+    from app.services.release_alerts import build_radar_recent_lines
+    items = [
+        {"name": "Frost Siege", "entity": "Century Games", "platform_tag": "🍎 App Store",
+         "genre": "Strategy", "sf": "", "app_id": "1600000001",
+         "platform": "ios", "country": "us", "summary": None, "video": None},
+        {"name": "Game of Sky", "entity": "IGG", "platform_tag": "🤖 Google Play · 美区视角",
+         "genre": "Strategy", "sf": "", "app_id": "com.igg.android.gameofsky",
+         "platform": "android", "country": "us", "summary": None, "video": None},
+    ]
+    arts = {"1600000001": [
+        SimpleNamespace(title="Frost Siege 软启动[拆解]", link="https://mp.weixin.qq.com/s/x1"),
+        SimpleNamespace(title="点点又一SLG曝光", link="https://mp.weixin.qq.com/s/x2"),
+        SimpleNamespace(title="第三篇被截", link="https://mp.weixin.qq.com/s/x3"),
+    ]}
+    lines = build_radar_recent_lines(items, cap=10, articles=arts)
+    # 命中行：📰 段存在、[ ] 被 sanitize 成 ( )、两篇封顶
+    assert "📰 [Frost Siege 软启动(拆解)](https://mp.weixin.qq.com/s/x1)" in lines[0]
+    assert "x2" in lines[0] and "x3" not in lines[0]
+    # 📰 是独立 _block 段（\n\n 分隔），不是行内 \n 缩进（钉钉单 \n 会粘连）
+    assert "\n   📰" not in lines[0] and "\n\n📰" in lines[0]
+    # 未命中行无 📰
+    assert "📰" not in lines[1]
+
+
+def test_match_articles_to_apps_extra_rows():
+    """_match_articles_to_apps extra_rows（雷达补充名单）：榜单四层外的名字也能回挂；
+    与四层来源共存不互斥。"""
+    from types import SimpleNamespace
+    from app.services.release_alerts import _match_articles_to_apps
+    per_combo = [{"country": "US", "platform": "ios",
+                  "market": {"newcomers": [{"name": "Kingdom Rise", "app_id": "111"}]}}]
+    radar = [{"name": "Frost Siege", "app_id": "1600000001"}]
+    arts = [SimpleNamespace(title="Frost Siege 软启动观察", digest="", link="l1"),
+            SimpleNamespace(title="Kingdom Rise 上线", digest="", link="l2")]
+    out = _match_articles_to_apps(per_combo, arts, extra_rows=radar)
+    assert [a.link for a in out.get("1600000001", [])] == ["l1"]
+    assert [a.link for a in out.get("111", [])] == ["l2"]
 
 
 # ── 领导群每日一次幂等守卫（防 misfire 补跑重复推领导群）────────────────────
