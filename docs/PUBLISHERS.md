@@ -68,6 +68,7 @@
 ## 当前资本集团速览（2026-06-30；~107 实体 / 32 忽略 / **iOS 雷达 64 账号 + GP 雷达 32 账号**；tier_primary 103/107）
 
 > 雷达 2026-06-30 一轮核查后：iOS 59→64（接 6waves/gumi/星辉Rastar/英雄互娱/Rudel）、GP 28→32（接安卓-only 真 SLG：EasyTech/LIGHTNING/iFun/Immersive）。深圳九九（Falcon Poker，扑克误标）已改 `is_slg=false` + 删错 pin，不在 SLG 口径。
+> **2026-07-09 ADR 0006 切片 1 批量扩张：96→134（iOS 67 / GP 67）**——走 `/itunes-artist-suggestions` 一键候选批量接 38 个（含 37GAMES/KingsGroup/Efun 双端/Dragonest/犀牛互动 Rhinos 等），**跳过 3 个坑**：浙江华娱→BILIBILI 账号 ×2（发行账号≠研发主体，接了全是 B 站非 SLG 噪声）、Machine Zone→"Epic War"（账号名对不上存疑）。07-11 验收全部基线化零误报。**仍不接（勿回头）**：Level Infinite/Scopely/Tilting Point（资本系）+ Bilibili/华娱（多品类发行账号）；BUILDING-BLOCKS 唯一真空档（建议端点反解不出，待手工）。
 
 - **途游游戏 Tuyoo** → EVISTA(SLG·新加坡)/Ark Game(HK)/Tuyoo Online HK/Tuyoo Games HK
 - **灵犀互娱（阿里）** → 库卡游戏 Qookka ｜ **益世界** → Just Game ｜ **新奇互娱（爱奇艺）** → Special Gamez
@@ -86,6 +87,7 @@
 - **新出海 SLG（2026 新品监测建档，is_slg=True，单主体）**：**DEQU**（新加坡发行壳 DEQU PTE. LTD.，中文名「王于兴师」疑中国团队出海；Order of Kings / 王の勅命，2026-03 全球上线的 4X×RTS 融合 MMO，一手源 orderofkings.com）——母体/资本系未确认待查。**新品监测捞出未识别真 SLG 的范例**（见下方坑）
   - **浙江华娱网络·东风工作室**（entity #112，2026-07-07 下载榜早期信号建档）：《三国：谋定天下》研发商，韩版 삼국지: 천하결전（Three Kingdoms: Battle Under Heaven），制作人聆风、团队多为重度 SLG 玩家。六职业体系（진군/신행/천공/기좌/청낭/병참）国战 SLG＝攻城+同盟+实时大规模战；2024-06-13 中国上线当日 iOS 畅销前三、B站发行首款 SLG、2024 国产 SLG 最大黑马，韩国 2026-07-02 出海（BILIBILI HK）。**Bilibili 仅独家代理发行**——榜单 publisher=BILIBILI 是发行商非研发商，故 pin 双端 `6757360957`+`com.bhk.newslgkr` **不用 bilibili alias**（多品类巨头避污染）。一手源 newslg-kr.biligames.com / gamemeca gid=1776429 / inven news=312815。**又一个「下载榜早期信号捞出真 SLG 新厂」范例（同 DEQU）。**
   - **Ember Storia / エンバーストーリア**（2026-07-07 同轮，pin 到 **gumi #80**）：SQUARE ENIX 发行、**Orange Cube 研发**（东京独立 SLG 工作室）的 COK-like 基建+大规模盟战+真 PvP 略夺 SLG，日媒定性「村ゲー」。归 gumi 因其前作《Crystal of Reunion》（同 Orange Cube，包名 `jp.co.gu3.orange01` 的 gu3/gumi 血缘）**早已 pin 在 gumi #80**；SQUARE ENIX 是多品类巨头故只 pin 双端 `1634520180`+`com.square_enix.android_googleplay.emberstoria`、不建 alias。
+  - **4399（#116，is_slg=0）+ 犀牛互动 Rhinos Games（#117，is_slg=1）+ 关系 #43**（2026-07-09 公众号线索「Hell Asylum」追查建档）：**命名易混淆——Hell Asylum: Last Warden 的 GP 开发者是 Rhinos（rhinosgames.com，犀牛互动，快手关联方为二股东），不是 4399**；4399 是其发行/投资系（rel #43 affiliate），非同一主体。4399 按多品类大厂范式 is_slg=0 + pin 自有 EOC 双端（`1630067618`+`com.eockr.google`，iOS 开发者账号 artistId 967114195 名下仅 EOC 一款）；Rhinos pin `com.us.dyjycbt.google`（Hell Asylum，末日收容所 SLG，2026-07 GP 封测 cbt）+ 已接 GP 雷达账号 `Rhinos`。**暂 pin-only 不建 alias**（封测包名不稳，正式上线换包名再重 pin）。取证：iTunes 6 区搜索 + artist 反查 + GP 原始 HTML 抠 `dev?id=`。**「看榜监测对封测新品全链失明」的实锤案例 → 直接催生 ADR 0006。**
 - **独立小厂**：**Rudel** (キングダム 頂天) / LIGHTNING STUDIOS (Game of Kings) / GAMEGEARS / Immersive Games HK / 等
 - **单主体（无第二壳）**：**网易**（率土之滨用 app_id 钉，⚠️ 勿加 NetEase Games alias——荒野行動是 BR 误进策略榜，加 alias 会污染合计）；**IGG**；**莉莉丝**（+Farlight）
 
