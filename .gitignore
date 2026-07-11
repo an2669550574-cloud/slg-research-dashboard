@@ -66,3 +66,6 @@ snapshot-dashboard.md
 
 # 本地一次性数据备份（合并/迁移前快照），不进版本控制
 .local-backups/
+
+# Codex 本机工具配置（MCP 路径等机器相关）
+.codex/
