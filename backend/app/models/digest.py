@@ -21,6 +21,24 @@ class LeaderDigestSend(Base):
     sent_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 
 
+class JobHeartbeat(Base):
+    """定时 job「上次成功完成」台账：补静默失败盲区（A3 前科）。
+
+    scheduler 各 job 的 try/except 只 catch **崩溃**（→ Sentry）；但 job 若**停止被调度**
+    （被禁用 / scheduler 没起来 / 容器没跑 scheduler），既不崩也不产出，静默无人知。每个关键
+    job 成功完成后 upsert `last_ok_at=now`；每日 digest 尾部自检：**有** last_ok_at 却超过该
+    job 预期节奏 * 宽限 → 维护者卡 ⚠️ 提示。语义故意是「有过成功记录却变旧」——从没记录的
+    job（新加 / 没跑过）不误报，治的是「本来在跑、悄悄停了」这个真实回归面。仅**维护者卡**，
+    不发领导群。job_name 作主键（每 job 一行，天然 upsert）。纯新增表，回滚走纯代码（旧码无
+    此表、record/自检均无声降级）。与平淡日「心跳卡」(DIGEST_HEARTBEAT_ENABLED，keep-alive) 无关。
+    """
+    __tablename__ = "job_heartbeat"
+
+    job_name: Mapped[str] = mapped_column(String(80), primary_key=True)
+    last_ok_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    note: Mapped[str] = mapped_column(String(200), nullable=True)  # 便于排查（如写入行数）
+
+
 class WechatArticleSent(Base):
     """行业动态段（平淡日兜底广搜）已推文章台账：跨天去重。
 

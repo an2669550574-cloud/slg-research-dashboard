@@ -1664,8 +1664,20 @@ async def send_daily_digest() -> bool:
                                   rss_items=rss_earlybird_items, quiet_day=is_quiet)
 
     sent_any = False
+    # job 心跳自检（P1②）：关键定时 job 有成功记录却超期 → 维护者卡尾 ⚠️（补静默失败盲区，
+    # A3 前科）。**仅维护者卡**；即便平淡日 / 数据未就位也要让告警出得去（见下 None 分支）。
+    from app.services.job_heartbeat import get_stale_jobs, render_stale_alert
+    _stale_alert = render_stale_alert(await get_stale_jobs())
     msg_m = _render("maintainer")
+    if msg_m is not None and _stale_alert:
+        msg_m = (msg_m[0], msg_m[1] + "\n\n---\n\n" + _stale_alert, msg_m[2])
     if msg_m is None:
+        if _stale_alert:
+            # 平淡日 / 无内容但有 job 超期：单独发维护者告警卡（不进领导群），别让静默失败被
+            # 「平淡=平静」掩盖。critical=True：告警卡自身发失败也升 Sentry。
+            sent_any = await dingtalk.send_markdown(
+                f"任务自检 · {today}", "### ⚠️ 定时任务自检\n\n" + _stale_alert,
+                target="maintainer", critical=True) or sent_any
         if not _core_synced():
             # 数据未就位：核心 US/iOS 今日无快照。升 Sentry(ERROR) + 发克制维护者兜底卡，别让
             # 管道故障被『静默=平静』掩盖。leader 卡同源也为空，无需再发。critical=True：兜底卡
