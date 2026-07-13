@@ -211,6 +211,56 @@ def _is_ignored(app_id: Optional[str], publisher: Optional[str],
     return corp_squash(_tokens(publisher)) in ignore_pub_keys
 
 
+async def compute_subgenre_pulse(days: int) -> tuple[int, list[dict]]:
+    """近 days 天检出的新品按玩法子品类 `subgenre_cn` 分布 + 环比（上一等长窗口）。
+
+    返回 `(total, buckets)`：total = 当前窗口去重后有分类的新品数；buckets =
+    `[{subgenre, count, prev_count, delta}]`，按 count 降序 / delta 降序 / subgenre 确定性排序。
+    按 app_id 去重、用**最早检出** `min(first_detected_at)` 定位窗口；忽略名单过滤；radar
+    影子行也计入（软启动新品同样是赛道信号）。零 ST。
+
+    供 `/newcomers/subgenre-pulse` 端点与月度 rollup「赛道升降温」段共用——两处口径永不漂移。
+    """
+    from collections import Counter
+    from app.models.newcomer import MarketNewcomerLog
+
+    now = utcnow_naive()
+    cur_since = now - timedelta(days=days)
+    prev_since = now - timedelta(days=2 * days)
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(
+            select(MarketNewcomerLog.app_id, MarketNewcomerLog.subgenre_cn,
+                   MarketNewcomerLog.publisher, MarketNewcomerLog.first_detected_at)
+            .where(MarketNewcomerLog.subgenre_cn.is_not(None),
+                   MarketNewcomerLog.first_detected_at >= prev_since)
+        )).all()
+    ignore_pub_keys, ignore_app_ids = await _load_ignore_keys()
+    # per app：最早检出时间 + 子品类（同 app 各行 subgenre 一致，translate 按 app 回写全部行）。
+    by_app: dict[str, tuple] = {}
+    for app_id, sg, pub, det in rows:
+        if not sg or _is_ignored(app_id, pub, ignore_pub_keys, ignore_app_ids):
+            continue
+        cur = by_app.get(app_id)
+        if cur is None or det < cur[0]:
+            by_app[app_id] = (det, sg)
+    cur_counts: Counter = Counter()
+    prev_counts: Counter = Counter()
+    for _app_id, (det, sg) in by_app.items():
+        if det >= cur_since:
+            cur_counts[sg] += 1
+        elif det >= prev_since:
+            prev_counts[sg] += 1
+    subgenres = set(cur_counts) | set(prev_counts)
+    buckets = [
+        {"subgenre": s, "count": cur_counts[s], "prev_count": prev_counts[s],
+         "delta": cur_counts[s] - prev_counts[s]}
+        for s in subgenres
+    ]
+    # 当前窗口新品数降序；同数按环比升幅、再按名字，确定性排序。
+    buckets.sort(key=lambda b: (-b["count"], -b["delta"], b["subgenre"]))
+    return sum(cur_counts.values()), buckets
+
+
 async def detect_newcomers(
     country: str,
     platform: str,

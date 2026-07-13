@@ -1943,9 +1943,9 @@ async def _monthly_newcomer_survival(rep_rows: list, cap: int):
 
 
 async def build_monthly_market_rollup(days: int, cap: int) -> Optional[tuple[str, str]]:
-    """月度市场复盘卡：US 收入榜 SLG 竞品名次净变动 + 近 days 天新品存活小结（零 ST）。
+    """月度市场复盘卡：名次净变动 + 新品存活小结 + 赛道升降温（读时算本地库，零 ST）。
 
-    补 digest 阅后即焚、无复利视图断层——回答「这个月 SLG 市场发生了什么」。两段都无内容
+    补 digest 阅后即焚、无复利视图断层——回答「这个月 SLG 市场发生了什么」。三段都无内容
     → None（不发空卡）。仅维护者群（见 send_monthly_market_rollup）。返回 (title, text)。
     """
     rep_rows = await _collect_slg_newcomer_reps(days)
@@ -1953,13 +1953,15 @@ async def build_monthly_market_rollup(days: int, cap: int) -> Optional[tuple[str
     # 段①排除近窗口新品（它们归段②「新品存活」），避免同一 app 在两段重复出现。
     climbers, fallers = await _monthly_rank_movers(days, cap, exclude_app_ids=newcomer_ids)
     survival = await _monthly_newcomer_survival(rep_rows, cap)
-    if not climbers and not fallers and survival is None:
+    from app.services.newcomers import compute_subgenre_pulse
+    _pulse_total, pulse_buckets = await compute_subgenre_pulse(days)
+    if not climbers and not fallers and survival is None and not pulse_buckets:
         return None
 
     today = utcnow_naive().strftime("%Y-%m-%d")
     sections = [f"### 🗓️ SLG 市场月报 · 近 {days} 天\n\n"
-                f"> 这段时间 SLG 竞品格局怎么变了——US 收入榜名次谁涨谁跌、新上架的新品活下来几个。"
-                f"名次 = 畅销榜排名，越小越靠前。"]
+                f"> 这段时间 SLG 竞品格局怎么变了——US 收入榜名次谁涨谁跌、新上架的新品活下来几个、"
+                f"哪些赛道在升温。名次 = 畅销榜排名，越小越靠前。"]
 
     if climbers or fallers:
         lines = ["\n\n**📊 名次净变动（US 收入榜）**"]
@@ -1985,6 +1987,14 @@ async def build_monthly_market_rollup(days: int, cap: int) -> Optional[tuple[str
             span = f"{x['days_tracked']} 天涨 {gain} 名" if x.get("days_tracked") else f"涨 {gain} 名"
             lines.append(f"- **{_md_name(x['name'])}**{_sg_label(x)} · "
                          f"#{x['detect_rank']} → **#{x.get('current_rank')}**，{span}")
+        sections.append("\n".join(lines))
+
+    if pulse_buckets:
+        lines = [f"\n\n**🎯 赛道升降温（近 {days} 天新品按玩法子品类，环比上一 {days} 天）**"]
+        for b in pulse_buckets[:cap]:
+            d = b["delta"]
+            arrow = f"↑{d}" if d > 0 else (f"↓{-d}" if d < 0 else "→持平")
+            lines.append(f"- **{b['subgenre']}** {b['count']} 款新品（{arrow}）")
         sections.append("\n".join(lines))
 
     return f"SLG 市场月报 {today}", "".join(sections)

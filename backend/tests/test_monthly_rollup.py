@@ -27,7 +27,8 @@ async def _add_ranking(app_id, rank, days_ago, name=None, publisher="Acme",
         await db.commit()
 
 
-async def _add_newcomer(app_id, name, rank, days_ago, is_slg=True, publisher="Acme"):
+async def _add_newcomer(app_id, name, rank, days_ago, is_slg=True, publisher="Acme",
+                        subgenre_cn=None):
     from app.database import AsyncSessionLocal, utcnow_naive
     from app.models.newcomer import MarketNewcomerLog
     from app.models.game import CHART_GROSSING
@@ -35,6 +36,7 @@ async def _add_newcomer(app_id, name, rank, days_ago, is_slg=True, publisher="Ac
         db.add(MarketNewcomerLog(
             app_id=app_id, name=name, country="US", platform="ios",
             chart_type=CHART_GROSSING, rank=rank, is_slg=is_slg, publisher=publisher,
+            subgenre_cn=subgenre_cn,
             first_detected_at=utcnow_naive() - timedelta(days=days_ago),
             as_of=(utcnow_naive() - timedelta(days=days_ago)).strftime("%Y-%m-%d"),
         ))
@@ -131,3 +133,27 @@ async def test_monthly_newcomer_excluded_from_movers(client, monkeypatch):
     assert body.count("DupGame") == 1, "新品应只在段②出现一次，不重复进段①"
     seg1 = body.split("🌱")[0]  # 段②以 🌱 起头；🌱 之前 = 段①/表头
     assert "DupGame" not in seg1, "段①名次净变动不应含新品"
+
+
+@pytest.mark.asyncio
+async def test_monthly_subgenre_pulse_section(client, monkeypatch):
+    """段③赛道升降温：近窗口新品按子品类分布 + 环比（升温 ↑ / 降温 ↓）。
+
+    用 is_slg=False 的新品隔离——段①（无 rankings）、段②（非 is_slg 不入 reps）都空，
+    只剩段③；验证 pulse 计算（compute_subgenre_pulse 共用逻辑）在月度卡里正确渲染。
+    """
+    from app.services import release_alerts as ra
+    # 当前窗口（≤30 天）：数字门SLG ×2、基地建设SLG ×1
+    await _add_newcomer("com.x.a1", "游戏1", rank=50, days_ago=5, is_slg=False, subgenre_cn="数字门SLG")
+    await _add_newcomer("com.x.a2", "游戏2", rank=60, days_ago=8, is_slg=False, subgenre_cn="数字门SLG")
+    await _add_newcomer("com.x.a3", "游戏3", rank=70, days_ago=10, is_slg=False, subgenre_cn="基地建设SLG")
+    # 上一窗口（30~60 天）：数字门SLG ×1（→ 数字门环比 +1）+ 国战SLG ×1（本窗口无 → 降温 -1）
+    await _add_newcomer("com.x.a4", "游戏4", rank=80, days_ago=40, is_slg=False, subgenre_cn="数字门SLG")
+    await _add_newcomer("com.x.a5", "游戏5", rank=90, days_ago=45, is_slg=False, subgenre_cn="国战SLG")
+    card = await ra.build_monthly_market_rollup(days=30, cap=5)
+    assert card is not None
+    _, body = card
+    assert "赛道升降温" in body
+    assert "数字门SLG" in body and "2 款新品" in body and "↑1" in body   # 升温
+    assert "基地建设SLG" in body and "1 款新品" in body
+    assert "国战SLG" in body and "↓1" in body                          # 降温（本窗口 0 款）
