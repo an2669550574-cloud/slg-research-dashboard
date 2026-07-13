@@ -257,6 +257,17 @@ async def _run_weekly_newcomer_review() -> None:
         logger.exception("Weekly newcomer review job crashed")
 
 
+async def _run_monthly_market_rollup() -> None:
+    """定时任务包装：SLG 市场月报（US 收入榜名次净变动 + 新品存活小结，仅维护者卡）。
+    读时算 game_rankings / newcomer_log，零 ST；未配 webhook / 两段无内容 静默 no-op；
+    异常不拖垮 scheduler。"""
+    from app.services.release_alerts import send_monthly_market_rollup
+    try:
+        await send_monthly_market_rollup()
+    except Exception:
+        logger.exception("Monthly market rollup job crashed")
+
+
 async def _run_wechat_login_check() -> None:
     """定时任务包装：微信公众号登录将过期/已失效 → 钉钉提醒重新扫码。
     未启用 / 未配 webhook / 服务连不上 → 静默；异常不拖垮 scheduler。"""
@@ -469,6 +480,17 @@ def start_scheduler() -> None:
         _run_weekly_newcomer_review,
         CronTrigger(day_of_week="mon", hour=4, minute=40, timezone="UTC"),
         id="weekly_newcomer_review",
+        replace_existing=True,
+        misfire_grace_time=3600 * 3,
+    )
+
+    # SLG 市场月报（月度复盘 rollup）：每月 1 号 05:00 UTC（= 北京 13:00，避开 04:00 DB
+    # 备份 + 若逢周一的 04:40 周察卡）。读本地 game_rankings/newcomer_log，零 ST；仅维护者
+    # 卡；未配 webhook / 两段无内容空跑无害，故无条件挂。
+    scheduler.add_job(
+        _run_monthly_market_rollup,
+        CronTrigger(day=1, hour=5, minute=0, timezone="UTC"),
+        id="monthly_market_rollup",
         replace_existing=True,
         misfire_grace_time=3600 * 3,
     )
