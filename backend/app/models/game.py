@@ -1,4 +1,4 @@
-from sqlalchemy import String, Float, Integer, DateTime, Text, JSON, UniqueConstraint
+from sqlalchemy import String, Float, Integer, DateTime, Text, JSON, UniqueConstraint, Index
 from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime
 from app.database import Base, utcnow_naive
@@ -39,6 +39,11 @@ class GameRanking(Base):
         # 并发触发写重复；chart_type 进约束让收入榜/下载榜同 (市场,日) 并存不撞。
         UniqueConstraint("app_id", "date", "country", "platform", "chart_type",
                          name="uq_game_rankings_day_market"),
+        # digest / movement / 月度 rollup 的热读路径都按 (市场, 榜类型, 日期) 过滤、不带
+        # app_id，用不上上面以 app_id 打头的唯一索引，会退回低选择性的单列 chart_type
+        # 索引（2 值≈半表扫描）。这条复合索引让「取某市场某榜某窗口」直接 seek（前 3 列
+        # 等值 + date 范围）。EXPLAIN 实测：ix_chart_type 半表扫 → 本索引精确 seek。
+        Index("ix_game_rankings_market_date", "country", "platform", "chart_type", "date"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
