@@ -341,3 +341,18 @@ async def test_start_scheduler_warns_on_empty_combos_mock(client, monkeypatch, c
 
     assert fake.started is True
     assert any("0 valid combos" in r.getMessage() for r in caplog.records)
+
+
+def test_scheduler_lock_reentrant():
+    """跨进程 scheduler 锁：同进程内**重入放行**——保证 start_scheduler 被多次调用时
+    不被自己的锁挡住（本文件另两个真调用测试即依赖此语义），拿锁后句柄非空、重入复用
+    同一 fd 不重复打开。仅跨进程互斥那半靠 flock 语义，不在单元测试内跨进程验证。"""
+    from app import scheduler as sched
+
+    # 调用后一定处于持锁态（无论此前是否已被别的测试拿过锁）
+    assert sched._acquire_scheduler_lock() is True
+    assert sched._scheduler_lock_fd is not None
+    fd_before = sched._scheduler_lock_fd
+    # 重入：再调仍放行，且复用同一句柄（不重复开 fd）
+    assert sched._acquire_scheduler_lock() is True
+    assert sched._scheduler_lock_fd is fd_before

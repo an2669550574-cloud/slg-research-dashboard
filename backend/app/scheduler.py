@@ -1,4 +1,5 @@
 import logging
+import os
 from datetime import date
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -12,6 +13,42 @@ from app.services.sensor_tower import sensor_tower_service
 logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler()
+
+# 进程级排它锁的持有句柄（拿到后持有到进程退出，故意不 close）。
+_scheduler_lock_fd = None
+
+
+def _acquire_scheduler_lock() -> bool:
+    """跨进程排它锁：多 worker / 多进程部署时只让一个进程起 scheduler。
+
+    威胁：uvicorn/gunicorn 若以 >1 worker 起，每个 worker 各起一个同进程
+    AsyncIOScheduler → ST 同步 job 双跑（击穿 200/月软护栏，项目最硬约束）+
+    领导群每天收 N 张重复卡。今天是隐式单 worker（Dockerfile CMD 无 --workers），
+    这把锁是防"哪天为性能加 --workers"的运行时护栏。
+
+    语义：**同进程重入放行**（已持锁直接返回 True——test_scheduler 里对
+    start_scheduler 的多次调用不受影响），仅**跨进程**互斥。锁随进程退出由 OS
+    自动释放（flock 语义，无 pidfile 残留问题），容器重启后新进程可重新拿锁。
+    非 POSIX 平台（无 fcntl）降级为直接放行——生产是单 worker Linux 容器，
+    此路径只影响 Windows 本地开发。锁路径可用 SCHEDULER_LOCK_PATH 覆盖。
+    """
+    global _scheduler_lock_fd
+    if _scheduler_lock_fd is not None:
+        return True
+    try:
+        import fcntl
+    except ImportError:
+        return True
+    lock_path = os.environ.get("SCHEDULER_LOCK_PATH", "/tmp/slg_scheduler.lock")
+    fd = open(lock_path, "w")
+    try:
+        fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fd.close()
+        return False
+    _scheduler_lock_fd = fd  # 持有到进程退出，故意不 close
+    return True
+
 
 # 每个 combo 间隔 N 分钟避免 Sensor Tower 端的突发限流；02:30 起步留够
 # UTC 早上的低峰窗口。6 个 combo × 2min = 12min → 02:42 结束，仍在窗口内。
@@ -367,6 +404,13 @@ async def seed_publishers_if_empty() -> None:
 
 def start_scheduler() -> None:
     if scheduler.running:
+        return
+    if not _acquire_scheduler_lock():
+        logger.warning(
+            "Scheduler lock held by another process — skipping scheduler start in this "
+            "worker. Running uvicorn/gunicorn with >1 worker would double-run ST sync jobs "
+            "and leader digests; keep the scheduler to a single process."
+        )
         return
     combos = settings.sync_combos_list
     if not combos:

@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "lint": "eslint src",
     "gen:types": "python ../backend/scripts/dump_openapi.py ../backend/openapi.json && openapi-typescript ../backend/openapi.json -o src/lib/types.gen.ts"
   },
   "dependencies": {
@@ -31,8 +32,11 @@
     "@testing-library/user-event": "^14.6.1",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
+    "@typescript-eslint/parser": "^8.63.0",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.19",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
     "jsdom": "^29.1.1",
     "openapi-typescript": "^7.4.0",
     "postcss": "^8.4.39",
