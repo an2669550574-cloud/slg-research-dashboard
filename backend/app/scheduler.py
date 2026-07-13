@@ -228,6 +228,10 @@ async def _scheduled_sync(country: str = "US", platform: str = "ios") -> None:
                 "Free-chart sync failed for %s/%s (grossing sync unaffected)",
                 country, platform,
             )
+    # 心跳：本轮 scheduled sync 跑完（该 combo 到点且尝试同步）→ 记「榜单同步」存活。
+    # 记在 written 判定**前**——ST 失败(written=0)是另一类告警(Sentry)，心跳只证 scheduler 在跑。
+    from app.services.job_heartbeat import record_heartbeat
+    await record_heartbeat("daily_rankings_sync", note=f"{country}/{platform} {written} rows")
     if not written or settings.USE_MOCK_DATA:
         return
     from app.services.movement import detect_and_alert_movement
@@ -256,8 +260,10 @@ async def _run_newcomer_video_sync() -> None:
     """定时任务包装：给近期检出的新品搜 YouTube 实机玩法视频（ADR 0002 切片 1b）。
     YT 独立配额（不碰 ST），YOUTUBE_API_KEY 未配则整体 no-op；异常不拖垮 scheduler。"""
     from app.services.newcomer_video import sync_newcomer_videos
+    from app.services.job_heartbeat import record_heartbeat
     try:
         await sync_newcomer_videos()
+        await record_heartbeat("newcomer_video_sync")
     except Exception:
         logger.exception("Newcomer video sync job crashed")
 
@@ -267,8 +273,10 @@ async def _run_region_launch_sync() -> None:
     零 ST（iTunes lookup），USE_MOCK_DATA / 无可用 trackId 则整体 no-op；周级即可
     （上架日近静态）；异常不拖垮 scheduler。"""
     from app.services.region_launch import sync_region_launches
+    from app.services.job_heartbeat import record_heartbeat
     try:
         await sync_region_launches()
+        await record_heartbeat("region_launch_sync")
     except Exception:
         logger.exception("Region launch sync job crashed")
 
@@ -288,8 +296,10 @@ async def _run_weekly_newcomer_review() -> None:
     读时算 game_rankings 走势，零 ST；未配 webhook / 窗口无 SLG 新品 静默 no-op；
     异常不拖垮 scheduler。"""
     from app.services.release_alerts import send_weekly_newcomer_review
+    from app.services.job_heartbeat import record_heartbeat
     try:
         await send_weekly_newcomer_review()
+        await record_heartbeat("weekly_newcomer_review")
     except Exception:
         logger.exception("Weekly newcomer review job crashed")
 
@@ -299,8 +309,10 @@ async def _run_monthly_market_rollup() -> None:
     读时算 game_rankings / newcomer_log，零 ST；未配 webhook / 两段无内容 静默 no-op；
     异常不拖垮 scheduler。"""
     from app.services.release_alerts import send_monthly_market_rollup
+    from app.services.job_heartbeat import record_heartbeat
     try:
         await send_monthly_market_rollup()
+        await record_heartbeat("monthly_market_rollup")
     except Exception:
         logger.exception("Monthly market rollup job crashed")
 
@@ -341,6 +353,7 @@ async def _run_itunes_releases_sync() -> None:
     不拖垮 scheduler；告警窗口各自独立不重报。"""
     from app.services.gp_releases import sync_gp_releases
     from app.services.itunes_releases import sync_itunes_releases
+    from app.services.job_heartbeat import record_heartbeat
     try:
         await sync_itunes_releases()
     except Exception:
@@ -349,6 +362,8 @@ async def _run_itunes_releases_sync() -> None:
         await sync_gp_releases()
     except Exception:
         logger.exception("GP releases sync job crashed")
+    # 两侧各自 self-guard，走到这里即本轮雷达 job 跑完 → 记「商店雷达」存活。
+    await record_heartbeat("itunes_releases_sync")
 
 
 async def sync_seed_games_if_empty() -> None:
