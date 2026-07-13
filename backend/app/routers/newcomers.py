@@ -441,55 +441,20 @@ class SubgenrePulseOut(BaseModel):
 @router.get("/subgenre-pulse", response_model=SubgenrePulseOut)
 async def get_subgenre_pulse(
     days: int = Query(30, ge=7, le=180, description="回看窗口（天）；环比对上一个等长窗口"),
-    db: AsyncSession = Depends(get_db),
 ):
     """赛道脉搏：近 days 天检出的新品按玩法子品类（`subgenre_cn`）分布 + 环比（P1-2 stretch）。
 
     回答「哪个赛道最近在冒新品 / 升温降温」——数字门 SLG 整体在热还是冷。零 ST。
     按 app_id 去重（同 app 跨 combo/chart 多行算一个新品），用该 app **最早检出**
     (`min(first_detected_at)`) 定位落哪个窗口。忽略名单过滤（与 /history 同口径）。
-    radar 影子行也计入（软启动新品同样是赛道信号）。
+    radar 影子行也计入（软启动新品同样是赛道信号）。计算逻辑抽到
+    `services.newcomers.compute_subgenre_pulse`，与月度 rollup 赛道段共用、口径永不漂移。
     """
-    from collections import Counter
-    from app.models.newcomer import MarketNewcomerLog
-    from app.services.newcomers import _load_ignore_keys, _is_ignored
-
-    now = utcnow_naive()
-    cur_since = now - timedelta(days=days)
-    prev_since = now - timedelta(days=2 * days)
-    rows = (await db.execute(
-        select(MarketNewcomerLog.app_id, MarketNewcomerLog.subgenre_cn,
-               MarketNewcomerLog.publisher, MarketNewcomerLog.first_detected_at)
-        .where(MarketNewcomerLog.subgenre_cn.is_not(None),
-               MarketNewcomerLog.first_detected_at >= prev_since)
-    )).all()
-    ignore_pub_keys, ignore_app_ids = await _load_ignore_keys()
-    # per app：最早检出时间 + 子品类（同 app 各行 subgenre 一致，translate 按 app 回写全部行）。
-    by_app: dict[str, tuple] = {}
-    for app_id, sg, pub, det in rows:
-        if not sg or _is_ignored(app_id, pub, ignore_pub_keys, ignore_app_ids):
-            continue
-        cur = by_app.get(app_id)
-        if cur is None or det < cur[0]:
-            by_app[app_id] = (det, sg)
-    cur_counts: Counter = Counter()
-    prev_counts: Counter = Counter()
-    for _app_id, (det, sg) in by_app.items():
-        if det >= cur_since:
-            cur_counts[sg] += 1
-        elif det >= prev_since:
-            prev_counts[sg] += 1
-    subgenres = set(cur_counts) | set(prev_counts)
-    buckets = [
-        SubgenrePulseBucket(subgenre=s, count=cur_counts[s], prev_count=prev_counts[s],
-                            delta=cur_counts[s] - prev_counts[s])
-        for s in subgenres
-    ]
-    # 当前窗口新品数降序；同数按环比升幅、再按名字，确定性排序。
-    buckets.sort(key=lambda b: (-b.count, -b.delta, b.subgenre))
+    from app.services.newcomers import compute_subgenre_pulse
+    total, buckets = await compute_subgenre_pulse(days)
     return SubgenrePulseOut(
-        today=now.strftime("%Y-%m-%d"), days=days,
-        total=sum(cur_counts.values()), buckets=buckets,
+        today=utcnow_naive().strftime("%Y-%m-%d"), days=days, total=total,
+        buckets=[SubgenrePulseBucket(**b) for b in buckets],
     )
 
 

@@ -276,6 +276,12 @@ class Settings(BaseSettings):
     DIGEST_WEEKLY_REVIEW_ENABLED: bool = True
     DIGEST_WEEKLY_REVIEW_DAYS: int = 30      # 回看窗口
     DIGEST_WEEKLY_REVIEW_CAP: int = 8        # 起飞 / 掉榜每段明细上限
+    # 月度市场复盘 rollup（每月 1 号，仅维护者群，零 ST）：补 digest 阅后即焚、无复利视图断层——
+    # 回答「这个月 SLG 市场发生了什么」。段①US 收入榜竞品名次净变动 Top（谁涨谁跌）+ 段②近 30 天
+    # 新品存活小结（起飞/在榜/掉榜分布）。读时算 game_rankings/newcomer_log，与周察卡同零配额范式。
+    DIGEST_MONTHLY_ROLLUP_ENABLED: bool = True
+    DIGEST_MONTHLY_ROLLUP_DAYS: int = 30     # 回看窗口（月度跨度）
+    DIGEST_MONTHLY_ROLLUP_CAP: int = 5       # 各段明细上限（涨 / 跌 / 起飞）
     # 存量竞品玩法子品类回补（P1-2）：给「有描述的 is_slg 存量 app」（tracked games / movement
     # 老熟人 / subgenre 特性前老检出行）补分类进 app_subgenre 表，digest 建 own_matches 时作
     # fallback → ⚔️ 同赛道对老竞品也生效。digest 内每轮 drain 上限（LLM 便宜文本模型、前进式累积，

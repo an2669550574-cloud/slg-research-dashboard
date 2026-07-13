@@ -1709,18 +1709,17 @@ async def send_daily_digest() -> bool:
 
 # ── 新品周察周报卡（P0-1③ 新品生命周期追踪）────────────────────────────────
 
-async def build_weekly_newcomer_review(days: int, cap: int) -> Optional[tuple[str, str]]:
-    """近 days 天检出的 SLG 新品「存活/爬升/掉榜」周察卡（读时算 game_rankings，零 ST）。
+async def _collect_slg_newcomer_reps(days: int) -> list:
+    """近 days 天检出的 SLG 新品，按 app_id 取一条代表行（周察卡 + 月度 rollup 共用）。
 
-    补「新品检出即阅后即焚」断层：除非冲进收入榜 Top20（movement），否则没人知道检出后
-    它起飞还是死了。这里把近窗口 SLG 新品按检出后走势分层——🚀 起飞（名次持续上升）/
-    ✅ 在榜存活 / ✝️ 掉榜（昙花一现），起飞 + 掉榜两段列明细（决策上最该看的两极）。
-
-    返回 (title, text)；窗口内无 SLG 新品 → None（不发空卡）。
+    只看 SLG——live is_slg（新接入厂商旧行也认得，#181 教训）OR 存档聚合（任一行存过 1
+    即全 app 算 SLG——本地化 publisher 串 live 命不中时靠别的 combo 的判定，治跨 combo 分裂
+    漏报）；跨 combo 按 app_id 取一条代表行（优先 US/iOS 主市场，否则最早检出——rows 已按
+    first_detected 升序）。返回 rep_rows（MarketNewcomerLog 标量行，跨 session 读安全），
+    空 = 窗口内无 SLG 新品。
     """
     from app.models.newcomer import MarketNewcomerLog
     from app.models.game import CHART_GROSSING
-    from app.services.newcomers import compute_trajectories
     from app.services.slg_publishers import is_slg
 
     since = utcnow_naive() - timedelta(days=days)
@@ -1731,11 +1730,6 @@ async def build_weekly_newcomer_review(days: int, cap: int) -> Optional[tuple[st
                 MarketNewcomerLog.first_detected_at >= since,
             ).order_by(MarketNewcomerLog.first_detected_at.asc())
         )).scalars().all()
-
-    # 只看 SLG——live is_slg（新接入厂商旧行也认得，#181 教训）OR 存档聚合（任一行
-    # 存过 1 即全 app 算 SLG——本地化 publisher 串 live 命不中时靠别的 combo 的判定，
-    # 治跨 combo 分裂漏报）；跨 combo 按 app_id 取一条代表行（优先 US/iOS 主市场，
-    # 否则最早检出——rows 已按 first_detected 升序）。
     archived_slg = {r.app_id for r in rows if r.is_slg}
     reps: dict[str, "MarketNewcomerLog"] = {}
     for r in rows:
@@ -1746,10 +1740,23 @@ async def build_weekly_newcomer_review(days: int, cap: int) -> Optional[tuple[st
             reps[r.app_id] = r
         elif (r.country, r.platform) == ("US", "ios") and (cur.country, cur.platform) != ("US", "ios"):
             reps[r.app_id] = r
-    if not reps:
-        return None
+    return list(reps.values())
 
-    rep_rows = list(reps.values())
+
+async def build_weekly_newcomer_review(days: int, cap: int) -> Optional[tuple[str, str]]:
+    """近 days 天检出的 SLG 新品「存活/爬升/掉榜」周察卡（读时算 game_rankings，零 ST）。
+
+    补「新品检出即阅后即焚」断层：除非冲进收入榜 Top20（movement），否则没人知道检出后
+    它起飞还是死了。这里把近窗口 SLG 新品按检出后走势分层——🚀 起飞（名次持续上升）/
+    ✅ 在榜存活 / ✝️ 掉榜（昙花一现），起飞 + 掉榜两段列明细（决策上最该看的两极）。
+
+    返回 (title, text)；窗口内无 SLG 新品 → None（不发空卡）。
+    """
+    from app.services.newcomers import compute_trajectories
+
+    rep_rows = await _collect_slg_newcomer_reps(days)
+    if not rep_rows:
+        return None
     traj = await compute_trajectories(rep_rows)
     # C 可读性（#198 同款）：中文玩法子品类标签，让外文新品名一眼可辨品类（数字门SLG/塔防/…），
     # 顺带暴露误标（塔防等非 SLG 混进来时一眼可见）。
@@ -1839,6 +1846,175 @@ async def send_weekly_newcomer_review() -> bool:
         settings.DIGEST_WEEKLY_REVIEW_DAYS, settings.DIGEST_WEEKLY_REVIEW_CAP)
     if card is None:
         logger.info("weekly newcomer review: no SLG newcomers in window, skip")
+        return False
+    return await dingtalk.send_markdown(*card, target="maintainer")
+
+
+# ── 月度市场复盘 rollup（补 digest 阅后即焚、无复利视图断层）──────────────────
+
+async def _monthly_rank_movers(days: int, cap: int, exclude_app_ids: Optional[set] = None):
+    """近 days 天 US 收入榜里 SLG 竞品的名次净变动（读 game_rankings，零 ST）。
+
+    每个 app 取窗口内最早与最晚**有名次**的快照对比：net = 首名次 - 末名次（>0 = 名次
+    前进/上升，因名次越小越靠前）。要求首末日历跨度 >= max(7, days//3)，否则窗口内点太少、
+    月度趋势不可信 → 跳过（US 日更，够密的竞品才留）。只看 US/ios 主市场——日更数据最密、
+    月度格局最可信；次市场双周快照太稀不入。exclude_app_ids = 近窗口检出的新品，它们的走势
+    归段②「新品存活」，段①只看更老的既有竞品，避免同一 app 在两段重复。返回 (climbers,
+    fallers)，各 [{name, app_id, start, end, net, subgenre_cn}]，按 |net| 降序、cap 截断。
+    """
+    from app.models.game import GameRanking, CHART_GROSSING
+    from app.services.slg_publishers import is_slg
+
+    exclude_app_ids = exclude_app_ids or set()
+    since = (utcnow_naive() - timedelta(days=days)).strftime("%Y-%m-%d")
+    async with AsyncSessionLocal() as db:
+        pts = (await db.execute(
+            select(GameRanking.app_id, GameRanking.date, GameRanking.rank,
+                   GameRanking.name, GameRanking.publisher)
+            .where(GameRanking.country == "US", GameRanking.platform == "ios",
+                   GameRanking.chart_type == CHART_GROSSING,
+                   GameRanking.date >= since, GameRanking.rank.is_not(None))
+        )).all()
+
+    by_app: dict[str, dict] = {}
+    for aid, d, rk, name, pub in pts:
+        e = by_app.setdefault(aid, {"points": [], "name": None, "publisher": None})
+        e["points"].append((d, rk))
+        if name and not e["name"]:
+            e["name"] = name
+        if pub and not e["publisher"]:
+            e["publisher"] = pub
+
+    min_span = max(7, days // 3)
+    movers: list[dict] = []
+    for aid, e in by_app.items():
+        if aid in exclude_app_ids or not is_slg(aid, e["publisher"]):
+            continue
+        pts_sorted = sorted(e["points"])
+        (first_d, first_rk), (last_d, last_rk) = pts_sorted[0], pts_sorted[-1]
+        span = (datetime.strptime(last_d, "%Y-%m-%d")
+                - datetime.strptime(first_d, "%Y-%m-%d")).days
+        if span < min_span:
+            continue
+        net = first_rk - last_rk
+        if net == 0:
+            continue
+        movers.append({"name": e["name"] or aid, "app_id": aid,
+                       "start": first_rk, "end": last_rk, "net": net})
+
+    subgenre_by_app = await _subgenres_for_apps({m["app_id"] for m in movers})
+    for m in movers:
+        m["subgenre_cn"] = subgenre_by_app.get(m["app_id"])
+    climbers = sorted((m for m in movers if m["net"] > 0), key=lambda x: -x["net"])[:cap]
+    fallers = sorted((m for m in movers if m["net"] < 0), key=lambda x: x["net"])[:cap]
+    return climbers, fallers
+
+
+async def _monthly_newcomer_survival(rep_rows: list, cap: int):
+    """近窗口检出的 SLG 新品存活分层小结（复用 compute_trajectories，零 ST）。
+
+    rep_rows 由调用方传入（build 已查一次、段①段②共用，省一次 DB 读）。返回
+    (counts, climbing_top) 或 None（无 SLG 新品）：counts = {total, climbing, surviving,
+    dropped}；climbing_top = 起飞明细（累计升幅降序、cap 截断）。月度只给分布数 + 起飞明细
+    （决策上最该看的），不逐条列掉榜（那是周察卡的活）。
+    """
+    from app.services.newcomers import compute_trajectories
+
+    if not rep_rows:
+        return None
+    traj = await compute_trajectories(rep_rows)
+    subgenre_by_app = await _subgenres_for_apps({r.app_id for r in rep_rows})
+    climbing: list[dict] = []
+    surviving = dropped = 0
+    for r in rep_rows:
+        tj = traj.get(r.id) or {}
+        trend = tj.get("trend")
+        if trend == "climbing":
+            climbing.append({"name": r.name or r.app_id, "detect_rank": r.rank,
+                             **tj, "subgenre_cn": subgenre_by_app.get(r.app_id)})
+        elif trend == "dropped":
+            dropped += 1
+        elif tj.get("on_chart"):
+            surviving += 1
+    climbing.sort(key=lambda x: (x["detect_rank"] or 999) - (x.get("current_rank") or 999),
+                  reverse=True)
+    return ({"total": len(rep_rows), "climbing": len(climbing),
+             "surviving": surviving, "dropped": dropped}, climbing[:cap])
+
+
+async def build_monthly_market_rollup(days: int, cap: int) -> Optional[tuple[str, str]]:
+    """月度市场复盘卡：名次净变动 + 新品存活小结 + 赛道升降温（读时算本地库，零 ST）。
+
+    补 digest 阅后即焚、无复利视图断层——回答「这个月 SLG 市场发生了什么」。三段都无内容
+    → None（不发空卡）。仅维护者群（见 send_monthly_market_rollup）。返回 (title, text)。
+    """
+    rep_rows = await _collect_slg_newcomer_reps(days)
+    newcomer_ids = {r.app_id for r in rep_rows}
+    # 段①排除近窗口新品（它们归段②「新品存活」），避免同一 app 在两段重复出现。
+    climbers, fallers = await _monthly_rank_movers(days, cap, exclude_app_ids=newcomer_ids)
+    survival = await _monthly_newcomer_survival(rep_rows, cap)
+    from app.services.newcomers import compute_subgenre_pulse
+    _pulse_total, pulse_buckets = await compute_subgenre_pulse(days)
+    if not climbers and not fallers and survival is None and not pulse_buckets:
+        return None
+
+    today = utcnow_naive().strftime("%Y-%m-%d")
+    sections = [f"### 🗓️ SLG 市场月报 · 近 {days} 天\n\n"
+                f"> 这段时间 SLG 竞品格局怎么变了——US 收入榜名次谁涨谁跌、新上架的新品活下来几个、"
+                f"哪些赛道在升温。名次 = 畅销榜排名，越小越靠前。"]
+
+    if climbers or fallers:
+        lines = ["\n\n**📊 名次净变动（US 收入榜）**"]
+        if climbers:
+            lines.append("\n_上升_")
+            for m in climbers:
+                lines.append(f"- **{_md_name(m['name'])}**{_sg_label(m)} · "
+                             f"#{m['start']} → **#{m['end']}**（↑{m['net']}）")
+        if fallers:
+            lines.append("\n_下降_")
+            for m in fallers:
+                lines.append(f"- **{_md_name(m['name'])}**{_sg_label(m)} · "
+                             f"#{m['start']} → **#{m['end']}**（↓{-m['net']}）")
+        sections.append("\n".join(lines))
+
+    if survival is not None:
+        counts, climbing_top = survival
+        lines = [f"\n\n**🌱 新品存活（近 {days} 天检出 {counts['total']} 款 SLG 新品）**\n"
+                 f"🚀 起飞 {counts['climbing']} · ✅ 在榜 {counts['surviving']} · "
+                 f"✝️ 掉榜 {counts['dropped']}"]
+        for x in climbing_top:
+            gain = (x["detect_rank"] or 0) - (x.get("current_rank") or 0)
+            span = f"{x['days_tracked']} 天涨 {gain} 名" if x.get("days_tracked") else f"涨 {gain} 名"
+            lines.append(f"- **{_md_name(x['name'])}**{_sg_label(x)} · "
+                         f"#{x['detect_rank']} → **#{x.get('current_rank')}**，{span}")
+        sections.append("\n".join(lines))
+
+    if pulse_buckets:
+        lines = [f"\n\n**🎯 赛道升降温（近 {days} 天新品按玩法子品类，环比上一 {days} 天）**"]
+        for b in pulse_buckets[:cap]:
+            d = b["delta"]
+            arrow = f"↑{d}" if d > 0 else (f"↓{-d}" if d < 0 else "→持平")
+            lines.append(f"- **{b['subgenre']}** {b['count']} 款新品（{arrow}）")
+        sections.append("\n".join(lines))
+
+    return f"SLG 市场月报 {today}", "".join(sections)
+
+
+async def send_monthly_market_rollup() -> bool:
+    """月级 job 入口：拼一张「SLG 市场月报」卡，**仅维护者群**（同周察卡口径 / 减量宪法：
+    领导群只保留每日 digest 已核实竞品动态，不收分析/复盘卡稀释注意力）。
+
+    未开开关 / 未配维护者 webhook / 两段都无内容 → 静默 no-op。无幂等台账（月级、misfire
+    重发无实质危害，与每日必达卡的领导群幂等守卫不同轴）。零 ST。
+    """
+    if not settings.DIGEST_MONTHLY_ROLLUP_ENABLED:
+        return False
+    if not dingtalk.is_enabled():
+        return False
+    card = await build_monthly_market_rollup(
+        settings.DIGEST_MONTHLY_ROLLUP_DAYS, settings.DIGEST_MONTHLY_ROLLUP_CAP)
+    if card is None:
+        logger.info("monthly market rollup: no movers or newcomers in window, skip")
         return False
     return await dingtalk.send_markdown(*card, target="maintainer")
 
