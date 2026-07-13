@@ -24,13 +24,14 @@ cd frontend && npm install && npm run dev
 
 ```bash
 cd frontend && npm run build   # tsc -b && vite build，类型错误会在这暴露
+cd frontend && npm run lint    # eslint：react-hooks/rules-of-hooks 崩页门（0 error 才过）
 cd frontend && npm run test    # vitest
 cd backend  && pytest
 ```
 
-- **tsc + vitest 抓不到的两类 bug，改前必看**：
-  - **React hooks 顺序**：抽屉 / 弹层组件所有 hooks 必须写在任何 early return **之前**；否则 prop 切换时 hook 数量变化会崩页，静态检查抓不到。
-  - **CJK 数据**：素材 / 上传 / 文件流相关功能，验证必须用**中文测试数据**。纯 ASCII 夹具漏过中文名导致 `Content-Disposition` 500 的真 bug。
+- **改前必看的防线现状**：
+  - **React hooks 顺序**：抽屉 / 弹层组件所有 hooks 必须写在任何 early return **之前**；否则 prop 切换时 hook 数量变化会崩页。**已有 eslint 门**：`npm run lint`（`react-hooks/rules-of-hooks`）作为 error 拦这类违规、CI 强制；`exhaustive-deps` 只 warn（依赖遗漏不阻断 CI，改后自查）。
+  - **CJK 数据**：素材 / 上传 / 文件流相关功能，验证必须用**中文测试数据**（lint / tsc / vitest 都抓不到）。纯 ASCII 夹具漏过中文名导致 `Content-Disposition` 500 的真 bug。
 
 ## Git / PR 流程
 

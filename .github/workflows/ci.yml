@@ -68,5 +68,8 @@ jobs:
       - name: Typecheck + production build
         run: npm run build
 
+      - name: Lint (react-hooks rules-of-hooks)
+        run: npm run lint
+
       - name: Run vitest
         run: npm test
