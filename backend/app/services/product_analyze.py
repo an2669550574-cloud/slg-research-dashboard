@@ -187,9 +187,8 @@ async def analyze_product(product: OwnProduct, materials: list[OwnProductMateria
         {"role": "system", "content": _SYSTEM_PROMPT},
         {"role": "user", "content": content},
     ]
-    client = llm_gateway.get_client()
     model = settings.TAISHI_VISION_MODEL
-    resp = await client.chat.completions.create(
+    resp = await llm_gateway.chat_completion(
         model=model, messages=messages, max_tokens=2000, temperature=0.3,
     )
     text = resp.choices[0].message.content or ""

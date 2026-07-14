@@ -28,7 +28,9 @@ logger = logging.getLogger(__name__)
 # 创意迁移类调用允许的模型白名单（都是带视觉/强归纳的 Claude；纯文本任务用
 # 不到视觉，但沿用 Claude 系保证创意质量）。跨素材统一方向默认 sonnet，
 # 用户可在前端升到 opus。传白名单外的值一律拒绝（防止误调贵模型/不存在模型）。
-ALLOWED_ADAPT_MODELS = ("claude-sonnet-4.5", "claude-opus-4.7")
+# 旧 4.5/4.7 保留兼容：部署窗口内旧前端 bundle 传旧值不 400。
+ALLOWED_ADAPT_MODELS = ("claude-sonnet-4.6", "claude-opus-4.8",
+                        "claude-sonnet-4.5", "claude-opus-4.7")
 
 # 跨素材归纳的输出体量基本固定（一份共性分析 + 3-5 方向），不随参考片数线性增长。
 # 干跑成本预估按此估算 output tokens（宁高勿低）。
@@ -227,9 +229,8 @@ async def _call_text_llm(
     model 为 None 时用 settings.TAISHI_VISION_MODEL（同款 sonnet）；跨素材方向
     可显式传 sonnet/opus（白名单由调用方校验）。
     """
-    client = llm_gateway.get_client()
     model = model or settings.TAISHI_VISION_MODEL
-    resp = await client.chat.completions.create(
+    resp = await llm_gateway.chat_completion(
         model=model,
         messages=[
             {"role": "system", "content": system},

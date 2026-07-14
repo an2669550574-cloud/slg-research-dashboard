@@ -464,7 +464,7 @@ export const wechatAccountsApi = {
     api.delete(`/wechat-accounts/${id}`).then(r => r.data),
 }
 
-export type AdaptModel = 'claude-sonnet-4.5' | 'claude-opus-4.7'
+export type AdaptModel = 'claude-sonnet-4.6' | 'claude-opus-4.8'
 
 export interface UnifiedCostEstimate {
   estimated_cost_usd: number

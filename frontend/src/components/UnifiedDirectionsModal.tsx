@@ -15,7 +15,7 @@ interface Props {
   onClose: () => void
 }
 
-const MODELS: AdaptModel[] = ['claude-sonnet-4.5', 'claude-opus-4.7']
+const MODELS: AdaptModel[] = ['claude-sonnet-4.6', 'claude-opus-4.8']
 
 export function UnifiedDirectionsModal({ open, materialIds, onClose }: Props) {
   const t = useT()
@@ -23,7 +23,7 @@ export function UnifiedDirectionsModal({ open, materialIds, onClose }: Props) {
   // ⚠️ 所有 hooks 必须在 early return 之前（drawer 同款约束，见 feedback-react-hooks-early-return）
   const [ourProduct, setOurProduct] = useState('')
   const [productId, setProductId] = useState<number | null>(null)
-  const [model, setModel] = useState<AdaptModel>('claude-sonnet-4.5')
+  const [model, setModel] = useState<AdaptModel>('claude-sonnet-4.6')
   const [result, setResult] = useState<UnifiedData | null>(null)
   const [resultMeta, setResultMeta] = useState<{ cost: number; model: string } | null>(null)
 
@@ -85,7 +85,7 @@ export function UnifiedDirectionsModal({ open, materialIds, onClose }: Props) {
 
   const modelOptions = MODELS.map(m => ({
     value: m,
-    label: m === 'claude-sonnet-4.5' ? tu.modelSonnet : tu.modelOpus,
+    label: m === 'claude-sonnet-4.6' ? tu.modelSonnet : tu.modelOpus,
   }))
 
   return (

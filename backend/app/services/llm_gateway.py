@@ -15,7 +15,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, BadRequestError
 
 from app.config import settings
 
@@ -28,7 +28,9 @@ PRICING_USD_PER_1M = {
     "claude-opus-4.5":   {"input": 5.0,  "output": 25.0, "cache_read": 0.5,  "cache_write": 6.25},
     "claude-opus-4.6":   {"input": 5.0,  "output": 25.0, "cache_read": 0.5,  "cache_write": 6.25},
     "claude-opus-4.7":   {"input": 5.0,  "output": 25.0, "cache_read": 0.5,  "cache_write": 6.25},
+    "claude-opus-4.8":   {"input": 5.0,  "output": 25.0, "cache_read": 0.5,  "cache_write": 6.25},
     "claude-sonnet-4.5": {"input": 3.0,  "output": 15.0, "cache_read": 0.3,  "cache_write": 3.75},
+    "claude-sonnet-4.6": {"input": 3.0,  "output": 15.0, "cache_read": 0.3,  "cache_write": 3.75},
     "gemini-3-flash-preview": {"input": 0.5, "output": 3.0, "cache_read": 0.05, "cache_write": 0.083},
     "glm-4.6": {"input": 0.6, "output": 2.2, "cache_read": 0.11, "cache_write": 0.0},
 }
@@ -60,6 +62,27 @@ def get_client() -> AsyncOpenAI:
         base_url=settings.TAISHI_BASE_URL,
         timeout=settings.TAISHI_TIMEOUT_SECONDS,
     )
+
+
+async def chat_completion(**kwargs):
+    """统一的 chat.completions.create 入口——所有业务调用走这里，别直接拿 client 调。
+
+    新一代 Claude（opus-4.5+ / sonnet-5+）经网关的 Bedrock 后端会对 `temperature`
+    硬报 400 ValidationException「temperature is deprecated for this model」（prod
+    实锤 2026-07-14 素材分析选 opus-4.7 必炸）。哪些模型拒收随网关后端漂移，白名单
+    维护不动——改为撞到该特定 400 时剥掉 temperature 重试一次；接受 temperature
+    的模型（sonnet-4.6 / haiku / gemini）行为完全不变。
+    """
+    try:
+        return await get_client().chat.completions.create(**kwargs)
+    except BadRequestError as e:
+        msg = str(e).lower()
+        if "temperature" in kwargs and "temperature" in msg and "deprecated" in msg:
+            kwargs.pop("temperature")
+            logger.info("gateway rejected temperature for model=%s — retrying without it",
+                        kwargs.get("model"))
+            return await get_client().chat.completions.create(**kwargs)
+        raise
 
 
 def estimate_cost(model: str, usage: dict) -> CallCost:

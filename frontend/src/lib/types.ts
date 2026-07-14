@@ -747,7 +747,7 @@ export interface TagAggregateParams {
 
 // ── AI 标签分析 Agent（P6）─────────────────────────────────────────
 export type TagAnalysisMode = 'report' | 'chat'
-export type TagAnalysisModel = 'claude-sonnet-4.5' | 'claude-opus-4.7'
+export type TagAnalysisModel = 'claude-sonnet-4.6' | 'claude-opus-4.8'
 
 export interface TagAnalysisMessage {
   id: number

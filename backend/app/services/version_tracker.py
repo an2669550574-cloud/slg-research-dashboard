@@ -51,12 +51,11 @@ async def _summarize_notes(name: str, old_v: str, new_v: str, notes: str) -> str
         return None
     prompt = _NOTES_PROMPT.format(name=name or "", old=old_v, new=new_v, notes=notes[:1200])
     try:
-        client = llm_gateway.get_client()
         # max_tokens 必须给思考型模型留内部 reasoning 余量：网关 gemini-*-preview 的
         # reasoning token 计入 max_tokens，120 会被烧光 → finish_reason='length' +
         # content=''（prod 实测 2026-07-03，📝 自上线起从未渲染过的根因）。答案本身
         # 只要一句话，1024 足够思考 + 输出。
-        resp = await client.chat.completions.create(
+        resp = await llm_gateway.chat_completion(
             model=settings.TAISHI_TEXT_MODEL,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=1024, temperature=0.2,

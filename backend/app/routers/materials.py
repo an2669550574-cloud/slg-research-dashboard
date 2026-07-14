@@ -459,8 +459,8 @@ class UnifiedDirectionsReq(BaseModel):
     material_ids: list[int] = Field(..., min_length=2, max_length=15,
                                     description="勾选的已分析素材 id（2-15 支）")
     our_product: str = Field(..., min_length=1, max_length=4000)
-    model: str = Field("claude-sonnet-4.5",
-                       description="claude-sonnet-4.5（默认）/ claude-opus-4.7")
+    model: str = Field("claude-sonnet-4.6",
+                       description="claude-sonnet-4.6（默认）/ claude-opus-4.8")
 
 
 async def _load_unified_materials(material_ids: list[int], db: AsyncSession) -> list[Material]:

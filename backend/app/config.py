@@ -356,7 +356,7 @@ class Settings(BaseSettings):
     TAISHI_BASE_URL: str = "https://relay.tuyoo.com/v1"
     # 视频/图片分析用：视觉模型。Claude sonnet/opus 与 Gemini 系列支持图，
     # GLM 系列只支持 text，不能用于素材帧分析。
-    TAISHI_VISION_MODEL: str = "claude-sonnet-4.5"
+    TAISHI_VISION_MODEL: str = "claude-sonnet-4.6"
     # 纯文本轻任务用（新品描述中文化 + 一句话摘要）：选便宜模型即可，量小、非关键。
     TAISHI_TEXT_MODEL: str = "gemini-3-flash-preview"
     # 新品中文化每日上限（防极端日批量翻译烧成本）；只对 is_slg 新品翻一次（按 app 去重）。
