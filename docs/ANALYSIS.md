@@ -92,14 +92,16 @@ parse_llm_json(text)          ── 容错解析出 JSON（§6 坑一）
 
 ### 选模型（#203/#204）
 
-素材分析可选模型，白名单 `ALLOWED_ANALYZE_MODELS = ("claude-sonnet-4.5", "claude-opus-4.7")`（`video_analyze.py:274`，与创意迁移 `ALLOWED_ADAPT_MODELS` 对齐）：
+素材分析可选模型，白名单 `ALLOWED_ANALYZE_MODELS`（`video_analyze.py`，与创意迁移 `ALLOWED_ADAPT_MODELS` / 标签分析 `ALLOWED_MODELS` 对齐；2026-07-14 升级 4.6/4.8，旧 4.5/4.7 留白名单兼容旧前端 bundle）：
 
 | 模型 | 单次成本(粗估) | 用途 |
 |---|---|---|
-| `claude-sonnet-4.5`（默认，`TAISHI_VISION_MODEL`） | ~$0.04（实测 $0.0438） | 日常，省钱 |
-| `claude-opus-4.7` | ~$0.07（≈ sonnet × 5/3） | 想要更细解读时升 |
+| `claude-sonnet-4.6`（默认，`TAISHI_VISION_MODEL`） | ~$0.04（4.5 实测 $0.0438 同档价） | 日常，省钱 |
+| `claude-opus-4.8` | ~$0.07（≈ sonnet × 5/3） | 想要更细解读时升 |
 
 端点接可选 body `{model}`，白名单校验（坏 model → 400）；不传 → `None` → 回落 `TAISHI_VISION_MODEL`（空 body 向后兼容）。前端下拉默认 sonnet。
+
+**temperature 兼容（2026-07-14 prod 实锤）**：新一代 Claude（opus-4.5+/sonnet-5+）经网关 Bedrock 后端对 `temperature` 参数硬报 400「temperature is deprecated for this model」——所有 LLM 调用已收口到 `llm_gateway.chat_completion()`，撞到该 400 自动剥掉 temperature 重试一次；新增调用**别直接拿 `get_client()` 调 `chat.completions.create`**。
 
 ### 预算护栏（`assert_llm_budget`，#194）
 
@@ -152,7 +154,7 @@ parse_llm_json(text)          ── 容错解析出 JSON（§6 坑一）
 |---|---|---|
 | `TAISHI_API_KEY` | — | 太石网关 key；空则所有 AI 端点 no-op 降级 |
 | `TAISHI_BASE_URL` | `https://relay.tuyoo.com/v1` | 网关地址（OpenAI 兼容） |
-| `TAISHI_VISION_MODEL` | `claude-sonnet-4.5` | 素材/产品分析默认视觉模型 |
+| `TAISHI_VISION_MODEL` | `claude-sonnet-4.6` | 素材/产品分析默认视觉模型 |
 | `TAISHI_TIMEOUT_SECONDS` | `120` | 单次调用超时（多图 + 长 prompt 宽点） |
 | `LLM_DAILY_BUDGET_USD` | `5` | 7 端点共享日预算，超限 429 |
 | `LLM_MONTHLY_BUDGET_USD` | `30` | 月预算二道保险，0=关 |

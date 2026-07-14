@@ -5,7 +5,7 @@
     analyze_material(material_id) →
         extract_frames(file_path)                      # ffmpeg N 帧
         → build messages（system + 用户消息含 N 张帧图）
-        → AsyncOpenAI.chat.completions.create(...)     # 走太石网关
+        → llm_gateway.chat_completion(...)             # 走太石网关
         → parse_response → 写回 DB
 
 设计取舍：
@@ -271,14 +271,15 @@ class AnalysisResult:
 # 素材分析允许选的模型白名单（与创意迁移 creative_adapt.ALLOWED_ADAPT_MODELS 对齐：
 # 都带视觉/强归纳的 Claude；默认 sonnet 省钱，用户可在前端升 opus 拿更细的解读）。
 # 端点校验：传白名单外的值一律 400，防误调贵模型/不存在模型。None → settings.TAISHI_VISION_MODEL。
-ALLOWED_ANALYZE_MODELS = ("claude-sonnet-4.5", "claude-opus-4.7")
+# 旧 4.5/4.7 保留兼容：部署窗口内旧前端 bundle 传旧值不 400，网关仍在售同价。
+ALLOWED_ANALYZE_MODELS = ("claude-sonnet-4.6", "claude-opus-4.8",
+                          "claude-sonnet-4.5", "claude-opus-4.7")
 
 
 async def _call_llm(messages: list[dict], model: Optional[str] = None) -> tuple[dict, float, str]:
     """返回 (parsed_json, cost_usd, model_id)。model=None → settings.TAISHI_VISION_MODEL。"""
-    client = llm_gateway.get_client()
     model = model or settings.TAISHI_VISION_MODEL
-    resp = await client.chat.completions.create(
+    resp = await llm_gateway.chat_completion(
         model=model,
         messages=messages,
         max_tokens=2000,

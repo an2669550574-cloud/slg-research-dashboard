@@ -120,7 +120,7 @@ pydantic Settings 在**进程启动时**读一次 env；compose 的 `env_file:` 
 |---|---|---|
 | `LLM_DAILY_BUDGET_USD` / `_MONTHLY_BUDGET_USD` | `5` / `30` | LLM 成本护栏（#194，触顶告警） |
 | `MEDIA_SIGNING_SECRET` | `None` | 媒体签名密钥（#195）；**未设=回退 API_KEY**（待设） |
-| `TAISHI_VISION_MODEL` / `_TEXT_MODEL` | `claude-sonnet-4.5` / `gemini-3-flash-preview` | 素材分析 / 文本模型 |
+| `TAISHI_VISION_MODEL` / `_TEXT_MODEL` | `claude-sonnet-4.6` / `gemini-3-flash-preview` | 素材分析 / 文本模型 |
 | `WECHAT_INDUSTRY_DAYS` / `_MAX` | `5` / `4` | 行业动态窗口 / 推送条数上限 |
 | `WECHAT_ARTICLE_SENT_RETENTION_DAYS` | `30` | 已推文章台账保留（跨天去重 prune） |
 | `YOUTUBE_SEARCH_DAILY_CAP` | `80` | 视频搜集日上限（YT 独立配额，不碰 ST） |

@@ -38,7 +38,9 @@ logger = logging.getLogger(__name__)
 MATERIAL_LIMIT = 50
 
 # 允许的网关模型白名单（与创意迁移一致：sonnet 省 / opus 强）。传白名单外一律拒。
-ALLOWED_MODELS = ("claude-sonnet-4.5", "claude-opus-4.7")
+# 旧 4.5/4.7 保留兼容：部署窗口内旧前端 bundle 传旧值不 400。
+ALLOWED_MODELS = ("claude-sonnet-4.6", "claude-opus-4.8",
+                  "claude-sonnet-4.5", "claude-opus-4.7")
 
 # 成本干跑预估时的输出 token 估值：一份结构化报告的典型规模（宁高勿低）。
 # 真实 max_tokens=4000，报告通常用不满；取 2200 作为「约 $X」的展示口径。
@@ -203,7 +205,6 @@ async def _call_llm(
 ) -> tuple[str, float, dict]:
     """发一轮对话。system=方法论+本轮范围数据；再接历史轮 + 新用户消息。
     返回 (assistant_markdown, cost_usd, usage_dict)。"""
-    client = llm_gateway.get_client()
     system = (
         _ANALYSIS_SYSTEM
         + "\n\n---\n\n# 当前分析范围的标签数据\n"
@@ -215,7 +216,7 @@ async def _call_llm(
             messages.append({"role": h.role, "content": h.content})
     messages.append({"role": "user", "content": user_text})
 
-    resp = await client.chat.completions.create(
+    resp = await llm_gateway.chat_completion(
         model=model,
         messages=messages,
         max_tokens=4000,

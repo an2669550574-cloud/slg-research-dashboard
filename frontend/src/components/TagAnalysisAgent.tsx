@@ -26,7 +26,7 @@ export function TagAnalysisAgent({
   const qc = useQueryClient()
 
   // hooks 一律在任何 early return 之前（抽屉 prop 切换时 hook 数量必须恒定）
-  const [model, setModel] = useState<TagAnalysisModel>('claude-sonnet-4.5')
+  const [model, setModel] = useState<TagAnalysisModel>('claude-sonnet-4.6')
   const [sessionId, setSessionId] = useState<number | null>(null)
   const [input, setInput] = useState('')
   const [showHistory, setShowHistory] = useState(false)
@@ -127,8 +127,8 @@ export function TagAnalysisAgent({
             <label className="flex items-center gap-2 text-[11px] text-secondary">
               {a.model}
               <select value={model} onChange={e => setModel(e.target.value as TagAnalysisModel)} className={selectClass} disabled={busy}>
-                <option value="claude-sonnet-4.5">{a.modelSonnet}</option>
-                <option value="claude-opus-4.7">{a.modelOpus}</option>
+                <option value="claude-sonnet-4.6">{a.modelSonnet}</option>
+                <option value="claude-opus-4.8">{a.modelOpus}</option>
               </select>
             </label>
 

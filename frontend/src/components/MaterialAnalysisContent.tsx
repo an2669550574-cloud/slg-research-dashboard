@@ -217,10 +217,10 @@ function Section({ title, children, action }: { title: string; children: React.R
   )
 }
 
-// 单价为「一次分析」的粗估（sonnet 实测 ~$0.0438；opus-4.7 单价约 sonnet 的 5/3 → ~$0.07）。
+// 单价为「一次分析」的粗估（sonnet 实测 ~$0.0438；opus 单价约 sonnet 的 5/3 → ~$0.07）。
 const ANALYZE_MODELS = [
-  { value: 'claude-sonnet-4.5', label: 'Sonnet · 默认（快 · 省 ~$0.04）' },
-  { value: 'claude-opus-4.7', label: 'Opus · 更强（更细 · 更贵 ~$0.07）' },
+  { value: 'claude-sonnet-4.6', label: 'Sonnet · 默认（快 · 省 ~$0.04）' },
+  { value: 'claude-opus-4.8', label: 'Opus · 更强（更细 · 更贵 ~$0.07）' },
 ] as const
 
 /** 下次分析用的模型选择器（对齐创意迁移的白名单：sonnet / opus）。 */

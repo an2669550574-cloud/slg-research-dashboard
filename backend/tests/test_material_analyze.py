@@ -154,9 +154,9 @@ async def test_analyze_passes_whitelisted_model_to_task(client, monkeypatch, tmp
     monkeypatch.setattr(video_analyze, "today_cost_usd", fake_today_cost)
     monkeypatch.setattr(video_analyze, "analyze_material", fake_analyze)
 
-    r = await client.post(f"/api/materials/{m['id']}/analyze", json={"model": "claude-opus-4.7"})
+    r = await client.post(f"/api/materials/{m['id']}/analyze", json={"model": "claude-opus-4.8"})
     assert r.status_code == 200, r.text
-    assert captured["model"] == "claude-opus-4.7"
+    assert captured["model"] == "claude-opus-4.8"
 
 
 @pytest.mark.asyncio
@@ -347,3 +347,102 @@ def test_get_client_raises_without_key(monkeypatch):
     monkeypatch.setattr(settings, "TAISHI_API_KEY", None)
     with pytest.raises(RuntimeError, match="TAISHI_API_KEY"):
         llm_gateway.get_client()
+
+
+# ────────────────────────────────────────────────────────────
+# llm_gateway.chat_completion：temperature 被网关拒时剥参重试
+# （prod 实锤 2026-07-14：新 Claude 经 Bedrock 对 temperature 硬 400）
+# ────────────────────────────────────────────────────────────
+
+def _bad_request_error(msg: str):
+    import httpx
+    from openai import BadRequestError
+    req = httpx.Request("POST", "http://gateway.test/v1/chat/completions")
+    resp = httpx.Response(400, request=req, json={"error": {"message": msg}})
+    return BadRequestError(msg, response=resp, body={"error": {"message": msg}})
+
+
+def _fake_gateway(monkeypatch, create):
+    """把 llm_gateway.get_client 替换成带自定义 create 的假 client。"""
+    from app.services import llm_gateway
+
+    class _Completions:
+        pass
+
+    class _Chat:
+        pass
+
+    class _Client:
+        pass
+
+    completions = _Completions()
+    completions.create = create
+    chat = _Chat()
+    chat.completions = completions
+    fake = _Client()
+    fake.chat = chat
+    monkeypatch.setattr(llm_gateway, "get_client", lambda: fake)
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_strips_deprecated_temperature(monkeypatch):
+    """opus-4.5+/sonnet-5+ 拒 temperature → 剥掉重试一次，第二次不带 temperature。"""
+    from app.services import llm_gateway
+
+    calls = []
+
+    async def create(**kw):
+        calls.append(kw)
+        if "temperature" in kw:
+            raise _bad_request_error(
+                "InvokeModel: operation error Bedrock Runtime: InvokeModel, "
+                "ValidationException: `temperature` is deprecated for this model."
+            )
+        return "ok"
+
+    _fake_gateway(monkeypatch, create)
+    resp = await llm_gateway.chat_completion(
+        model="claude-opus-4.8", messages=[], max_tokens=10, temperature=0.3)
+    assert resp == "ok"
+    assert len(calls) == 2
+    assert "temperature" not in calls[1]
+    assert calls[1]["model"] == "claude-opus-4.8"
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_passthrough_when_temperature_accepted(monkeypatch):
+    """接受 temperature 的模型（sonnet-4.6/gemini）只调一次、参数原样。"""
+    from app.services import llm_gateway
+
+    calls = []
+
+    async def create(**kw):
+        calls.append(kw)
+        return "ok"
+
+    _fake_gateway(monkeypatch, create)
+    resp = await llm_gateway.chat_completion(
+        model="claude-sonnet-4.6", messages=[], max_tokens=10, temperature=0.3)
+    assert resp == "ok"
+    assert len(calls) == 1
+    assert calls[0]["temperature"] == 0.3
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_other_400_propagates(monkeypatch):
+    """非 temperature 类 400（如图片超限）原样抛出，不重试。"""
+    from openai import BadRequestError
+
+    from app.services import llm_gateway
+
+    calls = []
+
+    async def create(**kw):
+        calls.append(kw)
+        raise _bad_request_error("ValidationException: image exceeds max size")
+
+    _fake_gateway(monkeypatch, create)
+    with pytest.raises(BadRequestError, match="image exceeds"):
+        await llm_gateway.chat_completion(
+            model="claude-opus-4.8", messages=[], max_tokens=10, temperature=0.3)
+    assert len(calls) == 1

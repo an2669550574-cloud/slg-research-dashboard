@@ -112,9 +112,8 @@ async def classify_subgenre(name: str | None, genre: str | None,
         return None
     prompt = _SUBGENRE_ONLY_PROMPT.format(
         name=name or "", genre=genre or "未知", description=(description or "")[:1500])
-    client = llm_gateway.get_client()
     try:
-        resp = await client.chat.completions.create(
+        resp = await llm_gateway.chat_completion(
             model=settings.TAISHI_TEXT_MODEL,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=1024, temperature=0.2,
@@ -166,7 +165,6 @@ async def translate_pending_newcomers(cap: int | None = None) -> int:
         seen.setdefault(app_id, (name, genre, desc))
     if not seen:
         return 0
-    client = llm_gateway.get_client()
     model = settings.TAISHI_TEXT_MODEL
     done = 0
     total_usd = 0.0
@@ -174,7 +172,7 @@ async def translate_pending_newcomers(cap: int | None = None) -> int:
         prompt = _PROMPT.format(name=name or "", genre=genre or "未知",
                                 description=(desc or "")[:1500])
         try:
-            resp = await client.chat.completions.create(
+            resp = await llm_gateway.chat_completion(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 # 描述截到 1500 字，全文中译 + 摘要的 CJK 输出可达 2K+ tokens；给足
