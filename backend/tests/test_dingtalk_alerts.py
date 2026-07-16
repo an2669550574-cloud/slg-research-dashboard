@@ -1199,12 +1199,42 @@ def test_primary_item_count():
     from app.services.release_alerts import _primary_item_count
     per_combo = [{
         "movement": {"new_entrants": [{}], "surges": [], "drops": [{}], "revenue_spikes": []},
-        "market": {"newcomers": [{}, {}]}, "publisher": None,
+        "market": {"newcomers": [{"is_slg": True}, {"is_slg": True}]}, "publisher": None,
         "free_market": None, "free_publisher": None,
     }]
     # 2 movement + 2 newcomers + 1 version + 0 region = 5
     assert _primary_item_count(per_combo, [{"x": 1}], []) == 5
     assert _primary_item_count([], [], []) == 0
+
+
+def test_primary_item_count_excludes_unidentified_market_newcomers():
+    """market 层 is_slg=false =「待识别新厂」建档线索，不算竞品实质信号（领导卡本就剥离）。
+
+    2026-07-15 RU 同步日实证：次市场双周同步涌进的 market 层 4 条全非 SLG（足球/塔防/
+    经营噪声）+ 3 条异动 = 7 ≥ 阈值 6 → is_quiet=False → 领导卡明明只剩 3 条异动的空卡，
+    行业动态/雷达段却双双不出。计数必须与「真正会上卡的」对齐。
+    """
+    from app.services.release_alerts import _primary_item_count
+    per_combo = [{
+        "country": "RU", "platform": "ios",
+        "movement": {"drops": [{}, {}, {}]},
+        "market": {"newcomers": [{"is_slg": False}] * 14 + [{"is_slg": True}]},
+        "publisher": {"newcomers": []},  # 老品门控滤空（#161）
+    }]
+    # 3 drops + 1 已识别 SLG 新品（14 条待识别不算）= 4 < DIGEST_QUIET_THRESHOLD(6) → 该判平淡日
+    assert _primary_item_count(per_combo, [], []) == 4
+
+
+def test_primary_item_count_excludes_reentry():
+    """回归（is_reentry）≠ 首发，渲染层 market_real/publisher_real 已滤，计数同口径。"""
+    from app.services.release_alerts import _primary_item_count
+    per_combo = [{
+        "movement": {},
+        "market": {"newcomers": [{"is_slg": True, "is_reentry": True},
+                                 {"is_slg": True}]},
+        "publisher": {"newcomers": [{"is_reentry": True}, {}]},
+    }]
+    assert _primary_item_count(per_combo, [], []) == 2  # 各层只剩 1 条真首发
 
 
 # ── 平淡日「商店雷达 · 近期新上架」兜底段（C）───────────────────────────────

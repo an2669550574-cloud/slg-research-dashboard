@@ -742,14 +742,30 @@ def build_region_launch_lines(changes: list[dict], cap: int) -> list[str]:
 
 def _primary_item_count(per_combo: list[dict], version_changes, region_changes) -> int:
     """当日『竞品实质信号』计数：异动 + 四层新品 + 版本 + 新区（不含待建档/兜底填充段）。
-    用于判『平淡日』→ 触发维护者卡兜底填充（SLG 行业动态段）。"""
+    用于判『平淡日』→ 触发兜底填充（行业动态段 + 领导卡雷达段）。
+
+    口径 = **真正会上卡的**，与渲染层对齐：
+    - market 层只数 is_slg——`is_slg=false` 是「待识别新厂」建档线索（本 docstring 声明
+      「不含待建档」，`build_daily_digest` 的领导卡也在一处剥离它们）；
+    - 排除 is_reentry（回归≠首发，渲染层 market_real/publisher_real 同口径已滤）。
+
+    2026-07-15 RU 同步日实证这条为何必要：次市场双周同步一次涌进大量新面孔，market 层
+    4 条全 is_slg=0（足球/塔防/经营等噪声）+ 3 条异动 = 7 ≥ 阈值 6 → is_quiet=False；
+    但领导卡剥离那 4 条后只剩 3 条异动的空卡，行业动态与雷达段双双没出——即「最需要兜底
+    的次市场同步日，恰恰因为噪声撑高计数而不兜底」。
+    """
     n = 0
     for c in per_combo:
         mv = c.get("movement") or {}
         for k in ("new_entrants", "surges", "drops", "revenue_spikes", "climbs"):
             n += len(mv.get(k) or [])
         for key in ("market", "publisher", "free_market", "free_publisher"):
-            n += len((c.get(key) or {}).get("newcomers") or [])
+            for x in ((c.get(key) or {}).get("newcomers") or []):
+                if x.get("is_reentry"):
+                    continue
+                if key == "market" and not x.get("is_slg"):
+                    continue
+                n += 1
     return n + len(version_changes or []) + len(region_changes or [])
 
 
