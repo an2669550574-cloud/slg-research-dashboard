@@ -35,6 +35,7 @@
 > `D=$(grep ^SLG_DOMAIN .env|cut -d= -f2); K=$(grep ^API_KEY= .env|cut -d= -f2-)` 后：
 > 改 is_slg → `curl --resolve $D:443:127.0.0.1 -k -H "X-API-Key:$K" -X PUT https://$D/api/publishers/{id} -d '{"is_slg":false}'`；**（#224 起）改 is_slg=false 即从白名单摘除该主体全部 alias**——`load_index_from_db` 现按 `entity.is_slg` 门控加载 alias（旧行为=加载全部 alias、只能靠删 alias 收噪声，已修）。**app_id 钉选不受此门控**（钉选语义=单品即 SLG，多品类大厂 is_slg=false + pin 单品的范式照常生效）。
 > 删误钉 pin → `DELETE https://$D/api/publishers/{entity_id}/app-ids/{row_id}`（行 id 查 `publisher_app_ids`，非 app_id）。
+> **⚠️ 降级 is_slg=false 必须同一轮查 pin**（已犯两次）：`SELECT * FROM publisher_app_ids WHERE entity_id={id}`。alias 会被旗标门控自动摘除、**pin 不会**（钉选语义=单品即 SLG，刻意不门控）——降级 entity 后残留的 pin 会让该 app **继续**被判 SLG 推领导群。2026-07-05 降级 CyberJoy 等 9 个时只删了 Larks/Blue Planet 两个 pin，漏掉 CyberJoy→Galaxy Defense（塔防），直到 2026-07-15 领导卡上又见它才发现、补删。
 > 删 alias → `DELETE https://$D/api/publishers/{entity_id}/aliases/{alias_id}`（行 id 查 `publisher_aliases`）——针对「is_slg=true 主体的某条 alias 过宽误命中」（is_slg=false 主体已被上面的旗标门控整体摘除，无需删 alias）。
 > `--resolve …127.0.0.1` 直连源站绕 CF；端点自动 `load_index_from_db`。是「多品类大厂/母体错标 is_slg=1 全量放噪声」的订正手段。**订正史**：2026-07-05 降级 Moonton/CyberJoy 等 9 个 + 删 2 误钉 pin（治 digest 外文噪声刷屏）；2026-07-06 删 Tilting Point(22)/Rudel(104) 两个「有 alias 但名下无追踪 SLG、实测 newcomer/movement 全空」的休眠 alias（预防性，回滚=POST 回 keyword）——同轮核查确认 Level Infinite(27)/Scopely(29)=pin-only 不泄漏、Stillfront(24) alias 只命中真 SLG(Supremacy: Call of War)故留。
 
