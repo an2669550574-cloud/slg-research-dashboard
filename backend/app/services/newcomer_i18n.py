@@ -32,6 +32,12 @@ SUBGENRE_VOCAB = (
     "城建模拟", "放置养成", "卡牌RPG", "休闲益智", "其他",
 )
 
+# 词表中属于「SLG 核心口径」的子集——探测层（商店雷达 / RSS 早鸟）产品级推送门控用：
+# LLM 分类落在此子集才推钉钉群（2026-07-16 用户裁定「非 SLG 产品不推送」，起因=雷达把
+# Plarium 放置 RPG + 韩国多品类小厂乙女游戏推进了平淡日领导卡）。厂商级 is_slg 挡不住
+# 这类（SLG 大厂也出非 SLG 新品），必须产品级。新增 SLG 子品类时同步这里。
+SLG_CORE_SUBGENRES = ("数字门SLG", "基地建设SLG", "国战SLG")
+
 # 子品类定义（**单一来源**）：translate 全量分类 + app_subgenre 存量回补（P1-2）共用。
 # 新增子品类同步：SUBGENRE_VOCAB + 本定义 + 前端 ProductsManage 下拉 + own_products.match_subgenre。
 _SUBGENRE_DEFS = """- 数字门SLG：有「跑酷穿门、兵力数字增减(加减乘除)、滚雪球合成」前置小游戏，过关后回基地建设/PvP 的 SLG（Last War: Survival 类）
