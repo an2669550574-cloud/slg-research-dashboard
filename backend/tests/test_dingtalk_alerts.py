@@ -1396,8 +1396,10 @@ async def test_audit_entity_suspect_tracked_counter_evidence(client, monkeypatch
             GameRanking(app_id="d.slg", date="2026-07-10", rank=5, country="US",
                         platform="ios", name="Whiteout Sample", publisher="DiandianCo Pte"),
             AppSubgenre(app_id="d.city", subgenre_cn="城建模拟"),
-            Game(app_id="d.slg", name="Whiteout Sample", publisher="DiandianCo Pte",
-                 platform="ios"),
+            # 真实形状：games.app_id=bundle 形、榜单行=数字 track_id——tracked 反证
+            # 必须经 ios_track_id 命中（首修只取 app_id 匹配不上，prod 实锤）。
+            Game(app_id="com.dd.whiteout", ios_track_id="d.slg",
+                 name="Whiteout Sample", publisher="DiandianCo Pte", platform="ios"),
         ])
         await db.commit()
 

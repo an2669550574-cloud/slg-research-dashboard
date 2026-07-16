@@ -78,8 +78,16 @@ async def audit_whitelist_hygiene() -> dict:
             # tracked 竞品 = 人工确认过的 SLG（games 表）——比 LLM 分类更硬的反证。
             # 首跑实锤的误报形状（2026-07-16）：点点互动旗下 Whiteout Survival（tracked
             # 真 SLG）没有分类行、唯一被分类的恰是城建 Frozen City → 证据面残缺冤枉主体。
+            # ⚠️ 两列都要：games.app_id 是 bundle 形（com.machines.atwar），iOS 榜单行
+            # 却用数字 track_id（6443575749）——只取 app_id 永远匹配不上（首修实锤）。
             from app.models.game import Game
-            tracked_ids = set((await db.execute(select(Game.app_id))).scalars().all())
+            tracked_ids: set[str] = set()
+            for aid, tid in (await db.execute(
+                    select(Game.app_id, Game.ios_track_id))).all():
+                if aid:
+                    tracked_ids.add(aid)
+                if tid:
+                    tracked_ids.add(str(tid))
         apps_by_entity: dict[str, dict[str, str]] = {}  # entity_name -> {app_id: app_name}
         pins_by_entity: dict[str, set[str]] = {}
         for app_id, publisher, name in rows:
