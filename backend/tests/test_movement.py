@@ -76,6 +76,43 @@ async def test_drop_out_of_topn(client, caplog):
 
 
 @pytest.mark.asyncio
+async def test_drop_below_rank_jump_ignored(client):
+    """TopN 边界抖动不报：#14 → #16 只掉 2 名（< RANK_JUMP=10）。
+
+    2026-07-15 领导卡实证——drop 侧长期无幅度门槛，这种日常抖动被渲染成
+    「跌出 Top 榜」，与真事件（#11 → #115）同措辞同权重并排推给领导。
+    """
+    from app.services.movement import detect_and_alert_movement
+    await _seed("2026-05-15", [("a", 14, None, SLG_PUB)])
+    await _seed("2026-05-16", [("a", 16, None, SLG_PUB)])
+
+    s = await detect_and_alert_movement("US", "ios", "2026-05-16")
+    assert s["drops"] == [], "跌出 TopN 但跌幅 < RANK_JUMP 属日常抖动，不报"
+
+
+@pytest.mark.asyncio
+async def test_drop_off_chart_always_reported(client):
+    """彻底掉榜必报，不受 RANK_JUMP 门槛约束（今日无该 app 的行 → cur_rank=None）。"""
+    from app.services.movement import detect_and_alert_movement
+    await _seed("2026-05-15", [("a", 15, None, SLG_PUB), ("b", 1, None, SLG_PUB)])
+    await _seed("2026-05-16", [("b", 1, None, SLG_PUB)])  # a 整个消失
+
+    s = await detect_and_alert_movement("US", "ios", "2026-05-16")
+    assert len(s["drops"]) == 1
+    assert s["drops"][0]["name"] == "a" and s["drops"][0]["cur_rank"] is None
+
+
+def test_drop_phrase_tiers():
+    """三档措辞：掉榜 / 大幅下跌(≥50) / 跌出 TopN。口径三处渲染共用。"""
+    from app.services.movement import drop_phrase
+
+    assert drop_phrase(14, None) == "掉出榜单"
+    assert drop_phrase(11, 115) == "大幅下跌"      # 掉 104 名 ≥ MAJOR(50)
+    assert drop_phrase(12, 25) == "跌出 Top15"     # 掉 13 名：过报告门槛但非暴跌
+    assert drop_phrase(1, 51) == "大幅下跌"        # 边界：正好 50
+
+
+@pytest.mark.asyncio
 async def test_revenue_spike(client, caplog):
     from app.services.movement import detect_and_alert_movement
     await _seed("2026-05-15", [("a", 5, 100_000.0, SLG_PUB)])
