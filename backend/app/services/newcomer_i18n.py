@@ -38,6 +38,13 @@ SUBGENRE_VOCAB = (
 # 这类（SLG 大厂也出非 SLG 新品），必须产品级。新增 SLG 子品类时同步这里。
 SLG_CORE_SUBGENRES = ("数字门SLG", "基地建设SLG", "国战SLG")
 
+# 白名单卫生自检用「明确非 SLG」子集（publisher_audit）：**三消合成刻意排除**——
+# P&S 类「三消+SLG」混合品会被 LLM 分到三消合成，不构成 pin/is_slg 误标证据；
+# 塔防/放置/卡牌/休闲/城建/其他 才是明确矛盾信号。
+AUDIT_CLEAR_NON_SLG = tuple(
+    s for s in SUBGENRE_VOCAB
+    if s not in SLG_CORE_SUBGENRES and s != "三消合成")
+
 # 子品类定义（**单一来源**）：translate 全量分类 + app_subgenre 存量回补（P1-2）共用。
 # 新增子品类同步：SUBGENRE_VOCAB + 本定义 + 前端 ProductsManage 下拉 + own_products.match_subgenre。
 _SUBGENRE_DEFS = """- 数字门SLG：有「跑酷穿门、兵力数字增减(加减乘除)、滚雪球合成」前置小游戏，过关后回基地建设/PvP 的 SLG（Last War: Survival 类）

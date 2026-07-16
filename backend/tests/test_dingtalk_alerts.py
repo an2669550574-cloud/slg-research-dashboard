@@ -1264,19 +1264,19 @@ async def test_slg_gate_probe_items_three_states(monkeypatch):
     ]
     kept, cut = await ra._slg_gate_probe_items(items)
     assert [it["app_id"] for it in kept] == ["slg1", "slg2"]
-    assert cut == 4
+    assert [(c["name"], c["subgenre"]) for c in cut] == [
+        ("LegendUP", "放置养成"), ("阳光拼贴", "其他"),
+        ("预注册无描述", None), ("无id", None)]
 
 
 @pytest.mark.asyncio
 async def test_slg_gate_probe_items_empty():
     from app.services.release_alerts import _slg_gate_probe_items
-    assert await _slg_gate_probe_items([]) == ([], 0)
+    assert await _slg_gate_probe_items([]) == ([], [])
 
 
-def test_probe_filtered_fold_line_maintainer_only():
-    """折叠计数行：仅维护者卡、且卡里已有其它内容才挂；领导卡永不挂。"""
-    from app.services.release_alerts import build_daily_digest
-    per_combo = [{
+def _combo_with_one_drop():
+    return [{
         "country": "US", "platform": "ios",
         "movement": {"new_entrants": [], "surges": [],
                      "drops": [{"app_id": "a", "name": "A", "prev_rank": 3,
@@ -1285,17 +1285,84 @@ def test_probe_filtered_fold_line_maintainer_only():
                      "revenue_spikes": [], "climbs": []},
         "market": {"newcomers": [], "as_of": "2026-07-16"},
     }]
-    m = build_daily_digest(per_combo, "2026-07-16", probe_filtered=3)
-    assert m is not None and "🧹 探测层玩法门控" in m[1] and "**3**" in m[1]
-    lead = build_daily_digest(per_combo, "2026-07-16", audience="leader",
-                              probe_filtered=3)
+
+
+def test_probe_filtered_fold_line_maintainer_only():
+    """折叠行：仅维护者卡、且卡里已有其它内容才挂；≤3 条带名字+分类；领导卡永不挂。"""
+    from app.services.release_alerts import build_daily_digest
+    cut = [{"name": "LegendUP", "subgenre": "放置养成"},
+           {"name": "预注册", "subgenre": None}]
+    m = build_daily_digest(_combo_with_one_drop(), "2026-07-16", probe_filtered=cut)
+    assert m is not None and "🧹 探测层玩法门控已滤" in m[1]
+    assert "LegendUP（放置养成）" in m[1] and "预注册（未分类）" in m[1]
+    lead = build_daily_digest(_combo_with_one_drop(), "2026-07-16", audience="leader",
+                              probe_filtered=cut)
     assert lead is not None and "🧹" not in lead[1]
 
 
-def test_probe_filtered_alone_keeps_card_empty():
-    """只有滤除计数、无任何真内容 → 卡仍为 None（不顶掉真平淡日的静默/心跳语义）。"""
+def test_probe_filtered_fold_line_count_only_when_many():
+    """>3 条只计数不列名（防刷屏）。"""
     from app.services.release_alerts import build_daily_digest
-    assert build_daily_digest([], "2026-07-16", probe_filtered=5) is None
+    cut = [{"name": f"n{i}", "subgenre": "其他"} for i in range(5)]
+    m = build_daily_digest(_combo_with_one_drop(), "2026-07-16", probe_filtered=cut)
+    assert m is not None and "**5** 个非 SLG / 未分类新包" in m[1]
+    assert "n0" not in m[1]
+
+
+def test_probe_filtered_alone_keeps_card_empty():
+    """只有滤除明细、无任何真内容 → 卡仍为 None（不顶掉真平淡日的静默/心跳语义）。"""
+    from app.services.release_alerts import build_daily_digest
+    cut = [{"name": "x", "subgenre": "其他"}] * 5
+    assert build_daily_digest([], "2026-07-16", probe_filtered=cut) is None
+
+
+# ── 白名单卫生自检（B，2026-07-16）────────────────────────────────────────
+
+
+def test_build_audit_lines_shapes():
+    """审计发现 → markdown 行：pin 矛盾带 app_id、主体疑错标带证据明细；空发现 → []。"""
+    from app.services.publisher_audit import build_audit_lines
+    assert build_audit_lines({"pin_conflicts": [], "entity_suspects": []}) == []
+    lines = build_audit_lines({
+        "pin_conflicts": [{"app_id": "6740189002", "app_name": "Galaxy Defense",
+                           "entity_name": "CyberJoy", "subgenre": "塔防"}],
+        "entity_suspects": [{"entity_name": "OpenMind World",
+                             "evidence": [{"app_name": "삼국전쟁", "subgenre": "其他"}]}],
+    })
+    assert len(lines) == 2
+    assert "pin 矛盾" in lines[0] and "Galaxy Defense" in lines[0] and "塔防" in lines[0] \
+           and "6740189002" in lines[0]
+    assert "主体疑错标" in lines[1] and "OpenMind World" in lines[1] and "其他" in lines[1]
+
+
+@pytest.mark.asyncio
+async def test_audit_whitelist_hygiene_pin_conflict(client, monkeypatch):
+    """端到端（真临时库）：钉一个被 LLM 分类为塔防的 app → 审计① 报 pin 矛盾；
+    分类为 SLG / 三消合成（混合品）/ 未分类的 pin 均不报。"""
+    from app.database import AsyncSessionLocal
+    from app.models.newcomer import AppSubgenre
+    from app.models.publisher import PublisherAppId, PublisherEntity
+    from app.services.publisher_audit import audit_whitelist_hygiene
+
+    async with AsyncSessionLocal() as db:
+        e = PublisherEntity(name="测试厂", is_slg=True)
+        db.add(e)
+        await db.flush()
+        db.add_all([
+            PublisherAppId(entity_id=e.id, app_id="td1"),
+            PublisherAppId(entity_id=e.id, app_id="slg9"),
+            PublisherAppId(entity_id=e.id, app_id="m3"),
+            PublisherAppId(entity_id=e.id, app_id="noclass"),
+            AppSubgenre(app_id="td1", subgenre_cn="塔防"),
+            AppSubgenre(app_id="slg9", subgenre_cn="国战SLG"),
+            AppSubgenre(app_id="m3", subgenre_cn="三消合成"),
+        ])
+        await db.commit()
+
+    findings = await audit_whitelist_hygiene()
+    assert [c["app_id"] for c in findings["pin_conflicts"]] == ["td1"]
+    assert findings["pin_conflicts"][0]["subgenre"] == "塔防"
+    assert findings["pin_conflicts"][0]["entity_name"] == "测试厂"
 
 
 # ── 平淡日「商店雷达 · 近期新上架」兜底段（C）───────────────────────────────
