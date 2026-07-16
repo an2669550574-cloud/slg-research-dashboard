@@ -344,7 +344,7 @@ async def _subgenres_for_apps(app_ids: set[str]) -> dict[str, str]:
 
 
 async def _slg_gate_probe_items(items: list[dict],
-                                id_key: str = "app_id") -> tuple[list[dict], int]:
+                                id_key: str = "app_id") -> tuple[list[dict], list[dict]]:
     """探测层（商店雷达 / RSS 早鸟）产品级 SLG 门控：LLM 玩法子品类 ∈ SLG 核心口径才推。
 
     厂商级 is_slg 挡不住这类噪声（Plarium 是真 SLG 大厂、新品 LegendUP 却是放置 RPG；
@@ -354,16 +354,24 @@ async def _slg_gate_probe_items(items: list[dict],
     三态处理：分类命中 SLG 子集 → 推；分类为非 SLG（含 app_subgenre 已试非词表=NULL）
     → 滤；**尚未分类 / 无 app_id → 也滤**（宁缺勿噪——分类通常当日 drain 补上，雷达
     2 天窗口 / RSS 台账不重报以内自然赶上；预注册页无描述分类不出的，看板/DB 仍可溯）。
-    返回 (保留项, 滤除数)；滤除数由维护者卡渲染成折叠计数行，不静默丢（no silent caps）。
+    返回 (保留项, 滤除明细 [{name, subgenre}])；滤除明细由维护者卡渲染成折叠行——条数
+    少时**带名字+分类**（治「LLM 误判真 SLG → 静默永不推」盲区，人眼可抓误杀），多时
+    只计数。不静默丢（no silent caps）。
     """
     from app.services.newcomer_i18n import SLG_CORE_SUBGENRES
     if not items:
-        return [], 0
+        return [], []
     ids = {it.get(id_key) for it in items if it.get(id_key)}
     sg = await _subgenres_for_apps(ids)
-    kept = [it for it in items
-            if it.get(id_key) and sg.get(it[id_key]) in SLG_CORE_SUBGENRES]
-    return kept, len(items) - len(kept)
+    kept, cut = [], []
+    for it in items:
+        aid = it.get(id_key)
+        if aid and sg.get(aid) in SLG_CORE_SUBGENRES:
+            kept.append(it)
+        else:
+            cut.append({"name": it.get("name") or aid or "?",
+                        "subgenre": sg.get(aid) if aid else None})
+    return kept, cut
 
 
 # ── 每日情报汇总（竞品异动 + 两层新品，全 combo 一条） ─────────────────────
@@ -1081,7 +1089,7 @@ def build_daily_digest(per_combo: list[dict], today: str,
                        radar_items: Optional[list] = None,
                        rss_items: Optional[list[dict]] = None,
                        quiet_day: bool = False,
-                       probe_filtered: int = 0) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
+                       probe_filtered: Optional[list[dict]] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
     """全 combo 检测结果 → (title, markdown, btns)。全空 → None（不发）。
 
     per_combo: [{country, platform, movement: dict|None, market: dict|None, publisher: dict|None}]
@@ -1217,11 +1225,17 @@ def build_daily_digest(per_combo: list[dict], today: str,
             sections.append(
                 "【📰 SLG 行业动态】（公众号近期 · 行业面背景，非我方追踪竞品）"
                 "\n\n" + "\n\n".join(ind_lines))
-    # 探测层玩法门控的折叠计数行（no silent caps）：仅维护者、且卡里已有别的内容才挂
+    # 探测层玩法门控的折叠行（no silent caps）：仅维护者、且卡里已有别的内容才挂
     # ——空卡不因一条审计行变非空（否则会顶掉真平淡日的心跳/静默语义）。
+    # ≤3 条带名字+分类（人眼可抓「真 SLG 被 LLM 误判滤掉」的误杀），更多只计数防刷屏。
     if probe_filtered and not is_leader and sections:
-        sections.append(f"> 🧹 探测层玩法门控：雷达 / RSS 早鸟共滤除 **{probe_filtered}** 个"
-                        "非 SLG / 未分类新包")
+        if len(probe_filtered) <= 3:
+            det = "、".join(f"{_md_name(x.get('name') or '?', maxlen=20)}"
+                           f"（{x.get('subgenre') or '未分类'}）" for x in probe_filtered)
+            sections.append(f"> 🧹 探测层玩法门控已滤：{det}")
+        else:
+            sections.append(f"> 🧹 探测层玩法门控：雷达 / RSS 早鸟共滤除 "
+                            f"**{len(probe_filtered)}** 个非 SLG / 未分类新包")
     if not sections:
         return None
     head = f"### 📡 SLG 每日情报 · {today}"
@@ -1377,13 +1391,13 @@ async def send_daily_digest() -> bool:
     # webhook；返回的 items 给下方维护者卡「⚡ RSS 早鸟」段（misfire 补跑台账已见 →
     # items 空 → 不重复推）。零 ST；失败静默降级（旧版 RSS 随时可能退役）。
     rss_earlybird_items: list[dict] = []
-    probe_filtered = 0  # 探测层（RSS+雷达）被玩法门控滤除的累计数 → 维护者卡折叠计数行
+    probe_filtered: list[dict] = []  # 探测层（RSS+雷达）玩法门控滤除明细 → 维护者卡折叠行
     try:
         from app.services.rss_earlybird import sync_rss_earlybird
         rss_earlybird_items = (await sync_rss_earlybird()).get("items") or []
         # 产品级 SLG 门控（2026-07-16）：LLM 玩法分类 ∈ 核心口径才推（非 SLG / 未分类滤）。
         rss_earlybird_items, _rss_cut = await _slg_gate_probe_items(rss_earlybird_items)
-        probe_filtered += _rss_cut
+        probe_filtered.extend(_rss_cut)
     except Exception:
         logger.exception("RSS earlybird sync (in digest) crashed")
     # 维护者群或领导群任一配了 webhook 就跑（两群独立，不因没配 maintainer 就漏发领导卡）。
@@ -1506,7 +1520,7 @@ async def send_daily_digest() -> bool:
             # 产品级 SLG 门控（2026-07-16，与 RSS 早鸟同口径）：厂商级 is_slg 挡不住
             # SLG 大厂出的非 SLG 新品（Plarium→LegendUP 放置 RPG 实证）。
             radar_items, _radar_cut = await _slg_gate_probe_items(radar_items)
-            probe_filtered += _radar_cut
+            probe_filtered.extend(_radar_cut)
         except Exception:
             logger.warning("radar recent arrivals failed", exc_info=True)
 
@@ -1912,10 +1926,29 @@ async def send_weekly_newcomer_review() -> bool:
         return False
     card = await build_weekly_newcomer_review(
         settings.DIGEST_WEEKLY_REVIEW_DAYS, settings.DIGEST_WEEKLY_REVIEW_CAP)
-    if card is None:
+    # 白名单卫生自检（2026-07-16）：pin/alias 建档判断 × LLM 玩法分类交叉审计——把
+    # 「下一个 CyberJoy」（降级漏删 pin / 多品类小厂整档误入）的发现从事故驱动变自检
+    # 驱动。失败静默不拖垮周察卡；有发现时随周察卡尾段发，周察卡为 None 也单独发
+    # （审计发现不能被「本周无新品」吞掉）。仅维护者（建档运维向）。
+    audit_lines: list[str] = []
+    try:
+        from app.services.publisher_audit import audit_whitelist_hygiene, build_audit_lines
+        audit_lines = build_audit_lines(await audit_whitelist_hygiene())
+    except Exception:
+        logger.warning("whitelist hygiene audit failed", exc_info=True)
+    if card is None and not audit_lines:
         logger.info("weekly newcomer review: no SLG newcomers in window, skip")
         return False
-    return await dingtalk.send_markdown(*card, target="maintainer")
+    audit_section = ("\n\n---\n\n**🧭 白名单卫生自检**（建档判断 × LLM 玩法分类矛盾，"
+                     "请人工复核）\n\n" + "\n".join(audit_lines)) if audit_lines else ""
+    if card is None:
+        today = utcnow_naive().strftime("%Y-%m-%d")
+        return await dingtalk.send_markdown(
+            f"SLG 新品周察 {today}",
+            f"### 📈 SLG 新品周察 · {today}\n\n> 本周窗口内无 SLG 新品。" + audit_section,
+            target="maintainer")
+    return await dingtalk.send_markdown(card[0], card[1] + audit_section,
+                                        target="maintainer")
 
 
 # ── 月度市场复盘 rollup（补 digest 阅后即焚、无复利视图断层）──────────────────
