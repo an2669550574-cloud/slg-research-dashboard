@@ -1365,6 +1365,48 @@ async def test_audit_whitelist_hygiene_pin_conflict(client, monkeypatch):
     assert findings["pin_conflicts"][0]["entity_name"] == "测试厂"
 
 
+@pytest.mark.asyncio
+async def test_audit_entity_suspect_tracked_counter_evidence(client, monkeypatch):
+    """审计②端到端：alias 主体上榜面只有非 SLG 分类 → 指控；但含 tracked 竞品即豁免。
+
+    首跑实锤误报（2026-07-16）：点点互动旗下 Whiteout Survival（tracked）无分类行、
+    唯一分类的是城建 Frozen City → 被冤枉。tracked = 人工确认 SLG，比 LLM 分类硬。
+    """
+    from app.database import AsyncSessionLocal
+    from app.models.game import Game, GameRanking
+    from app.models.newcomer import AppSubgenre
+    from app.models.publisher import PublisherAlias, PublisherEntity
+    from app.services.publisher_audit import audit_whitelist_hygiene
+
+    async with AsyncSessionLocal() as db:
+        e1 = PublisherEntity(name="纯噪声厂", is_slg=True)
+        e2 = PublisherEntity(name="点点样例厂", is_slg=True)
+        db.add_all([e1, e2])
+        await db.flush()
+        db.add_all([
+            PublisherAlias(entity_id=e1.id, keyword="noisyco"),
+            PublisherAlias(entity_id=e2.id, keyword="diandianco"),
+            # 纯噪声厂：唯一上榜产品分类=塔防 → 指控
+            GameRanking(app_id="n.td", date="2026-07-10", rank=30, country="US",
+                        platform="ios", name="Noisy TD", publisher="NoisyCo Ltd"),
+            AppSubgenre(app_id="n.td", subgenre_cn="塔防"),
+            # 点点样例厂：城建分类 + tracked 真 SLG（无分类行）→ 豁免
+            GameRanking(app_id="d.city", date="2026-07-10", rank=40, country="US",
+                        platform="ios", name="Frozen Sample", publisher="DiandianCo Pte"),
+            GameRanking(app_id="d.slg", date="2026-07-10", rank=5, country="US",
+                        platform="ios", name="Whiteout Sample", publisher="DiandianCo Pte"),
+            AppSubgenre(app_id="d.city", subgenre_cn="城建模拟"),
+            Game(app_id="d.slg", name="Whiteout Sample", publisher="DiandianCo Pte",
+                 platform="ios"),
+        ])
+        await db.commit()
+
+    findings = await audit_whitelist_hygiene()
+    suspects = [s["entity_name"] for s in findings["entity_suspects"]]
+    assert "纯噪声厂" in suspects
+    assert "点点样例厂" not in suspects
+
+
 # ── 平淡日「商店雷达 · 近期新上架」兜底段（C）───────────────────────────────
 
 def test_radar_recent_lines_render():
