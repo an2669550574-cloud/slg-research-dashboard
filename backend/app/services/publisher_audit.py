@@ -75,7 +75,13 @@ async def audit_whitelist_hygiene() -> dict:
                 .where(GameRanking.date >= cutoff, GameRanking.publisher.is_not(None))
                 .distinct()
             )).all()
+            # tracked 竞品 = 人工确认过的 SLG（games 表）——比 LLM 分类更硬的反证。
+            # 首跑实锤的误报形状（2026-07-16）：点点互动旗下 Whiteout Survival（tracked
+            # 真 SLG）没有分类行、唯一被分类的恰是城建 Frozen City → 证据面残缺冤枉主体。
+            from app.models.game import Game
+            tracked_ids = set((await db.execute(select(Game.app_id))).scalars().all())
         apps_by_entity: dict[str, dict[str, str]] = {}  # entity_name -> {app_id: app_name}
+        pins_by_entity: dict[str, set[str]] = {}
         for app_id, publisher, name in rows:
             pub_tokens = _tokens(publisher)
             if not pub_tokens:
@@ -83,15 +89,22 @@ async def audit_whitelist_hygiene() -> dict:
             for m in matchers:
                 if any(_kw_hit(pub_tokens, kw) for kw in m["kw_tokens"]):
                     apps_by_entity.setdefault(m["entity_name"], {})[app_id] = name or app_id
+                    pins_by_entity.setdefault(m["entity_name"], m["app_ids"])
                     break
         all_ids = {a for apps in apps_by_entity.values() for a in apps}
         sg_all = await _subgenres_for_apps(all_ids)
         for ename, apps in apps_by_entity.items():
+            # SLG 反证（任一即豁免）：上榜面含 tracked 竞品 / 含主体自己的 pin（单品即
+            # SLG，人工钉的）/ 含 LLM 分类为 SLG 的产品。
+            if any(a in tracked_ids for a in apps):
+                continue
+            if apps.keys() & (pins_by_entity.get(ename) or set()):
+                continue
             classified = {a: sg_all[a] for a in apps if a in sg_all}
             if not classified:
                 continue  # 无分类证据不指控
             if any(sg in SLG_CORE_SUBGENRES for sg in classified.values()):
-                continue  # 有 SLG 反证 → 主体没问题
+                continue
             clear = {a: sg for a, sg in classified.items() if sg in AUDIT_CLEAR_NON_SLG}
             if not clear or len(clear) != len(classified):
                 continue  # 混有三消合成等模糊分类 → 证据不干净，不指控
