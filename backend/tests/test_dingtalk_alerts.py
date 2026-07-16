@@ -92,7 +92,7 @@ def test_daily_digest_human_readable_no_machine_codes():
     assert "[NEW]" not in text and "[UP]" not in text and "[DOWN]" not in text
     assert "🆕 **寒霜启示录** 空降 **#3**" in text
     assert "📈 **Last War** #18 → **#3**（↑15）" in text
-    assert "📉 **旧王朝** 跌出 Top 榜（#5 → 榜外）" in text
+    assert "📉 **旧王朝** 掉出榜单（#5 → 榜外）" in text  # 分档措辞：彻底掉榜 ≠ 跌出 TopN
     assert "💰 **寒霜启示录** 现 #3 · 收入 **+45%**" in text  # 收入异动带当前名次参照
     assert "✨ **神秘新游** 空降 **#12**" in text and "新厂商待识别" in text
     # A4：新厂商线索（is_slg=false）文案带行动指引 + 行内商店页直达（不挤底部按钮名额）

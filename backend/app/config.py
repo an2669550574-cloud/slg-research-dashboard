@@ -151,8 +151,13 @@ class Settings(BaseSettings):
     # **空降/窜升/跌出 + 回归门控候选集**共用此闸门。收入异动**已解耦**、另走 COMPETITOR_REVENUE_TOPN
     # （收入是高信号，不随名次收窄——见下）。展示层 DIGEST_MOVEMENT_TOPN 另有上限，两层独立。
     COMPETITOR_ALERT_TOPN: int = 15
-    # 名次环比变化 ≥ 该值才算「窜升/暴跌」，过滤日常抖动。
+    # 名次环比变化 ≥ 该值才算「窜升/暴跌」，过滤日常抖动。窜升(surge)与**跌出(drop)**共用：
+    # drop 侧长期漏了这道门槛，#14→#16 这种 TopN 边界抖动被当「跌出 Top 榜」推领导群
+    # （2026-07-15 实证），2026-07-16 补齐。彻底掉榜不受此门槛约束（本身即重大）。
     COMPETITOR_RANK_JUMP: int = 10
+    # 跌出 TopN 时，跌幅 ≥ 该值 → 措辞升级为「大幅下跌」，否则「跌出 TopN」。纯渲染分档，
+    # 不影响是否上报（上报门槛是 RANK_JUMP）。见 movement.drop_phrase。
+    COMPETITOR_DROP_MAJOR_DELTA: int = 50
     # 收入环比 |变化%| ≥ 该值才报（两日都需有收入数据）。
     COMPETITOR_REVENUE_PCT: int = 50
     # 收入异动**独立的名次闸门**（与名次异动的 COMPETITOR_ALERT_TOPN 解耦）：收入大幅变动是高信号

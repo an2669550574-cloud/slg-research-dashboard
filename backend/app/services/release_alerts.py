@@ -29,7 +29,7 @@ from app.database import AsyncSessionLocal, utcnow_naive
 from app.models.publisher import PublisherEntity, PublisherItunesApp, PublisherItunesArtist
 from app.models.digest import LeaderDigestSend, WechatArticleSent
 from app.models.game import CHART_FREE
-from app.services import dingtalk
+from app.services import dingtalk, movement
 
 logger = logging.getLogger(__name__)
 
@@ -380,8 +380,9 @@ def build_movement_lines(s: dict, entities: Optional[dict] = None,
                        f"↗️ **{_md_name(e['name'])}** 连涨 #{e['start_rank']} → **#{e['cur_rank']}**（{e['span_days']}天累计 ↑{e['start_rank'] - e['cur_rank']}）" + _tag(e) + _meta(e)))
     for e in s["drops"]:
         to = "榜外" if e["cur_rank"] is None else f"#{e['cur_rank']}"
+        phrase = movement.drop_phrase(e["prev_rank"], e["cur_rank"])
         scored.append((_event_score("drop", e),
-                       f"📉 **{_md_name(e['name'])}** 跌出 Top 榜（#{e['prev_rank']} → {to}）" + _tag(e) + _meta(e)))
+                       f"📉 **{_md_name(e['name'])}** {phrase}（#{e['prev_rank']} → {to}）" + _tag(e) + _meta(e)))
     for e in s["revenue_spikes"]:
         # 收入异动主行已带前后金额，厂商归属**内联行尾**（不另起引用块——否则子行只剩
         # 孤零零一个厂商，跟在折行的主行后面很飘）。
@@ -939,7 +940,8 @@ def _highlight_line(item: dict, own_matches: Optional[dict] = None) -> str:
         return f"{mkt} ↗️ **{_md_name(e['name'])}** 连涨 #{e['start_rank']} → #{e['cur_rank']}（{e['span_days']}天）{own}"
     if kind == "drop":
         to = "榜外" if e.get("cur_rank") is None else f"#{e['cur_rank']}"
-        return f"{mkt} 📉 **{_md_name(e['name'])}** 跌出 Top（#{e['prev_rank']} → {to}）{own}"
+        phrase = movement.drop_phrase(e.get("prev_rank"), e.get("cur_rank"))
+        return f"{mkt} 📉 **{_md_name(e['name'])}** {phrase}（#{e['prev_rank']} → {to}）{own}"
     if kind == "revenue_spike":
         rk = f"#{e['cur_rank']} · " if e.get("cur_rank") else ""
         return f"{mkt} 💰 **{_md_name(e['name'])}** {rk}收入 {e['pct']:+.0f}%{own}"

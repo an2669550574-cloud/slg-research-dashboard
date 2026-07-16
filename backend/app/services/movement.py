@@ -158,6 +158,13 @@ async def detect_movement(country: str, platform: str, today: str) -> dict:
             continue
         c = cur.get(p.app_id)
         if c is None or c.rank is None or c.rank > topn:
+            # 仍在榜、只是掉出 TopN：跌幅需 ≥ RANK_JUMP 才报，与 surge/climb 的幅度门槛对称
+            # （RANK_JUMP 注释本就承诺「窜升/暴跌」共用，drop 侧漏了实现 → #14→#16 这种
+            # TopN 边界抖动被渲染成「跌出 Top 榜」重大事件，2026-07-15 领导卡实证）。
+            # 彻底掉榜（cur 无行 / rank 为空）无从算幅度、本身即重大 → 必报，不受门槛约束。
+            if (c is not None and c.rank is not None
+                    and c.rank - p.rank < settings.COMPETITOR_RANK_JUMP):
+                continue
             src = c if c is not None else p  # 现状指标优先取今日行；彻底掉榜则退回昨日行
             summary["drops"].append({
                 "app_id": p.app_id, "name": _label(p), "icon_url": p.icon_url,
@@ -173,6 +180,19 @@ async def detect_movement(country: str, platform: str, today: str) -> dict:
         country, platform, today, exclude=exclude, cur=cur)
 
     return summary
+
+
+def drop_phrase(prev_rank: int | None, cur_rank: int | None) -> str:
+    """跌出事件的分档措辞——三处渲染（digest 正文 / 今日要闻 / 文本行）共用，口径唯一。
+
+    分档理由：#11→#115（掉 104 名）与 #12→#25（掉 13 名）都「跌出 Top15」，但对领导
+    是两个量级的事。原先一律叫「跌出 Top 榜」，既模糊又像「掉出榜单」（实际人还在榜上）。
+    """
+    if cur_rank is None:
+        return "掉出榜单"
+    if prev_rank is not None and cur_rank - prev_rank >= settings.COMPETITOR_DROP_MAJOR_DELTA:
+        return "大幅下跌"
+    return f"跌出 Top{settings.COMPETITOR_ALERT_TOPN}"
 
 
 async def _sustained_climbs(country: str, platform: str, today: str, *,
@@ -278,7 +298,8 @@ def _format_parts(s: dict) -> list[str]:
         parts.append(f"[CLIMB] {e['name']} 连涨 #{e['start_rank']}->#{e['cur_rank']} ({e['span_days']}天累计升{e['start_rank'] - e['cur_rank']})")
     for e in s["drops"]:
         to = "榜外" if e["cur_rank"] is None else f"#{e['cur_rank']}"
-        parts.append(f"[DOWN] {e['name']} 跌出Top榜 (#{e['prev_rank']}->{to})")
+        parts.append(f"[DOWN] {e['name']} {drop_phrase(e['prev_rank'], e['cur_rank'])} "
+                     f"(#{e['prev_rank']}->{to})")
     for e in s["revenue_spikes"]:
         parts.append(f"[REV] {e['name']} 收入{e['pct']:+.0f}% (${e['prev_revenue']:,.0f}->${e['cur_revenue']:,.0f})")
     return parts
