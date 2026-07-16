@@ -343,6 +343,29 @@ async def _subgenres_for_apps(app_ids: set[str]) -> dict[str, str]:
     return out
 
 
+async def _slg_gate_probe_items(items: list[dict],
+                                id_key: str = "app_id") -> tuple[list[dict], int]:
+    """探测层（商店雷达 / RSS 早鸟）产品级 SLG 门控：LLM 玩法子品类 ∈ SLG 核心口径才推。
+
+    厂商级 is_slg 挡不住这类噪声（Plarium 是真 SLG 大厂、新品 LegendUP 却是放置 RPG；
+    2026-07-16 平淡日领导卡实证）。分类信号免费——影子行富化管道早就在给这些 app 跑
+    subgenre 分类，此处只是渲染前消费它。
+
+    三态处理：分类命中 SLG 子集 → 推；分类为非 SLG（含 app_subgenre 已试非词表=NULL）
+    → 滤；**尚未分类 / 无 app_id → 也滤**（宁缺勿噪——分类通常当日 drain 补上，雷达
+    2 天窗口 / RSS 台账不重报以内自然赶上；预注册页无描述分类不出的，看板/DB 仍可溯）。
+    返回 (保留项, 滤除数)；滤除数由维护者卡渲染成折叠计数行，不静默丢（no silent caps）。
+    """
+    from app.services.newcomer_i18n import SLG_CORE_SUBGENRES
+    if not items:
+        return [], 0
+    ids = {it.get(id_key) for it in items if it.get(id_key)}
+    sg = await _subgenres_for_apps(ids)
+    kept = [it for it in items
+            if it.get(id_key) and sg.get(it[id_key]) in SLG_CORE_SUBGENRES]
+    return kept, len(items) - len(kept)
+
+
 # ── 每日情报汇总（竞品异动 + 两层新品，全 combo 一条） ─────────────────────
 
 def build_movement_lines(s: dict, entities: Optional[dict] = None,
@@ -1057,7 +1080,8 @@ def build_daily_digest(per_combo: list[dict], today: str,
                        industry_articles: Optional[list] = None,
                        radar_items: Optional[list] = None,
                        rss_items: Optional[list[dict]] = None,
-                       quiet_day: bool = False) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
+                       quiet_day: bool = False,
+                       probe_filtered: int = 0) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
     """全 combo 检测结果 → (title, markdown, btns)。全空 → None（不发）。
 
     per_combo: [{country, platform, movement: dict|None, market: dict|None, publisher: dict|None}]
@@ -1193,6 +1217,11 @@ def build_daily_digest(per_combo: list[dict], today: str,
             sections.append(
                 "【📰 SLG 行业动态】（公众号近期 · 行业面背景，非我方追踪竞品）"
                 "\n\n" + "\n\n".join(ind_lines))
+    # 探测层玩法门控的折叠计数行（no silent caps）：仅维护者、且卡里已有别的内容才挂
+    # ——空卡不因一条审计行变非空（否则会顶掉真平淡日的心跳/静默语义）。
+    if probe_filtered and not is_leader and sections:
+        sections.append(f"> 🧹 探测层玩法门控：雷达 / RSS 早鸟共滤除 **{probe_filtered}** 个"
+                        "非 SLG / 未分类新包")
     if not sections:
         return None
     head = f"### 📡 SLG 每日情报 · {today}"
@@ -1348,9 +1377,13 @@ async def send_daily_digest() -> bool:
     # webhook；返回的 items 给下方维护者卡「⚡ RSS 早鸟」段（misfire 补跑台账已见 →
     # items 空 → 不重复推）。零 ST；失败静默降级（旧版 RSS 随时可能退役）。
     rss_earlybird_items: list[dict] = []
+    probe_filtered = 0  # 探测层（RSS+雷达）被玩法门控滤除的累计数 → 维护者卡折叠计数行
     try:
         from app.services.rss_earlybird import sync_rss_earlybird
         rss_earlybird_items = (await sync_rss_earlybird()).get("items") or []
+        # 产品级 SLG 门控（2026-07-16）：LLM 玩法分类 ∈ 核心口径才推（非 SLG / 未分类滤）。
+        rss_earlybird_items, _rss_cut = await _slg_gate_probe_items(rss_earlybird_items)
+        probe_filtered += _rss_cut
     except Exception:
         logger.exception("RSS earlybird sync (in digest) crashed")
     # 维护者群或领导群任一配了 webhook 就跑（两群独立，不因没配 maintainer 就漏发领导卡）。
@@ -1470,6 +1503,10 @@ async def send_daily_digest() -> bool:
             and _core_synced()):
         try:
             radar_items = await _recent_radar_arrivals(settings.DIGEST_RADAR_RECENT_DAYS)
+            # 产品级 SLG 门控（2026-07-16，与 RSS 早鸟同口径）：厂商级 is_slg 挡不住
+            # SLG 大厂出的非 SLG 新品（Plarium→LegendUP 放置 RPG 实证）。
+            radar_items, _radar_cut = await _slg_gate_probe_items(radar_items)
+            probe_filtered += _radar_cut
         except Exception:
             logger.warning("radar recent arrivals failed", exc_info=True)
 
@@ -1679,7 +1716,8 @@ async def send_daily_digest() -> bool:
                                   summaries=summaries_by_app, lead_items=lead_items,
                                   audience=audience, own_matches=own_matches,
                                   industry_articles=industry_articles, radar_items=radar_items,
-                                  rss_items=rss_earlybird_items, quiet_day=is_quiet)
+                                  rss_items=rss_earlybird_items, quiet_day=is_quiet,
+                                  probe_filtered=probe_filtered)
 
     sent_any = False
     # job 心跳自检（P1②）：关键定时 job 有成功记录却超期 → 维护者卡尾 ⚠️（补静默失败盲区，

@@ -1237,6 +1237,67 @@ def test_primary_item_count_excludes_reentry():
     assert _primary_item_count(per_combo, [], []) == 2  # 各层只剩 1 条真首发
 
 
+# ── 探测层（雷达/RSS 早鸟）产品级 SLG 玩法门控（2026-07-16）───────────────────
+
+
+@pytest.mark.asyncio
+async def test_slg_gate_probe_items_three_states(monkeypatch):
+    """三态：分类∈SLG 子集→推；分类非 SLG→滤；未分类/无 app_id→滤（宁缺勿噪）。
+
+    2026-07-16 实证场景：Plarium（真 SLG 大厂）新品 LegendUP=放置养成、韩国多品类
+    小厂乙女游戏——厂商级 is_slg 全挡不住，必须产品级。
+    """
+    from app.services import release_alerts as ra
+
+    async def fake_subgenres(ids):
+        return {"slg1": "基地建设SLG", "slg2": "国战SLG", "idle1": "放置养成",
+                "other1": "其他"}  # unclassified1 无行=尚未分类
+
+    monkeypatch.setattr(ra, "_subgenres_for_apps", fake_subgenres)
+    items = [
+        {"app_id": "slg1", "name": "王之书"},
+        {"app_id": "idle1", "name": "LegendUP"},
+        {"app_id": "other1", "name": "阳光拼贴"},
+        {"app_id": "unclassified1", "name": "预注册无描述"},
+        {"name": "无id"},
+        {"app_id": "slg2", "name": "国战新品"},
+    ]
+    kept, cut = await ra._slg_gate_probe_items(items)
+    assert [it["app_id"] for it in kept] == ["slg1", "slg2"]
+    assert cut == 4
+
+
+@pytest.mark.asyncio
+async def test_slg_gate_probe_items_empty():
+    from app.services.release_alerts import _slg_gate_probe_items
+    assert await _slg_gate_probe_items([]) == ([], 0)
+
+
+def test_probe_filtered_fold_line_maintainer_only():
+    """折叠计数行：仅维护者卡、且卡里已有其它内容才挂；领导卡永不挂。"""
+    from app.services.release_alerts import build_daily_digest
+    per_combo = [{
+        "country": "US", "platform": "ios",
+        "movement": {"new_entrants": [], "surges": [],
+                     "drops": [{"app_id": "a", "name": "A", "prev_rank": 3,
+                                "cur_rank": None, "publisher": "P",
+                                "revenue": None, "downloads": None}],
+                     "revenue_spikes": [], "climbs": []},
+        "market": {"newcomers": [], "as_of": "2026-07-16"},
+    }]
+    m = build_daily_digest(per_combo, "2026-07-16", probe_filtered=3)
+    assert m is not None and "🧹 探测层玩法门控" in m[1] and "**3**" in m[1]
+    lead = build_daily_digest(per_combo, "2026-07-16", audience="leader",
+                              probe_filtered=3)
+    assert lead is not None and "🧹" not in lead[1]
+
+
+def test_probe_filtered_alone_keeps_card_empty():
+    """只有滤除计数、无任何真内容 → 卡仍为 None（不顶掉真平淡日的静默/心跳语义）。"""
+    from app.services.release_alerts import build_daily_digest
+    assert build_daily_digest([], "2026-07-16", probe_filtered=5) is None
+
+
 # ── 平淡日「商店雷达 · 近期新上架」兜底段（C）───────────────────────────────
 
 def test_radar_recent_lines_render():
