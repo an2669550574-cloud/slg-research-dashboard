@@ -39,7 +39,7 @@ pydantic Settings 在**进程启动时**读一次 env；compose 的 `env_file:` 
 |---|---|---|---|
 | `USE_MOCK_DATA` | ✅ | `false`（默认 `True`） | prod 拉真实数据；本地开发才 true |
 | `SYNC_RANKING_COMBOS` | ✅ | 10 combo：US/JP/KR/DE/RU × ios/android（默认 6） | 收入榜采集面。**改后配额变**，先掂量额度 |
-| `SYNC_SECONDARY_INTERVAL_DAYS` | ✅ | `14`（默认 30） | 次市场**双周**同步（省配额刻意节奏，别擅自加密） |
+| `SYNC_SECONDARY_INTERVAL_DAYS` | ✅ | `7`（默认 30） | 次市场**周级**同步（2026-07-16 D2 裁定由 14 提频：实测月用量 105 ≪ 估算 156、护栏 200 内 headroom ~95，且次市场贡献 SLG 新品为 US 2.4 倍——检出延迟砍半值这个价。曾为省配额 7→14，此次数据驱动回摆；改回 = sed 回 14 + force-recreate backend） |
 | `FREE_CHART_COMBOS` | ✅ | US/JP/KR × 双端（默认空） | 下载榜并行采集（ADR 0001），+1 配额/combo |
 | `SENSOR_TOWER_CACHE_TTL` | ✅ | `1800`（默认 86400） | ST 响应缓存 30 分钟（更新鲜；仍省重复调用） |
 | `SENSOR_TOWER_ANDROID_ENRICH_LIMIT` | ⚪ | `200`（=默认） | — |
@@ -80,7 +80,7 @@ pydantic Settings 在**进程启动时**读一次 env；compose 的 `env_file:` 
 ### ST 配额护栏
 | 变量 | 默认 | 控制 |
 |---|---|---|
-| `SENSOR_TOWER_MONTHLY_LIMIT` | `200` | 本地软护栏月上限（实际 ~156/月）。核心约束，改前确认水位 |
+| `SENSOR_TOWER_MONTHLY_LIMIT` | `200` | 本地软护栏月上限（实测双周态 ~105/月，2026-07-16 周级后预计 ~125-135）。核心约束，改前确认水位 |
 | `SENSOR_TOWER_QUOTA_WARN_PCT` | `80` | 用量触顶告警阈值 |
 | `SENSOR_TOWER_RANKING_LIMIT` | `100` | 每次拉榜深度（同 1 次配额多捞深位） |
 | `SENSOR_TOWER_ORG_RESERVE` / `_ORG_LOW_THRESHOLD` | `30` / `100` | 公司池软预留 / 低水位线 |
