@@ -80,13 +80,17 @@ async def classify_pending_app_subgenres(cap: int | None = None) -> int:
     from app.services.newcomer_i18n import classify_subgenre
     done = 0
     for app_id, (name, genre, desc, source) in list(cands.items())[:lim]:
-        sg = await classify_subgenre(name, genre, desc)
+        # 子品类 + 游戏名中译同一次 LLM 调用产出（零增量成本）——存量竞品（movement 老熟人）
+        # 不走新品中文化管道，这里是它们拿到中文名的唯一路径。name_cn 可为 None（LLM 按口径
+        # 拿不准就留空），渲染层回落原名。
+        sg, name_cn = await classify_subgenre(name, genre, desc)
         async with AsyncSessionLocal() as db:
             # 竞态防御：并发/重跑时 app_id 唯一约束兜底，先查后插。
             exists = (await db.execute(
                 select(AppSubgenre.id).where(AppSubgenre.app_id == app_id))).scalar_one_or_none()
             if exists is None:
-                db.add(AppSubgenre(app_id=app_id, name=name, subgenre_cn=sg, source=source))
+                db.add(AppSubgenre(app_id=app_id, name=name, subgenre_cn=sg,
+                                   name_cn=name_cn, source=source))
                 await db.commit()
         done += 1
     if done:
