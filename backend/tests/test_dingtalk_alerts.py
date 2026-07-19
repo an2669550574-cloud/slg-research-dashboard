@@ -101,7 +101,7 @@ def test_daily_digest_human_readable_no_machine_codes():
     # 富化子行（引用块）：日收入压缩 K/M、下载量、厂商归属（未匹配主体退回发行商名）
     assert "> 日收入 $123K · 下载 5K · 厂商 Mystery Studio" in text
     assert "🏢 **江娱互动** 新品 **Top Heroes 顶级英雄** #77" in text
-    assert "🇺🇸 美国 · iOS" in text and "JP" not in text  # 中文市场标签；空 combo 不出段
+    assert "美国 · iOS" in text and "JP" not in text   # 中文市场标签（无国旗）；空 combo 不出段
     # 分组小标题：异动与新品分区
     assert "【榜单异动】" in text and "【新品上架】" in text
     # 按钮改看板深链（需 DASHBOARD_BASE_URL）；本测试未配 → 无按钮，ActionCard 降级 markdown
@@ -606,15 +606,16 @@ def test_digest_global_cap_never_drops_core_market(monkeypatch):
     assert "另有 **1** 项未在此展示" in text
 
 
-def test_digest_highlights_excludes_top_combo_to_dedup():
-    """今日要闻去重（领导反馈「重复内容太多」）：正文首位 combo（核心 US/iOS，本就排正文
-    最前）的事件不再抽进今日要闻重列；今日要闻只上浮「排在后面、可能被折叠的次要市场」
-    大事件。首位 combo 的大事件仍在正文照常展示。"""
+def test_digest_highlight_index_points_at_markets_without_repeating_events():
+    """「今日重点」是一行**市场索引**，只说该往哪看，不复述正文里的事件。
+
+    原先的逐条【📌 今日要闻】会把正文已有的事件原样再列一遍——2026-07-19 领导卡实测 5 条
+    要闻在正文中全部重复（首位 combo 是 US、要闻上浮的全是 JP 的，而 JP 段正文完整渲染），
+    已有的两道去重都挡不住。改一行索引后与 TL;DR 正交：那边按事件类型汇总，这边按市场。"""
     from app.services import release_alerts as ra
     us_mv = {"new_entrants": [], "surges": [], "drops": [],
              "revenue_spikes": [{"app_id": "big", "name": "头部巨鳄", "cur_rank": 2,
                                  "prev_revenue": 1_000_000, "cur_revenue": 3_000_000, "pct": 200.0}]}
-    # 次要市场各 4 个新进 → 排除首位 US 后仍 > TOPN(5)，今日要闻照常渲染。
     kr_mv = {"new_entrants": [{"app_id": f"kr{i}", "name": f"韩区{i}", "prev_rank": None, "cur_rank": 1 + i}
                               for i in range(4)], "surges": [], "drops": [], "revenue_spikes": []}
     jp_mv = {"new_entrants": [{"app_id": f"jp{i}", "name": f"日区{i}", "prev_rank": None, "cur_rank": 1 + i}
@@ -625,15 +626,22 @@ def test_digest_highlights_excludes_top_combo_to_dedup():
         {"country": "JP", "platform": "ios", "movement": jp_mv, "market": None, "publisher": None},
     ]
     _, text, _ = ra.build_daily_digest(per_combo, "2026-06-28")
-    assert "【📌 今日要闻】" in text
-    hi = text.split("【📌 今日要闻】")[1].split("---")[0]
-    assert "头部巨鳄" not in hi      # 首位 combo（US/iOS）事件不进今日要闻——去重
-    assert "头部巨鳄" in text         # 但仍在正文 US 段照常展示
-    assert ("韩区" in hi) or ("日区" in hi)   # 次要市场事件上浮今日要闻
+    idx = [l for l in text.split("\n") if l.startswith("> 📌 重点：")]
+    assert len(idx) == 1, "多市场日应有且只有一行重点索引"
+    line = idx[0]
+    # 索引行只点市场 + 项数，**不出现任何游戏名**（这正是去重的关键）
+    for nm in ("头部巨鳄", "韩区", "日区"):
+        assert nm not in line
+    assert "美国" in line and "韩国" in line and "日本" in line
+    assert "4 项" in line                       # KR / JP 各 4 个新进
+    # 事件本身仍在正文照常展示，信息不丢
+    assert "头部巨鳄" in text and "韩区0" in text and "日区0" in text
 
 
 def test_digest_own_match_boosts_highlight_ranking():
-    """B：命中「对标我方」的竞品在今日要闻里上浮——榜尾低强度也排到非对标头部强度之上。"""
+    """B：命中「对标我方」的竞品在重要度排序里上浮——榜尾低强度也排到非对标头部强度之上。
+
+    这个分数同时喂 正文排序 / 全局封顶 / movement TopN / 按钮 / 今日重点索引 五处。"""
     from app.services import release_alerts as ra
     mv = {
         "new_entrants": [
@@ -653,16 +661,23 @@ def test_digest_own_match_boosts_highlight_ranking():
     assert boosted.index("rival") < boosted.index("plain")
 
 
-def test_digest_highlights_skipped_when_few_items():
-    """事件数 ≤ TOPN（小卡）→ 不渲染今日要闻，避免与正文重复。"""
+def test_digest_highlight_index_skipped_for_single_market():
+    """单市场日 → 不渲染重点索引：只有一个市场无从「导航」，那行纯属多余。"""
     from app.services import release_alerts as ra
     movement = {"new_entrants": [{"app_id": "1", "name": "唯一新进", "prev_rank": None, "cur_rank": 3}],
                 "surges": [], "drops": [], "revenue_spikes": []}
     per_combo = [{"country": "US", "platform": "ios", "movement": movement,
                   "market": None, "publisher": None}]
     _, text, _ = ra.build_daily_digest(per_combo, "2026-06-28")
-    assert "今日要闻" not in text
+    assert "📌 重点" not in text
     assert "唯一新进" in text                         # 正文照常
+
+    # 判断依据是**实际有事件的市场数**，不是 per_combo 元素数：空 combo 不该把它凑成
+    # 「多市场」而渲染出一行只指向唯一市场的废话索引（golden 快照抓到过这个）。
+    per_combo_with_empty = per_combo + [
+        {"country": "JP", "platform": "ios", "movement": None, "market": None, "publisher": None}]
+    _, text2, _ = ra.build_daily_digest(per_combo_with_empty, "2026-06-28")
+    assert "📌 重点" not in text2
 
 
 def test_digest_buttons_ranked_by_importance(monkeypatch):
@@ -1101,14 +1116,6 @@ def test_movement_reentry_renders_distinct_verb():
     assert "🆕 **真首发** 空降 **#7**" in text
 
 
-def test_movement_reentry_highlight_verb():
-    """今日要闻一行同样区分重回/空降。"""
-    from app.services.release_alerts import _highlight_line
-    e = {"app_id": "r", "name": "老兵", "cur_rank": 2, "is_reentry": True}
-    line = _highlight_line({"e": e, "country": "US", "platform": "ios", "kind": "new_entrant"})
-    assert "🔄 **老兵** 重回 #2" in line and "空降" not in line
-
-
 def test_movement_climb_renders_line():
     """连涨（climbs）渲染成「↗️ … 连涨 #start → #cur（N天累计 ↑X）」，与 📈 单日窜升区分。"""
     from app.services.release_alerts import build_movement_lines
@@ -1118,14 +1125,6 @@ def test_movement_climb_renders_line():
     text = "\n".join(build_movement_lines(s))
     assert "↗️ **战争与秩序** 连涨 #40 → **#28**" in text
     assert "5天累计 ↑12" in text
-
-
-def test_movement_climb_highlight_line():
-    """今日要闻一行的连涨渲染。"""
-    from app.services.release_alerts import _highlight_line
-    e = {"app_id": "wao", "name": "战争与秩序", "start_rank": 40, "cur_rank": 28, "span_days": 5}
-    line = _highlight_line({"e": e, "country": "US", "platform": "ios", "kind": "climb"})
-    assert "↗️ **战争与秩序** 连涨 #40 → #28（5天）" in line
 
 
 def test_movement_climb_scored_below_surge():
@@ -1759,3 +1758,39 @@ def test_meta_inner_renders_entity_chinese_only():
     assert "厂商 壳木游戏" in _meta_inner(entity="壳木游戏 Camel Games")
     assert "Camel Games" not in _meta_inner(entity="壳木游戏 Camel Games")
     assert "厂商 FunPlus" in _meta_inner(entity="FunPlus")     # 无中文名的原样保留
+
+
+# ── 键集合常量：防「某处少写一层/一类」再犯 ──────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_movement_keys_match_detector_output(monkeypatch):
+    """digest 的 _MOVEMENT_KEYS 必须与 detect_movement 实际产出的事件类一一对应。
+
+    movement 服务日后新增一类事件而 digest 这边漏同步 → 那类事件在卡上静默消失。用
+    检测器的真实产出做锚，新增类别会在这里立刻失败，而不是等某天发现卡少报了。
+    （2026-07-19 连踩三次「某处少写一层」，故把这类同步关系钉成测试。）"""
+    from app.config import settings
+    from app.services.movement import detect_movement
+    from app.services.release_alerts import _MOVEMENT_KEYS, _MOVEMENT_KINDS
+
+    # ALERT_ENABLED=False 时直接返回初始化好的 summary 骨架，不碰 DB
+    monkeypatch.setattr(settings, "COMPETITOR_ALERT_ENABLED", False)
+    summary = await detect_movement("US", "ios", "2026-07-19")
+    event_keys = {k for k, v in summary.items() if isinstance(v, list)}
+
+    assert set(_MOVEMENT_KEYS) == event_keys, (
+        f"digest 与 movement 检测器的事件类不同步：detector={sorted(event_keys)} "
+        f"digest={sorted(_MOVEMENT_KEYS)}")
+    # 派生关系：改 _MOVEMENT_KINDS 时 _MOVEMENT_KEYS 自动跟随，不会各写一份
+    assert _MOVEMENT_KEYS == tuple(key for _, key in _MOVEMENT_KINDS)
+
+
+def test_newcomer_source_keys_cover_all_four_layers():
+    """新品四层常量必须含收入榜 + 下载榜各两层。
+
+    free 两层是累犯重灾区：注释记着「曾漏 free 两层 → 下载榜新品搜了却挂不上」，
+    2026-07-19 又在领导卡过滤 / 实体解析两处各漏一次。"""
+    from app.services.release_alerts import _NEWCOMER_SOURCE_KEYS
+
+    assert set(_NEWCOMER_SOURCE_KEYS) == {
+        "market", "publisher", "free_market", "free_publisher"}

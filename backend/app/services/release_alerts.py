@@ -33,10 +33,10 @@ from app.services import dingtalk, movement
 
 logger = logging.getLogger(__name__)
 
-_COMBO_FLAG = {"us": "🇺🇸", "jp": "🇯🇵", "kr": "🇰🇷", "cn": "🇨🇳", "tw": "🇹🇼", "de": "🇩🇪", "gb": "🇬🇧"}
 # 市场 / 平台中文标签（领导面向，去英文）。漏配的国家码回退大写原文。
 _COUNTRY_CN = {"us": "美国", "jp": "日本", "kr": "韩国", "cn": "中国", "tw": "台湾",
-               "de": "德国", "gb": "英国", "au": "澳洲", "ca": "加拿大", "fr": "法国"}
+               "de": "德国", "gb": "英国", "au": "澳洲", "ca": "加拿大", "fr": "法国",
+               "ru": "俄罗斯"}
 _PLATFORM_CN = {"ios": "iOS", "android": "安卓"}
 # 应用商店品类英文 → 中文（SLG 监控里绝大多数是策略子类，其余常见类一并覆盖）。
 _GENRE_CN = {
@@ -88,12 +88,14 @@ def _md_name(s, maxlen: Optional[int] = 32) -> str:
 
 
 def _market_label(country: str, platform: str) -> str:
-    """市场+平台标识（不带榜种），如「🇺🇸 美国 · 安卓」。下载榜/跨段复用，避免
-    `_combo_label` 的「畅销榜」后缀与下载榜语境打架。"""
-    flag = _COMBO_FLAG.get(country.lower(), "")
+    """市场+平台标识（不带榜种），如「美国 · 安卓」。下载榜/跨段复用，避免
+    `_combo_label` 的「畅销榜」后缀与下载榜语境打架。
+
+    **不带国旗 emoji**（2026-07-19 用户裁定）：钉钉群消息里国旗是纯装饰，市场中文名本身
+    已经说清是哪个市场，去掉后每张卡少十来个 emoji。未收录的国家仍回落大写国码。"""
     cc = _COUNTRY_CN.get(country.lower(), country.upper())
     pf = _PLATFORM_CN.get(platform.lower(), platform)
-    return f"{flag} {cc} · {pf}".strip()
+    return f"{cc} · {pf}"
 
 
 def _combo_label(country: str, platform: str) -> str:
@@ -223,6 +225,11 @@ _PLATFORM_WEIGHT = {"ios": 1.0, "android": 0.9}
 _MOVEMENT_KINDS = (("new_entrant", "new_entrants"), ("surge", "surges"),
                    ("drop", "drops"), ("revenue_spike", "revenue_spikes"),
                    ("climb", "climbs"))
+# 只要 summary 字段名的场景（遍历 movement 各类事件）用这个，别再手写元组：**从
+# _MOVEMENT_KINDS 派生**，新增/改名事件类型时两者不可能不同步。散落硬编码正是「某处
+# 少写一类」的温床——同族的 _NEWCOMER_SOURCE_KEYS 就有「曾漏 free 两层」的前科，
+# 2026-07-19 又连着漏了三次（领导卡过滤 / 实体解析 / TL;DR 计数）。
+_MOVEMENT_KEYS = tuple(key for _, key in _MOVEMENT_KINDS)
 # new_entrant 命中「回归」(is_reentry) 时的强度乘数：老 SLG 短暂跌出 TopN 又回来 ≠ 真首发，
 # 新闻性远低，乘此系数压低分——既改文案「🔄 重回」又**降权今日要闻**（高名次回归仍可冒头，
 # 不硬排除）。0.4 让 #1 回归(≈4.8) 仍高于榜尾长尾、却低于真·头部空降(≈12)/高名次收入异动。
@@ -809,9 +816,9 @@ def _primary_item_count(per_combo: list[dict], version_changes, region_changes) 
     n = 0
     for c in per_combo:
         mv = c.get("movement") or {}
-        for k in ("new_entrants", "surges", "drops", "revenue_spikes", "climbs"):
+        for k in _MOVEMENT_KEYS:
             n += len(mv.get(k) or [])
-        for key in ("market", "publisher", "free_market", "free_publisher"):
+        for key in _NEWCOMER_SOURCE_KEYS:
             for x in ((c.get(key) or {}).get("newcomers") or []):
                 if x.get("is_reentry"):
                     continue
@@ -932,8 +939,8 @@ def _digest_tldr(per_combo: list[dict], version_changes, region_changes,
     for c in per_combo:
         mv = c.get("movement") or {}
         move += sum(len(mv.get(k) or []) for k in
-                    ("new_entrants", "surges", "drops", "revenue_spikes", "climbs"))
-        for key in ("market", "publisher", "free_market", "free_publisher"):
+                    _MOVEMENT_KEYS)
+        for key in _NEWCOMER_SOURCE_KEYS:
             for x in ((c.get(key) or {}).get("newcomers") or []):
                 if not x.get("is_reentry") and x.get("app_id"):
                     new_apps.add(x["app_id"])
@@ -994,53 +1001,36 @@ def _collect_scored_items(per_combo: list[dict],
     return out
 
 
-def _highlight_line(item: dict, own_matches: Optional[dict] = None) -> str:
-    """「今日要闻」的一行紧凑摘要：跨 combo 置顶，故**内联市场标签**、去富化子行/链接，
-    一眼看清「哪个市场、什么游戏、什么事」。命中对标则行尾打「⚔️《X》同赛道」。"""
-    e = item["e"]
-    mkt = _market_label(item["country"], item["platform"])
-    kind = item["kind"]
-    own = _own_tag(e.get("app_id"), own_matches)
-    if kind == "new_entrant":
-        ico, verb = ("🔄", "重回") if e.get("is_reentry") else ("🆕", "空降")
-        return f"{mkt} {ico} **{_md_name(e['name'])}** {verb} #{e['cur_rank']}{_sg_label(e)}{own}"
-    if kind == "surge":
-        return f"{mkt} 📈 **{_md_name(e['name'])}** #{e['prev_rank']} → #{e['cur_rank']}{own}"
-    if kind == "climb":
-        return f"{mkt} ↗️ **{_md_name(e['name'])}** 连涨 #{e['start_rank']} → #{e['cur_rank']}（{e['span_days']}天）{own}"
-    if kind == "drop":
-        to = "榜外" if e.get("cur_rank") is None else f"#{e['cur_rank']}"
-        phrase = movement.drop_phrase(e.get("prev_rank"), e.get("cur_rank"))
-        return f"{mkt} 📉 **{_md_name(e['name'])}** {phrase}（#{e['prev_rank']} → {to}）{own}"
-    if kind == "revenue_spike":
-        rk = f"#{e['cur_rank']} · " if e.get("cur_rank") else ""
-        return f"{mkt} 💰 **{_md_name(e['name'])}** {rk}收入 {e['pct']:+.0f}%{own}"
-    # 三类新品（market / publisher / free）：厂商新品用 entity_name，其余用 name
-    nm = e.get("name") or e.get("entity_name") or "—"
-    rk = f" #{e['rank']}" if e.get("rank") else ""
-    return f"{mkt} ✨ **{_md_name(nm)}**{rk}{_sg_label(e)}{own}"
+def build_highlight_index(per_combo: list[dict], topn: int,
+                          own_matches: Optional[dict] = None) -> str:
+    """「今日重点」一行索引：按重要度指出**该先看哪个市场**，但不复述具体事件。
 
+    取代原先逐条列 Top N 事件的【📌 今日要闻】段。那段把正文里已有的事件原样再讲一遍，
+    已有的两道去重（排除正文首位 combo、事件数 ≤ TOPN 不渲染）都挡不住：2026-07-19 领导卡
+    实测 5 条要闻在正文中**全部重复**——首位 combo 是 US、要闻上浮的全是 JP 的，而 JP 段
+    正文完整渲染。改一行索引后与 TL;DR 正交（那边按**事件类型**汇总，这边按**市场**汇总），
+    零内容重复，仍保留「一眼知道今天该往哪看」的导航价值。
 
-def build_highlight_lines(per_combo: list[dict], topn: int,
-                          own_matches: Optional[dict] = None) -> list[str]:
-    """跨 combo「今日要闻」Top N（重要度置顶）。topn<=0 或（排除置顶 combo 后）事件数
-    ≤ topn → 返回 []（小卡本身已短，置顶会和正文重复，没必要）。own_matches 既参与打分
-    （对标竞品上浮）又用于渲染 ⚔️ 标签。
-
-    **去重**：排除「正文首位 combo」（_combo_sort_key 最高，通常核心 US/iOS）的事件——
-    它本就排在正文最前，再抽进今日要闻就是同事件列两遍（领导反馈的重复）。无损：单/少
-    combo 日今日要闻自然消失；多 combo 日今日要闻只上浮「排在后面、可能被折叠的次要市场
-    大事件」，正文首位 combo 的事件不再重复。"""
+    **按实际有事件的市场数**判断是否渲染：只剩一个市场时这行是废话（正文就那一段，无从
+    导航），空 combo 也不该把它凑成「多市场」。某市场命中「同赛道」则打 ⚔️ 提威胁面。
+    """
     if topn <= 0:
-        return []
-    scored = _collect_scored_items(per_combo, own_matches)
-    if per_combo:
-        top = max(per_combo, key=_combo_sort_key)
-        tc = (top.get("country"), top.get("platform"))
-        scored = [(s, it) for s, it in scored if (it["country"], it["platform"]) != tc]
-    if len(scored) <= topn:
-        return []
-    return [_highlight_line(item, own_matches) for _, item in scored[:topn]]
+        return ""
+    agg: dict[tuple, dict] = {}
+    for score, it in _collect_scored_items(per_combo, own_matches):
+        key = (it["country"], it["platform"])
+        a = agg.setdefault(key, {"n": 0, "top": 0.0, "own": False})
+        a["n"] += 1
+        a["top"] = max(a["top"], score)
+        if own_matches and it["e"].get("app_id") in own_matches:
+            a["own"] = True
+    if len(agg) <= 1:
+        return ""
+    ordered = sorted(agg.items(), key=lambda kv: kv[1]["top"], reverse=True)[:topn]
+    parts = [f"{_market_label(c, p)} {a['n']} 项{' ⚔️' if a['own'] else ''}"
+             for (c, p), a in ordered]
+    # 市场之间用 ｜ 而非 ·：市场标签内部本就含 ·（「日本 · iOS」），同符号套同符号会糊掉层次。
+    return "📌 重点：" + " ｜ ".join(parts)
 
 
 def _combo_sort_key(c: dict) -> tuple[float, float]:
@@ -1052,7 +1042,7 @@ def _combo_sort_key(c: dict) -> tuple[float, float]:
     for kind, key in _MOVEMENT_KINDS:
         for e in mv.get(key) or []:
             best = max(best, _event_score(kind, e))
-    for key in ("market", "publisher", "free_market", "free_publisher"):
+    for key in _NEWCOMER_SOURCE_KEYS:
         for e in (c.get(key) or {}).get("newcomers") or []:
             if e.get("is_reentry"):
                 continue
@@ -1298,10 +1288,10 @@ def build_daily_digest(per_combo: list[dict], today: str,
     tldr = _digest_tldr(per_combo, version_changes, region_changes, videos_shown,
                         None if is_leader else lead_items,
                         own_match_count=own_shown)
-    # 「今日要闻」跨 combo 置顶：全卡最高重要度的事件抽出来放最前，保证核心市场大事件
-    # 不被次市场长尾折叠挤掉、领导一眼抓重点（事件数 ≤ TOPN 时不渲染，避免与正文重复）。
-    hi_lines = build_highlight_lines(per_combo, settings.DIGEST_HIGHLIGHTS_TOPN, own_matches)
-    hi_section = ["【📌 今日要闻】\n\n" + "\n\n".join(hi_lines)] if hi_lines else []
+    # 「今日重点」一行索引：按市场指出该先看哪儿（见 build_highlight_index）。与上面按
+    # 事件类型汇总的 TL;DR 正交，两行都不复述正文内容。
+    hi_index = build_highlight_index(per_combo, settings.DIGEST_HIGHLIGHTS_TOPN, own_matches)
+    hi_section = [f"> {hi_index}"] if hi_index else []
     body = [head] + ([f"> {tldr}"] if tldr else []) + hi_section + sections
     # 按钮按全局重要度排序取头部新品（不再按 combo 地理顺序各取头条挤名额）。
     btns = _ranked_newcomer_buttons(per_combo)
@@ -1328,7 +1318,7 @@ def build_data_not_ready_card(today: str) -> tuple[str, str]:
     """数据未就位兜底卡（maintainer 卡全空 + 核心 US/iOS 今日无快照）：同步可能失败 / 配额烧穿，
     主动提醒维护者别把『静默』当『平静』。配套 logger.error→Sentry（见 send_daily_digest）。"""
     text = (f"### ⚠️ SLG 每日情报 · {today} · 数据未就位\n\n"
-            "> 核心市场（🇺🇸 美国 · iOS）今日榜单**未同步**，日报暂缺。\n\n"
+            "> 核心市场（美国 · iOS）今日榜单**未同步**，日报暂缺。\n\n"
             "> 可能是 Sensor Tower 配额烧穿或同步任务失败——请查同步日志 / 配额水位。")
     return "每日情报 · 数据未就位", text
 
@@ -1534,7 +1524,7 @@ async def send_daily_digest() -> bool:
     # 打分收集、关键词挑选都按行读 is_slg，这里一处回写全局生效。零外呼。
     try:
         from app.services.newcomer_log import slg_app_ids_known
-        _layers = ("market", "publisher", "free_market", "free_publisher")
+        _layers = _NEWCOMER_SOURCE_KEYS
         _all_ids: set = set()
         _slg_ids: set = set()
         for c in per_combo:
@@ -1612,7 +1602,7 @@ async def send_daily_digest() -> bool:
             rows = []
             for key in ("market", "free_market", "free_publisher"):
                 rows += list((c.get(key) or {}).get("newcomers") or [])
-            for k in ("new_entrants", "surges", "drops", "revenue_spikes", "climbs"):
+            for k in _MOVEMENT_KEYS:
                 rows += mv.get(k) or []
             for n in rows:
                 aid = n.get("app_id")
@@ -1626,7 +1616,7 @@ async def send_daily_digest() -> bool:
     # 今日新品（非回归）app_id → 名：视频段 + 一句话摘要段共用。
     newcomer_apps: dict[str, str] = {}
     for c in per_combo:
-        for key in ("market", "publisher", "free_market", "free_publisher"):
+        for key in _NEWCOMER_SOURCE_KEYS:
             for n in ((c.get(key) or {}).get("newcomers") or []):
                 aid, nm = n.get("app_id"), n.get("name")
                 if aid and nm and not n.get("is_reentry"):
@@ -1703,12 +1693,12 @@ async def send_daily_digest() -> bool:
         # 候选竞品（新品三段 + movement）app_id 全集。
         cand_ids: set[str] = set()
         for c in per_combo:
-            for key in ("market", "publisher", "free_market", "free_publisher"):
+            for key in _NEWCOMER_SOURCE_KEYS:
                 for n in ((c.get(key) or {}).get("newcomers") or []):
                     if n.get("app_id"):
                         cand_ids.add(n["app_id"])
             mv = c.get("movement") or {}
-            for k in ("new_entrants", "surges", "drops", "revenue_spikes", "climbs"):
+            for k in _MOVEMENT_KEYS:
                 for e in (mv.get(k) or []):
                     if e.get("app_id"):
                         cand_ids.add(e["app_id"])
@@ -1718,12 +1708,12 @@ async def send_daily_digest() -> bool:
         # C 可读性：把中文子品类富化进各 entry，供 _sg_label 渲染（外文名一眼辨品类）。
         # 与 own_matches 解耦——无 own_products 也要显示子品类标签。
         for c in per_combo:
-            for key in ("market", "publisher", "free_market", "free_publisher"):
+            for key in _NEWCOMER_SOURCE_KEYS:
                 for n in ((c.get(key) or {}).get("newcomers") or []):
                     if (aid := n.get("app_id")) and subgenre_by_app.get(aid):
                         n["subgenre_cn"] = subgenre_by_app[aid]
             mv = c.get("movement") or {}
-            for k in ("new_entrants", "surges", "drops", "revenue_spikes", "climbs"):
+            for k in _MOVEMENT_KEYS:
                 for e in (mv.get(k) or []):
                     if (aid := e.get("app_id")) and subgenre_by_app.get(aid):
                         e["subgenre_cn"] = subgenre_by_app[aid]
@@ -1731,7 +1721,7 @@ async def send_daily_digest() -> bool:
         own_products = await _load_own_products()
         if own_products:
             for c in per_combo:
-                for key in ("market", "publisher", "free_market", "free_publisher"):
+                for key in _NEWCOMER_SOURCE_KEYS:
                     for n in ((c.get(key) or {}).get("newcomers") or []):
                         aid = n.get("app_id")
                         if aid and not n.get("is_reentry") and aid not in own_matches:
@@ -1739,7 +1729,7 @@ async def send_daily_digest() -> bool:
                             if (m := _match_own_product(text, subgenre_by_app.get(aid), own_products)):
                                 own_matches[aid] = m[0]
                 mv = c.get("movement") or {}
-                for k in ("new_entrants", "surges", "drops", "revenue_spikes", "climbs"):
+                for k in _MOVEMENT_KEYS:
                     for e in (mv.get(k) or []):
                         aid = e.get("app_id")
                         if aid and aid not in own_matches:
