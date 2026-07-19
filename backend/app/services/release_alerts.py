@@ -33,10 +33,10 @@ from app.services import dingtalk, movement
 
 logger = logging.getLogger(__name__)
 
-_COMBO_FLAG = {"us": "🇺🇸", "jp": "🇯🇵", "kr": "🇰🇷", "cn": "🇨🇳", "tw": "🇹🇼", "de": "🇩🇪", "gb": "🇬🇧"}
 # 市场 / 平台中文标签（领导面向，去英文）。漏配的国家码回退大写原文。
 _COUNTRY_CN = {"us": "美国", "jp": "日本", "kr": "韩国", "cn": "中国", "tw": "台湾",
-               "de": "德国", "gb": "英国", "au": "澳洲", "ca": "加拿大", "fr": "法国"}
+               "de": "德国", "gb": "英国", "au": "澳洲", "ca": "加拿大", "fr": "法国",
+               "ru": "俄罗斯"}
 _PLATFORM_CN = {"ios": "iOS", "android": "安卓"}
 # 应用商店品类英文 → 中文（SLG 监控里绝大多数是策略子类，其余常见类一并覆盖）。
 _GENRE_CN = {
@@ -88,12 +88,14 @@ def _md_name(s, maxlen: Optional[int] = 32) -> str:
 
 
 def _market_label(country: str, platform: str) -> str:
-    """市场+平台标识（不带榜种），如「🇺🇸 美国 · 安卓」。下载榜/跨段复用，避免
-    `_combo_label` 的「畅销榜」后缀与下载榜语境打架。"""
-    flag = _COMBO_FLAG.get(country.lower(), "")
+    """市场+平台标识（不带榜种），如「美国 · 安卓」。下载榜/跨段复用，避免
+    `_combo_label` 的「畅销榜」后缀与下载榜语境打架。
+
+    **不带国旗 emoji**（2026-07-19 用户裁定）：钉钉群消息里国旗是纯装饰，市场中文名本身
+    已经说清是哪个市场，去掉后每张卡少十来个 emoji。未收录的国家仍回落大写国码。"""
     cc = _COUNTRY_CN.get(country.lower(), country.upper())
     pf = _PLATFORM_CN.get(platform.lower(), platform)
-    return f"{flag} {cc} · {pf}".strip()
+    return f"{cc} · {pf}"
 
 
 def _combo_label(country: str, platform: str) -> str:
@@ -1316,7 +1318,7 @@ def build_data_not_ready_card(today: str) -> tuple[str, str]:
     """数据未就位兜底卡（maintainer 卡全空 + 核心 US/iOS 今日无快照）：同步可能失败 / 配额烧穿，
     主动提醒维护者别把『静默』当『平静』。配套 logger.error→Sentry（见 send_daily_digest）。"""
     text = (f"### ⚠️ SLG 每日情报 · {today} · 数据未就位\n\n"
-            "> 核心市场（🇺🇸 美国 · iOS）今日榜单**未同步**，日报暂缺。\n\n"
+            "> 核心市场（美国 · iOS）今日榜单**未同步**，日报暂缺。\n\n"
             "> 可能是 Sensor Tower 配额烧穿或同步任务失败——请查同步日志 / 配额水位。")
     return "每日情报 · 数据未就位", text
 

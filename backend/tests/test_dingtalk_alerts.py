@@ -101,7 +101,7 @@ def test_daily_digest_human_readable_no_machine_codes():
     # 富化子行（引用块）：日收入压缩 K/M、下载量、厂商归属（未匹配主体退回发行商名）
     assert "> 日收入 $123K · 下载 5K · 厂商 Mystery Studio" in text
     assert "🏢 **江娱互动** 新品 **Top Heroes 顶级英雄** #77" in text
-    assert "🇺🇸 美国 · iOS" in text and "JP" not in text  # 中文市场标签；空 combo 不出段
+    assert "美国 · iOS" in text and "JP" not in text   # 中文市场标签（无国旗）；空 combo 不出段
     # 分组小标题：异动与新品分区
     assert "【榜单异动】" in text and "【新品上架】" in text
     # 按钮改看板深链（需 DASHBOARD_BASE_URL）；本测试未配 → 无按钮，ActionCard 降级 markdown
