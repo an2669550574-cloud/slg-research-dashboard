@@ -223,6 +223,11 @@ _PLATFORM_WEIGHT = {"ios": 1.0, "android": 0.9}
 _MOVEMENT_KINDS = (("new_entrant", "new_entrants"), ("surge", "surges"),
                    ("drop", "drops"), ("revenue_spike", "revenue_spikes"),
                    ("climb", "climbs"))
+# 只要 summary 字段名的场景（遍历 movement 各类事件）用这个，别再手写元组：**从
+# _MOVEMENT_KINDS 派生**，新增/改名事件类型时两者不可能不同步。散落硬编码正是「某处
+# 少写一类」的温床——同族的 _NEWCOMER_SOURCE_KEYS 就有「曾漏 free 两层」的前科，
+# 2026-07-19 又连着漏了三次（领导卡过滤 / 实体解析 / TL;DR 计数）。
+_MOVEMENT_KEYS = tuple(key for _, key in _MOVEMENT_KINDS)
 # new_entrant 命中「回归」(is_reentry) 时的强度乘数：老 SLG 短暂跌出 TopN 又回来 ≠ 真首发，
 # 新闻性远低，乘此系数压低分——既改文案「🔄 重回」又**降权今日要闻**（高名次回归仍可冒头，
 # 不硬排除）。0.4 让 #1 回归(≈4.8) 仍高于榜尾长尾、却低于真·头部空降(≈12)/高名次收入异动。
@@ -809,9 +814,9 @@ def _primary_item_count(per_combo: list[dict], version_changes, region_changes) 
     n = 0
     for c in per_combo:
         mv = c.get("movement") or {}
-        for k in ("new_entrants", "surges", "drops", "revenue_spikes", "climbs"):
+        for k in _MOVEMENT_KEYS:
             n += len(mv.get(k) or [])
-        for key in ("market", "publisher", "free_market", "free_publisher"):
+        for key in _NEWCOMER_SOURCE_KEYS:
             for x in ((c.get(key) or {}).get("newcomers") or []):
                 if x.get("is_reentry"):
                     continue
@@ -932,8 +937,8 @@ def _digest_tldr(per_combo: list[dict], version_changes, region_changes,
     for c in per_combo:
         mv = c.get("movement") or {}
         move += sum(len(mv.get(k) or []) for k in
-                    ("new_entrants", "surges", "drops", "revenue_spikes", "climbs"))
-        for key in ("market", "publisher", "free_market", "free_publisher"):
+                    _MOVEMENT_KEYS)
+        for key in _NEWCOMER_SOURCE_KEYS:
             for x in ((c.get(key) or {}).get("newcomers") or []):
                 if not x.get("is_reentry") and x.get("app_id"):
                     new_apps.add(x["app_id"])
@@ -1052,7 +1057,7 @@ def _combo_sort_key(c: dict) -> tuple[float, float]:
     for kind, key in _MOVEMENT_KINDS:
         for e in mv.get(key) or []:
             best = max(best, _event_score(kind, e))
-    for key in ("market", "publisher", "free_market", "free_publisher"):
+    for key in _NEWCOMER_SOURCE_KEYS:
         for e in (c.get(key) or {}).get("newcomers") or []:
             if e.get("is_reentry"):
                 continue
@@ -1534,7 +1539,7 @@ async def send_daily_digest() -> bool:
     # 打分收集、关键词挑选都按行读 is_slg，这里一处回写全局生效。零外呼。
     try:
         from app.services.newcomer_log import slg_app_ids_known
-        _layers = ("market", "publisher", "free_market", "free_publisher")
+        _layers = _NEWCOMER_SOURCE_KEYS
         _all_ids: set = set()
         _slg_ids: set = set()
         for c in per_combo:
@@ -1612,7 +1617,7 @@ async def send_daily_digest() -> bool:
             rows = []
             for key in ("market", "free_market", "free_publisher"):
                 rows += list((c.get(key) or {}).get("newcomers") or [])
-            for k in ("new_entrants", "surges", "drops", "revenue_spikes", "climbs"):
+            for k in _MOVEMENT_KEYS:
                 rows += mv.get(k) or []
             for n in rows:
                 aid = n.get("app_id")
@@ -1626,7 +1631,7 @@ async def send_daily_digest() -> bool:
     # 今日新品（非回归）app_id → 名：视频段 + 一句话摘要段共用。
     newcomer_apps: dict[str, str] = {}
     for c in per_combo:
-        for key in ("market", "publisher", "free_market", "free_publisher"):
+        for key in _NEWCOMER_SOURCE_KEYS:
             for n in ((c.get(key) or {}).get("newcomers") or []):
                 aid, nm = n.get("app_id"), n.get("name")
                 if aid and nm and not n.get("is_reentry"):
@@ -1703,12 +1708,12 @@ async def send_daily_digest() -> bool:
         # 候选竞品（新品三段 + movement）app_id 全集。
         cand_ids: set[str] = set()
         for c in per_combo:
-            for key in ("market", "publisher", "free_market", "free_publisher"):
+            for key in _NEWCOMER_SOURCE_KEYS:
                 for n in ((c.get(key) or {}).get("newcomers") or []):
                     if n.get("app_id"):
                         cand_ids.add(n["app_id"])
             mv = c.get("movement") or {}
-            for k in ("new_entrants", "surges", "drops", "revenue_spikes", "climbs"):
+            for k in _MOVEMENT_KEYS:
                 for e in (mv.get(k) or []):
                     if e.get("app_id"):
                         cand_ids.add(e["app_id"])
@@ -1718,12 +1723,12 @@ async def send_daily_digest() -> bool:
         # C 可读性：把中文子品类富化进各 entry，供 _sg_label 渲染（外文名一眼辨品类）。
         # 与 own_matches 解耦——无 own_products 也要显示子品类标签。
         for c in per_combo:
-            for key in ("market", "publisher", "free_market", "free_publisher"):
+            for key in _NEWCOMER_SOURCE_KEYS:
                 for n in ((c.get(key) or {}).get("newcomers") or []):
                     if (aid := n.get("app_id")) and subgenre_by_app.get(aid):
                         n["subgenre_cn"] = subgenre_by_app[aid]
             mv = c.get("movement") or {}
-            for k in ("new_entrants", "surges", "drops", "revenue_spikes", "climbs"):
+            for k in _MOVEMENT_KEYS:
                 for e in (mv.get(k) or []):
                     if (aid := e.get("app_id")) and subgenre_by_app.get(aid):
                         e["subgenre_cn"] = subgenre_by_app[aid]
@@ -1731,7 +1736,7 @@ async def send_daily_digest() -> bool:
         own_products = await _load_own_products()
         if own_products:
             for c in per_combo:
-                for key in ("market", "publisher", "free_market", "free_publisher"):
+                for key in _NEWCOMER_SOURCE_KEYS:
                     for n in ((c.get(key) or {}).get("newcomers") or []):
                         aid = n.get("app_id")
                         if aid and not n.get("is_reentry") and aid not in own_matches:
@@ -1739,7 +1744,7 @@ async def send_daily_digest() -> bool:
                             if (m := _match_own_product(text, subgenre_by_app.get(aid), own_products)):
                                 own_matches[aid] = m[0]
                 mv = c.get("movement") or {}
-                for k in ("new_entrants", "surges", "drops", "revenue_spikes", "climbs"):
+                for k in _MOVEMENT_KEYS:
                     for e in (mv.get(k) or []):
                         aid = e.get("app_id")
                         if aid and aid not in own_matches:

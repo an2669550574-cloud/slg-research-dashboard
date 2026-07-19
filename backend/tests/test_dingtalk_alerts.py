@@ -1759,3 +1759,39 @@ def test_meta_inner_renders_entity_chinese_only():
     assert "厂商 壳木游戏" in _meta_inner(entity="壳木游戏 Camel Games")
     assert "Camel Games" not in _meta_inner(entity="壳木游戏 Camel Games")
     assert "厂商 FunPlus" in _meta_inner(entity="FunPlus")     # 无中文名的原样保留
+
+
+# ── 键集合常量：防「某处少写一层/一类」再犯 ──────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_movement_keys_match_detector_output(monkeypatch):
+    """digest 的 _MOVEMENT_KEYS 必须与 detect_movement 实际产出的事件类一一对应。
+
+    movement 服务日后新增一类事件而 digest 这边漏同步 → 那类事件在卡上静默消失。用
+    检测器的真实产出做锚，新增类别会在这里立刻失败，而不是等某天发现卡少报了。
+    （2026-07-19 连踩三次「某处少写一层」，故把这类同步关系钉成测试。）"""
+    from app.config import settings
+    from app.services.movement import detect_movement
+    from app.services.release_alerts import _MOVEMENT_KEYS, _MOVEMENT_KINDS
+
+    # ALERT_ENABLED=False 时直接返回初始化好的 summary 骨架，不碰 DB
+    monkeypatch.setattr(settings, "COMPETITOR_ALERT_ENABLED", False)
+    summary = await detect_movement("US", "ios", "2026-07-19")
+    event_keys = {k for k, v in summary.items() if isinstance(v, list)}
+
+    assert set(_MOVEMENT_KEYS) == event_keys, (
+        f"digest 与 movement 检测器的事件类不同步：detector={sorted(event_keys)} "
+        f"digest={sorted(_MOVEMENT_KEYS)}")
+    # 派生关系：改 _MOVEMENT_KINDS 时 _MOVEMENT_KEYS 自动跟随，不会各写一份
+    assert _MOVEMENT_KEYS == tuple(key for _, key in _MOVEMENT_KINDS)
+
+
+def test_newcomer_source_keys_cover_all_four_layers():
+    """新品四层常量必须含收入榜 + 下载榜各两层。
+
+    free 两层是累犯重灾区：注释记着「曾漏 free 两层 → 下载榜新品搜了却挂不上」，
+    2026-07-19 又在领导卡过滤 / 实体解析两处各漏一次。"""
+    from app.services.release_alerts import _NEWCOMER_SOURCE_KEYS
+
+    assert set(_NEWCOMER_SOURCE_KEYS) == {
+        "market", "publisher", "free_market", "free_publisher"}
