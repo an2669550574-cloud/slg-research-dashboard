@@ -1636,3 +1636,38 @@ def test_newcomer_lines_dedupe_market_and_publisher_layers():
     assert joined.count("王国远征") == 1, "同一游戏两层各渲一遍 = 重复行"
     assert "✨" in joined.split("深榜新品")[0]   # 市场行先到先得
     assert "深榜新品" in joined                  # 主体独有深名次行保留
+
+
+# ── 领导反馈「非中文元素太多看着累」：厂商名中文优先 ──────────────────────────
+
+def test_cn_entity_keeps_only_chinese_half_of_dual_written_names():
+    """中英双写主体在卡里只显中文段；其余形态一律原样（截断认错主体比多几个西文词更糟）。
+
+    prod 113 个主体里 31 个是「中文名 西文名」建档风格，西文那半对认厂商没有增量信息。"""
+    from app.services.release_alerts import _cn_entity
+
+    # 中文开头 + 西文结尾 → 只留中文
+    assert _cn_entity("壳木游戏 Camel Games") == "壳木游戏"
+    assert _cn_entity("库卡游戏 Qookka") == "库卡游戏"
+    assert _cn_entity("万代南梦宫 Bandai Namco") == "万代南梦宫"
+    assert _cn_entity("龙创悦动 IM30") == "龙创悦动"
+    assert _cn_entity("游族 YOOZOO") == "游族"
+
+    # 其余形态原样：纯中 / 纯西 / 西文在前 / 带括号 / 数字开头
+    assert _cn_entity("莉莉丝") == "莉莉丝"
+    assert _cn_entity("FunPlus") == "FunPlus"
+    assert _cn_entity("StarUnion 星合") == "StarUnion 星合"
+    assert _cn_entity("Sea War (江锋聂)") == "Sea War (江锋聂)"
+    assert _cn_entity("新奇互娱 (爱奇艺)") == "新奇互娱 (爱奇艺)"
+    assert _cn_entity("浙江华娱网络（东风工作室）") == "浙江华娱网络（东风工作室）"
+    assert _cn_entity("37 Games") == "37 Games"      # 不以中文开头，别截成 "37"
+    assert _cn_entity(None) == ""
+
+
+def test_meta_inner_renders_entity_chinese_only():
+    """厂商名的唯一出口 _meta_inner（_meta_line 也走它）统一走中文优先。"""
+    from app.services.release_alerts import _meta_inner
+
+    assert "厂商 壳木游戏" in _meta_inner(entity="壳木游戏 Camel Games")
+    assert "Camel Games" not in _meta_inner(entity="壳木游戏 Camel Games")
+    assert "厂商 FunPlus" in _meta_inner(entity="FunPlus")     # 无中文名的原样保留

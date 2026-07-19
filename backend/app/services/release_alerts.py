@@ -100,6 +100,22 @@ def _combo_label(country: str, platform: str) -> str:
     return f"{_market_label(country, platform)} 畅销榜"
 
 
+# 「中文名 西文名」双写主体（建档风格：prod 113 个主体里 31 个长这样）在卡里只显中文段：
+# 「壳木游戏 Camel Games」→「壳木游戏」。领导反馈「非中文元素太多看着累」，而西文那半对
+# 认厂商没有增量信息。**只认「中文开头 + 空格 + 西文结尾」这一种确定形态**，其余一律原样
+# 返回——纯中（莉莉丝）、纯西（FunPlus，本就没通用中文名）、西文在前（StarUnion 星合）、
+# 带括号（Sea War (江锋聂) / 新奇互娱 (爱奇艺)）都不动。启发式截断认错主体比多几个西文词更糟。
+_CN_THEN_EN = re.compile(r"^([一-鿿][一-鿿0-9·\s]*?)\s+[A-Za-z][A-Za-z0-9.\-&' ]*$")
+
+
+def _cn_entity(name: Optional[str]) -> str:
+    """中英双写主体 → 只留中文段；其余形态原样返回（见 _CN_THEN_EN 注释）。"""
+    if not name:
+        return name or ""
+    m = _CN_THEN_EN.match(name.strip())
+    return m.group(1) if m else name
+
+
 def _meta_inner(*, genre=None, revenue=None, downloads=None, entity=None) -> str:
     """meta 子行的纯内容（无 markdown 前缀）：品类 · 日收入 · 下载 · 厂商。全空返回 ""。
     新品行用它拼独立引用段（见 _block）；movement 仍走 _meta_line 的行尾拼接。"""
@@ -111,7 +127,7 @@ def _meta_inner(*, genre=None, revenue=None, downloads=None, entity=None) -> str
     if downloads:
         parts.append(f"下载 {_fmt_num(downloads)}")
     if entity:
-        parts.append(f"厂商 {_md_name(entity)}")
+        parts.append(f"厂商 {_md_name(_cn_entity(entity))}")
     return " · ".join(parts)
 
 
@@ -622,7 +638,7 @@ def build_newcomer_lines(market: dict, publisher: dict,
             _link_line(aid or "", "publisher", articles=articles.get(aid)),
             _video_seg(videos, aid)) if s)
         lines.append(_block([
-            f"🏢 **{_md_name(n['entity_name'])}** 新品 **{_md_name(n['name'])}** {rank}{_sg_label(n)}{_own_tag(aid, own_matches)}",
+            f"🏢 **{_md_name(_cn_entity(n['entity_name']))}** 新品 **{_md_name(n['name'])}** {rank}{_sg_label(n)}{_own_tag(aid, own_matches)}",
             f"> {inner}" if inner else "",
             f"📝 {summaries.get(aid)}" if summaries.get(aid) else "",
             action,
@@ -1544,13 +1560,19 @@ async def send_daily_digest() -> bool:
         except Exception:
             logger.warning("wechat articles search failed", exc_info=True)
 
-    # 厂商主体中文归属：复用循环外已加载的 matchers，解析市场新面孔 / 异动行涉及的
-    # app_id。厂商新品行自带 entity_name，这里只补另两层（纯内存匹配，零查询/零配额）。
+    # 厂商主体中文归属：复用循环外已加载的 matchers，解析市场新面孔 / 下载榜新品 / 异动行
+    # 涉及的 app_id。厂商新品行自带 entity_name，这里补其余层（纯内存匹配，零查询/零配额）。
+    # **free 两层曾漏过**（2026-07-19 修）：下载榜新品没进这里 → 渲染时
+    # `entity_name or entities.get(aid) or publisher` 一路回退到 ST 原始英文串，于是**有中文
+    # 档案的厂商也显示英文**（莉莉丝 id=6 挂着 lilith/lilithgames 两个 alias，卡上却是
+    # "Lilith Games"）。领导反馈「非中文元素太多」，这是其中一个可直接消除的来源。
     entities_by_app: dict = {}
     try:
         for c in per_combo:
             mv = c.get("movement") or {}
-            rows = list((c.get("market") or {}).get("newcomers") or [])
+            rows = []
+            for key in ("market", "free_market", "free_publisher"):
+                rows += list((c.get(key) or {}).get("newcomers") or [])
             for k in ("new_entrants", "surges", "drops", "revenue_spikes", "climbs"):
                 rows += mv.get(k) or []
             for n in rows:
