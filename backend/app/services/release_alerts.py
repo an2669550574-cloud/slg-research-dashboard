@@ -172,6 +172,11 @@ def _link_line(app_id: str, view: str, *, country=None, platform=None,
     return line
 
 
+# 视频行的行首标记：_video_seg 是它的**唯一**产出处，TL;DR 的 🎬 计数靠数正文里它的
+# 出现次数（见 build_daily_digest）。改文案请连带这里，别让计数与正文再次脱钩。
+_VIDEO_SEG_PREFIX = "🎬 实机视频"
+
+
 def _video_seg(videos: Optional[dict], app_id: Optional[str]) -> str:
     """新品行内联的实机视频段。取代此前独立的【新品实机视频】段——那段重列同一批新品名
     （视频项全来自当日新品），领导反馈「同样的游戏说了两遍」。改为并进各新品行的动作行。
@@ -180,7 +185,7 @@ def _video_seg(videos: Optional[dict], app_id: Optional[str]) -> str:
     if not v:
         return ""
     link = f" 💻 [看第一条]({v['url']})" if v.get("url") else ""   # YouTube=外网，手机打不开
-    return f"🎬 实机视频 {v['count']} 条{link}"
+    return f"{_VIDEO_SEG_PREFIX} {v['count']} 条{link}"
 
 
 # ── 重要度打分（统一喂给 排序 / 全局封顶 / movement TopN / 按钮 / 今日要闻 五处）──
@@ -900,10 +905,12 @@ def build_radar_recent_lines(items: list[dict], cap: int,
 
 
 def _digest_tldr(per_combo: list[dict], version_changes, region_changes,
-                 video_items, lead_items, own_match_count: int = 0) -> str:
+                 video_count: int, lead_items, own_match_count: int = 0) -> str:
     """开头一句话总览（TL;DR）：让领导打开卡片先有「今天整体什么情况」的锚点，不用读完
     全卡才判断。新品按 app_id 去重跨榜/combo（市场+厂商+下载榜同一 app 只算一次）。
-    own_match_count：命中「对标我方哪款」的竞品数——正向锚点，放最前让领导先看威胁面。"""
+    own_match_count：命中「对标我方哪款」的竞品数——正向锚点，放最前让领导先看威胁面。
+    video_count：**正文实际渲染出的**视频行数（非 video_items 全量），由调用方数出来传入
+    ——视频只内联在新品/雷达行上，受众剥离与封顶都会让部分行不出现（见调用处注释）。"""
     move = 0
     new_apps: set = set()
     for c in per_combo:
@@ -925,8 +932,8 @@ def _digest_tldr(per_combo: list[dict], version_changes, region_changes,
         bits.append(f"🆙 版本 {len(version_changes)}")
     if region_changes:
         bits.append(f"🌍 新区 {len(region_changes)}")
-    if video_items:
-        bits.append(f"🎬 视频 {len(video_items)}")
+    if video_count:
+        bits.append(f"🎬 视频 {video_count}")
     if lead_items:
         bits.append(f"🔍 待建档 {len(lead_items)}")
     return " · ".join(bits)
@@ -1104,21 +1111,38 @@ def build_daily_digest(per_combo: list[dict], today: str,
     检测数据两个 audience 共用一份（send_daily_digest 渲染两遍），零额外 ST。
     """
     is_leader = audience == "leader"
-    # 领导卡口径「只看 SLG 产品」：剥离 market 层「待识别新厂」(is_slg=false——含足球/塔防/
-    # 恐怖等非 SLG 噪声 + 白名单未收录的真新厂线索)。is_slg 是厂商维度，已识别 SLG 厂的
-    # publisher 新品 + free(已 is_slg 门控) 保留。在此**一处**过滤，正文/TL;DR/今日要闻/按钮
-    # 所有出口统一从过滤后 per_combo 取，避免逐出口判漏。维护者卡(全量 + 建档线索)不过滤。
-    # 不 mutate 入参（浅拷副本：换掉 combo 的 market.newcomers，原入参不动）。
+    # 领导卡口径「只看 SLG 产品」：剥离 market / free 两层的「待识别新厂」(is_slg=false——
+    # 含足球/塔防/恐怖等非 SLG 噪声 + 白名单未收录的真新厂线索)。已识别 SLG 厂的 publisher
+    # 新品保留。在此**一处**过滤，正文/TL;DR/今日要闻/按钮所有出口统一从过滤后 per_combo
+    # 取，避免逐出口判漏。维护者卡(全量 + 建档线索)不过滤。
+    # 不 mutate 入参（浅拷副本：换掉 combo 的对应 newcomers，原入参不动）。
+    # **free 层曾漏过**（2026-07-19 修）：原注释以为「free 已 is_slg 门控」就不用在这过滤，
+    # 但那道门控在**渲染层**（build_free_newcomer_lines），不走渲染层的 TL;DR 直接读
+    # per_combo，于是把下载榜非 SLG 新品也计进领导卡「✨ 新品 N」——正文一条都不显示。
+    # 实测当日两卡新品数完全相同(均 7)即是它没生效的实证。
     # 注：【榜单异动】两卡都含——2026-06-30 应要求加回（撤 #164 的 movement=None 剥离）。
     # movement 只含已识别 SLG 老熟人的排名进退，是有效竞品动态，不再对领导卡置 None。
     if is_leader:
+        from app.services.slg_publishers import is_slg as _is_slg
+
+        def _leader_keeps(key: str, n: dict) -> bool:
+            """与**正文渲染**同口径（build_free_newcomer_lines）：free_publisher 行级
+            is_slg 优先、回退 live 厂商判定；其余看行级 is_slg。口径一分叉，TL;DR 就又会
+            报出正文没有的东西。"""
+            if key == "free_publisher":
+                return bool(n.get("is_slg")) or _is_slg(n.get("app_id"), n.get("publisher"))
+            return bool(n.get("is_slg"))
+
         _filtered = []
         for _c in per_combo:
-            _mk = _c.get("market")
-            if _mk and _mk.get("newcomers"):
-                _c = {**_c, "market": {**_mk,
-                      "newcomers": [n for n in _mk["newcomers"] if n.get("is_slg")]}}
-            _filtered.append(_c)
+            _new = dict(_c)
+            for _key in ("market", "free_market", "free_publisher"):
+                _seg = _c.get(_key)
+                if _seg and _seg.get("newcomers"):
+                    _new[_key] = {**_seg,
+                                  "newcomers": [n for n in _seg["newcomers"]
+                                                if _leader_keeps(_key, n)]}
+            _filtered.append(_new)
         per_combo = _filtered
     sections: list[str] = []
     cap = settings.DIGEST_MAX_ITEMS
@@ -1180,7 +1204,8 @@ def build_daily_digest(per_combo: list[dict], today: str,
             total += len(region_changes)
             sections.append("【竞品新区上线 · iOS】\n\n" + "\n\n".join(rlines))
     # 「新品实机视频」不再单列整段——已内联进各新品行的动作行（🎬，见 build_newcomer_lines），
-    # 免同一批新品名在【新品上架】和【实机视频】列两遍（领导反馈的重复）。TL;DR 仍计 🎬 N。
+    # 免同一批新品名在【新品上架】和【实机视频】列两遍（领导反馈的重复）。TL;DR 仍计 🎬 N，
+    # 但只计**正文真渲染出来**的那些（见下方 videos_shown）——否则领导卡会报出它看不到的视频。
     # 全局「待建档新厂线索」段（方案①）：下载榜 is_slg=false（白名单未收录）但
     # genre=Strategy 的新品，单列给**维护者**核查建档——补救白名单滞后导致的漏推。
     # **领导卡跳过整段**（建档是维护者动作、对领导是杂讯）；领导卡的「下载榜新品 · SLG」
@@ -1240,9 +1265,23 @@ def build_daily_digest(per_combo: list[dict], today: str,
         return None
     head = f"### 📡 SLG 每日情报 · {today}"
     # 领导卡 TL;DR 不计「待建档 N」（那段已剥离）。对标命中数（⚔️）两卡都计，置顶提威胁面。
-    tldr = _digest_tldr(per_combo, version_changes, region_changes, video_items,
+    # 🎬 计数取**正文实际渲染出的视频行数**（数 sections 里的 _VIDEO_SEG_PREFIX），不是
+    # video_items 全量：视频只内联在新品 / 雷达行上，领导卡剥离「待识别新厂」新品、全局封顶
+    # 截断都会让部分行不出现，用全量长度会让收卡方照 TL;DR 去卡里找 🎬 却找不到
+    # （2026-07-19 实测：两卡 TL;DR 均报「视频 4」，正文实际只有 2 条）。与「待建档 N」按
+    # 受众剥离同一口径：TL;DR 只报**本卡看得见**的东西。
+    videos_shown = sum(s.count(_VIDEO_SEG_PREFIX) for s in sections)
+    # ⚔️ 同赛道（TL;DR 置顶那项）同理只算**本卡带得出 ⚔️ 标记**的竞品：own_matches 是全局
+    # 字典，命中的竞品可能落在领导卡剥离的层、或 free 层 is_slg 门控挡掉的行上（正文压根不
+    # 渲染）——2026-07-19 实测两卡均报「同赛道 3」，正文实际只有 1 个 app 带 ⚔️，另 2 个是
+    # 下载榜 is_slg=false 噪声。复用 _collect_scored_items 的可见性口径（它已做 is_reentry
+    # 过滤 + free 层 is_slg 门控），与上面两项一致：TL;DR 只报**本卡看得见**的东西。
+    own_shown = len(set(own_matches or {})
+                    & {it["e"].get("app_id")
+                       for _, it in _collect_scored_items(per_combo, own_matches)})
+    tldr = _digest_tldr(per_combo, version_changes, region_changes, videos_shown,
                         None if is_leader else lead_items,
-                        own_match_count=len(own_matches or {}))
+                        own_match_count=own_shown)
     # 「今日要闻」跨 combo 置顶：全卡最高重要度的事件抽出来放最前，保证核心市场大事件
     # 不被次市场长尾折叠挤掉、领导一眼抓重点（事件数 ≤ TOPN 时不渲染，避免与正文重复）。
     hi_lines = build_highlight_lines(per_combo, settings.DIGEST_HIGHLIGHTS_TOPN, own_matches)
