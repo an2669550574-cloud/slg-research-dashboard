@@ -999,53 +999,36 @@ def _collect_scored_items(per_combo: list[dict],
     return out
 
 
-def _highlight_line(item: dict, own_matches: Optional[dict] = None) -> str:
-    """「今日要闻」的一行紧凑摘要：跨 combo 置顶，故**内联市场标签**、去富化子行/链接，
-    一眼看清「哪个市场、什么游戏、什么事」。命中对标则行尾打「⚔️《X》同赛道」。"""
-    e = item["e"]
-    mkt = _market_label(item["country"], item["platform"])
-    kind = item["kind"]
-    own = _own_tag(e.get("app_id"), own_matches)
-    if kind == "new_entrant":
-        ico, verb = ("🔄", "重回") if e.get("is_reentry") else ("🆕", "空降")
-        return f"{mkt} {ico} **{_md_name(e['name'])}** {verb} #{e['cur_rank']}{_sg_label(e)}{own}"
-    if kind == "surge":
-        return f"{mkt} 📈 **{_md_name(e['name'])}** #{e['prev_rank']} → #{e['cur_rank']}{own}"
-    if kind == "climb":
-        return f"{mkt} ↗️ **{_md_name(e['name'])}** 连涨 #{e['start_rank']} → #{e['cur_rank']}（{e['span_days']}天）{own}"
-    if kind == "drop":
-        to = "榜外" if e.get("cur_rank") is None else f"#{e['cur_rank']}"
-        phrase = movement.drop_phrase(e.get("prev_rank"), e.get("cur_rank"))
-        return f"{mkt} 📉 **{_md_name(e['name'])}** {phrase}（#{e['prev_rank']} → {to}）{own}"
-    if kind == "revenue_spike":
-        rk = f"#{e['cur_rank']} · " if e.get("cur_rank") else ""
-        return f"{mkt} 💰 **{_md_name(e['name'])}** {rk}收入 {e['pct']:+.0f}%{own}"
-    # 三类新品（market / publisher / free）：厂商新品用 entity_name，其余用 name
-    nm = e.get("name") or e.get("entity_name") or "—"
-    rk = f" #{e['rank']}" if e.get("rank") else ""
-    return f"{mkt} ✨ **{_md_name(nm)}**{rk}{_sg_label(e)}{own}"
+def build_highlight_index(per_combo: list[dict], topn: int,
+                          own_matches: Optional[dict] = None) -> str:
+    """「今日重点」一行索引：按重要度指出**该先看哪个市场**，但不复述具体事件。
 
+    取代原先逐条列 Top N 事件的【📌 今日要闻】段。那段把正文里已有的事件原样再讲一遍，
+    已有的两道去重（排除正文首位 combo、事件数 ≤ TOPN 不渲染）都挡不住：2026-07-19 领导卡
+    实测 5 条要闻在正文中**全部重复**——首位 combo 是 US、要闻上浮的全是 JP 的，而 JP 段
+    正文完整渲染。改一行索引后与 TL;DR 正交（那边按**事件类型**汇总，这边按**市场**汇总），
+    零内容重复，仍保留「一眼知道今天该往哪看」的导航价值。
 
-def build_highlight_lines(per_combo: list[dict], topn: int,
-                          own_matches: Optional[dict] = None) -> list[str]:
-    """跨 combo「今日要闻」Top N（重要度置顶）。topn<=0 或（排除置顶 combo 后）事件数
-    ≤ topn → 返回 []（小卡本身已短，置顶会和正文重复，没必要）。own_matches 既参与打分
-    （对标竞品上浮）又用于渲染 ⚔️ 标签。
-
-    **去重**：排除「正文首位 combo」（_combo_sort_key 最高，通常核心 US/iOS）的事件——
-    它本就排在正文最前，再抽进今日要闻就是同事件列两遍（领导反馈的重复）。无损：单/少
-    combo 日今日要闻自然消失；多 combo 日今日要闻只上浮「排在后面、可能被折叠的次要市场
-    大事件」，正文首位 combo 的事件不再重复。"""
+    **按实际有事件的市场数**判断是否渲染：只剩一个市场时这行是废话（正文就那一段，无从
+    导航），空 combo 也不该把它凑成「多市场」。某市场命中「同赛道」则打 ⚔️ 提威胁面。
+    """
     if topn <= 0:
-        return []
-    scored = _collect_scored_items(per_combo, own_matches)
-    if per_combo:
-        top = max(per_combo, key=_combo_sort_key)
-        tc = (top.get("country"), top.get("platform"))
-        scored = [(s, it) for s, it in scored if (it["country"], it["platform"]) != tc]
-    if len(scored) <= topn:
-        return []
-    return [_highlight_line(item, own_matches) for _, item in scored[:topn]]
+        return ""
+    agg: dict[tuple, dict] = {}
+    for score, it in _collect_scored_items(per_combo, own_matches):
+        key = (it["country"], it["platform"])
+        a = agg.setdefault(key, {"n": 0, "top": 0.0, "own": False})
+        a["n"] += 1
+        a["top"] = max(a["top"], score)
+        if own_matches and it["e"].get("app_id") in own_matches:
+            a["own"] = True
+    if len(agg) <= 1:
+        return ""
+    ordered = sorted(agg.items(), key=lambda kv: kv[1]["top"], reverse=True)[:topn]
+    parts = [f"{_market_label(c, p)} {a['n']} 项{' ⚔️' if a['own'] else ''}"
+             for (c, p), a in ordered]
+    # 市场之间用 ｜ 而非 ·：市场标签内部本就含 ·（「日本 · iOS」），同符号套同符号会糊掉层次。
+    return "📌 重点：" + " ｜ ".join(parts)
 
 
 def _combo_sort_key(c: dict) -> tuple[float, float]:
@@ -1303,10 +1286,10 @@ def build_daily_digest(per_combo: list[dict], today: str,
     tldr = _digest_tldr(per_combo, version_changes, region_changes, videos_shown,
                         None if is_leader else lead_items,
                         own_match_count=own_shown)
-    # 「今日要闻」跨 combo 置顶：全卡最高重要度的事件抽出来放最前，保证核心市场大事件
-    # 不被次市场长尾折叠挤掉、领导一眼抓重点（事件数 ≤ TOPN 时不渲染，避免与正文重复）。
-    hi_lines = build_highlight_lines(per_combo, settings.DIGEST_HIGHLIGHTS_TOPN, own_matches)
-    hi_section = ["【📌 今日要闻】\n\n" + "\n\n".join(hi_lines)] if hi_lines else []
+    # 「今日重点」一行索引：按市场指出该先看哪儿（见 build_highlight_index）。与上面按
+    # 事件类型汇总的 TL;DR 正交，两行都不复述正文内容。
+    hi_index = build_highlight_index(per_combo, settings.DIGEST_HIGHLIGHTS_TOPN, own_matches)
+    hi_section = [f"> {hi_index}"] if hi_index else []
     body = [head] + ([f"> {tldr}"] if tldr else []) + hi_section + sections
     # 按钮按全局重要度排序取头部新品（不再按 combo 地理顺序各取头条挤名额）。
     btns = _ranked_newcomer_buttons(per_combo)
