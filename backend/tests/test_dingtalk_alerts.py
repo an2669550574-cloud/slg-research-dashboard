@@ -999,6 +999,94 @@ def test_digest_leader_excludes_market_lead_newcomers():
     assert "✨ 新品 4" in body_m                  # 全量计数（3 market + 1 publisher）
 
 
+def test_digest_tldr_video_count_counts_only_rendered_lines():
+    """TL;DR 的 🎬 计数 = 正文**实际渲染出**的视频行数，不是 video_items 全量。
+
+    视频只内联在新品行上：领导卡剥离 is_slg=false 的「待识别新厂」新品后，挂在它们身上的
+    视频在正文里根本不出现；video_items 里还可能有当天压根没进卡的 app。用全量长度会让收
+    卡方照 TL;DR 去卡里找 🎬 却找不到——2026-07-19 prod 实测两卡 TL;DR 均报「视频 4」、
+    正文实际只有 2 条。与「待建档 N」按受众剥离同口径：TL;DR 只报本卡看得见的东西。"""
+    from app.services.release_alerts import build_daily_digest
+
+    market = {"newcomers": [
+        {"app_id": "slg1", "rank": 5, "name": "已识别SLG新品", "publisher": "P",
+         "is_slg": True, "is_reentry": False},
+        {"app_id": "td1", "rank": 8, "name": "塔防待识别新品", "publisher": "Q",
+         "is_slg": False, "is_reentry": False},
+    ]}
+    per_combo = [{"country": "US", "platform": "ios", "movement": None,
+                  "market": market, "publisher": {}}]
+    # 三条视频：两条挂在上面两个新品上，第三条挂在当天根本没进卡的 app 上。
+    videos = [{"app_id": "slg1", "count": 3, "url": "https://y/1"},
+              {"app_id": "td1", "count": 2, "url": "https://y/2"},
+              {"app_id": "ghost", "count": 9, "url": "https://y/3"}]
+
+    _, body_m, _ = build_daily_digest(per_combo, "2026-07-19", video_items=videos)
+    # 维护者卡：两个新品行都渲染 → 只计这 2 条；ghost 不进卡、不进计数。
+    assert body_m.count("🎬 实机视频") == 2
+    assert "🎬 视频 2" in body_m
+
+    _, body_l, _ = build_daily_digest(per_combo, "2026-07-19", video_items=videos,
+                                      audience="leader")
+    # 领导卡：td1 被 is_slg 剥离，它的视频行随之消失 → TL;DR 必须跟着降到 1。
+    assert "塔防待识别新品" not in body_l
+    assert body_l.count("🎬 实机视频") == 1
+    assert "🎬 视频 1" in body_l
+
+
+def test_digest_leader_tldr_excludes_non_slg_free_newcomers():
+    """领导卡「✨ 新品 N」不得把下载榜 is_slg=false 的新品算进去。
+
+    free 层的 is_slg 门控原本只在渲染层（build_free_newcomer_lines「只推 is_slg=True」），
+    而 TL;DR 不走渲染层、直接数 per_combo 的四层 newcomers ——于是领导卡会报出正文一条都
+    不显示的新品数（2026-07-19 实测两卡新品数完全相同）。领导卡过滤须覆盖 market + free
+    两层，正文与 TL;DR 才对得上。"""
+    from app.services.release_alerts import build_daily_digest
+
+    free_market = {"newcomers": [
+        {"app_id": "fslg", "rank": 3, "name": "下载榜SLG新品", "publisher": "P",
+         "is_slg": True, "is_reentry": False},
+        {"app_id": "fnoise", "rank": 6, "name": "下载榜休闲噪声", "publisher": "Q",
+         "is_slg": False, "is_reentry": False},
+    ]}
+    per_combo = [{"country": "US", "platform": "ios", "movement": None,
+                  "market": {}, "publisher": {}, "free_market": free_market}]
+
+    _, body_m, _ = build_daily_digest(per_combo, "2026-07-19")
+    assert "✨ 新品 2" in body_m                 # 维护者卡全量计数不变
+
+    _, body_l, _ = build_daily_digest(per_combo, "2026-07-19", audience="leader")
+    assert "下载榜SLG新品" in body_l
+    assert "下载榜休闲噪声" not in body_l         # 正文本就不渲染
+    assert "✨ 新品 1" in body_l                 # TL;DR 也必须跟着只算 1
+
+
+def test_digest_tldr_own_match_count_counts_only_visible_hits():
+    """⚔️ 同赛道计数（TL;DR 置顶项）只算正文真带得出 ⚔️ 标记的竞品。
+
+    own_matches 是全局字典，命中的竞品可能落在 free 层 is_slg=false 的行上——那些行正文压根
+    不渲染（build_free_newcomer_lines 只推 is_slg=True），TL;DR 却照报，领导会以为有 N 个竞品
+    打进我方赛道、翻遍卡只找得到 1 个（2026-07-19 prod 实测报 3、正文实际 1）。"""
+    from app.services.release_alerts import build_daily_digest
+
+    publisher = {"newcomers": [
+        {"app_id": "hit1", "entity_name": "星合", "name": "命中同赛道新品",
+         "rank": 12, "is_reentry": False},
+    ]}
+    free_market = {"newcomers": [
+        {"app_id": "hit2", "rank": 6, "name": "下载榜噪声也命中", "publisher": "Q",
+         "is_slg": False, "is_reentry": False},
+    ]}
+    per_combo = [{"country": "US", "platform": "ios", "movement": None,
+                  "market": {}, "publisher": publisher, "free_market": free_market}]
+    own = {"hit1": "我方产品A", "hit2": "我方产品A"}
+
+    _, body, _ = build_daily_digest(per_combo, "2026-07-19", own_matches=own)
+    assert "命中同赛道新品" in body
+    assert "下载榜噪声也命中" not in body        # free 层 is_slg=false 正文不渲染
+    assert "⚔️ 同赛道 1" in body                 # 故只算看得见的那 1 个，不是 len(own)=2
+
+
 # ── 回归门控 P1.4：movement 渲染 + 重要度降权 ────────────────────────────────
 
 def test_movement_reentry_renders_distinct_verb():
