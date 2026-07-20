@@ -658,6 +658,18 @@ export const en: Translations = {
     scopePlusOthers: (n: number) => `+${n} more`,
     pendingChanges: (n: number) => `${n} unsaved`,
     scopeBatchSaved: (d: number, o: number) => `Updated scope for ${d} dimension(s) / ${o} option(s)`,
+    // Template copy (P1)
+    copyTemplateLabel: 'Copy tag system from another product',
+    copyTemplatePlaceholder: 'Pick a template source…',
+    copyTemplateWithOptions: 'Include options',
+    copyTemplateBtn: 'Copy',
+    copyTemplateConfirm: (src: string, tgt: string) =>
+      `Clone "${src}"'s scoped dimensions to "${tgt}" (independent copies — later edits won't affect the source). Continue?`,
+    copyTemplateDone: (d: number, o: number, s: number) =>
+      `Copied ${d} dimension(s) / ${o} option(s)${s ? ` (${s} same-name dimension(s) already visible, skipped)` : ''}`,
+    copyTemplateAllSkipped: (s: number) => `Nothing new to copy: ${s} same-name dimension(s) already visible to the target`,
+    copyTemplateFailed: 'Copy failed',
+    copyTemplateHint: 'Clone semantics: edits on the new product never touch the source; generic dimensions already apply to every product and are not copied',
     productViewEmpty: 'Pick a product above first',
     noProducts: 'No products available',
   },

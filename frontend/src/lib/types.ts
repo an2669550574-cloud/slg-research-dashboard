@@ -690,6 +690,17 @@ export interface TagScopeBatchOut {
   updated_dimensions: number
   updated_options: number
 }
+// 模板复制（P1）：以源产品专属维度为模板克隆给目标产品
+export interface TagTemplateCopyInput {
+  source_app_id: string
+  target_app_id: string
+  include_options?: boolean
+}
+export interface TagTemplateCopyOut {
+  copied: string[]
+  skipped: string[]
+  options_copied: number
+}
 
 // ─── 结构化打标签（P2）──────────────────────────────────────────────────
 
