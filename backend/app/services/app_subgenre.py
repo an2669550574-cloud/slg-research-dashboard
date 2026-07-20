@@ -83,7 +83,11 @@ async def classify_pending_app_subgenres(cap: int | None = None) -> int:
         # 子品类 + 游戏名中译同一次 LLM 调用产出（零增量成本）——存量竞品（movement 老熟人）
         # 不走新品中文化管道，这里是它们拿到中文名的唯一路径。name_cn 可为 None（LLM 按口径
         # 拿不准就留空），渲染层回落原名。
-        sg, name_cn = await classify_subgenre(name, genre, desc)
+        sg = await classify_subgenre(name, genre, desc)
+        # 中文名以商店一手数据为准（同 newcomer_i18n）：LLM 对无中文区发行的游戏会自造译名，
+        # 且可能撞上另一款知名游戏的别名。商店查不到 → 留 None，渲染层保留原名。零 ST。
+        from app.services.store_cn_name import fetch_store_cn_name
+        name_cn = await fetch_store_cn_name(app_id)
         async with AsyncSessionLocal() as db:
             # 竞态防御：并发/重跑时 app_id 唯一约束兜底，先查后插。
             exists = (await db.execute(
