@@ -949,6 +949,7 @@ async def list_itunes_artist_suggestions(
 async def list_download_leads(
     days: int = Query(90, ge=1, le=365),
     limit: int = Query(20, ge=1, le=100),
+    include_non_slg: bool = Query(False, description="连同被玩法门控滤掉的条目一起返回（UI 折叠展示用）"),
     db: AsyncSession = Depends(get_db),
 ):
     """下载榜早期信号：下载榜(免费榜) is_slg=false（白名单未收录）但 genre=Strategy 的新品，
@@ -958,6 +959,20 @@ async def list_download_leads(
 
     数据源 = market_newcomer_log（chart_type=free），免费富化 genre/summary_cn，零 ST。
     扣除缺口忽略名单（与 /gaps 同口径）；跨市场同 app 收敛留最新检出；按检出时间倒序。
+
+    **玩法门控**（2026-07-20）：`genre` 是 Play 商店的分类字段、开发者可随便挂，实测把找茬
+    解谜 / 塔防肉鸽 / 竞技卡牌都挂成了 Strategy——单靠它筛，9 条线索里 6 条是噪声，维护者
+    每次得人工核一遍。而更准的信号早就在同一张表（`subgenre_cn`，LLM 读商店描述判的玩法
+    机制），只是这里一直没消费。现按 LLM 子品类滤掉「明确非 SLG」的行。
+
+    用**黑名单** `AUDIT_CLEAR_NON_SLG`（塔防/放置/卡牌/休闲/城建/其他）而非白名单
+    `SLG_CORE_SUBGENRES`，与探测层（雷达/RSS，#242）刻意相反——两者语义不同：
+    - 探测层是**推送门控**，推错了直达领导群，宁可不推 → 白名单，未分类也滤。
+    - 这里是**维护者 backlog**，漏了就永远错过建档 → 黑名单，只滤有明确反证的。
+      `subgenre_cn IS NULL`（尚未分类）和「三消合成」都**保留**：后者是 P&S 类
+      「三消 + SLG」混合品的落点，滤掉会漏杀真 SLG（见 AUDIT_CLEAR_NON_SLG 定义）。
+
+    被滤条目不静默丢弃：`include_non_slg=true` 连同返回并标 `non_slg=True`，UI 折叠可查。
 
     必须先于 GET /{entity_id} 声明，否则字面量 'download-leads' 会被 int 路径捕获 → 422。
     """
@@ -974,6 +989,16 @@ async def list_download_leads(
     ignore_app_ids = {ig.value for ig in ignores if ig.kind == "app_id"}
     ignore_pub_keys = {ig.value for ig in ignores if ig.kind == "publisher"}
 
+    # 玩法子品类：market_newcomer_log 行级优先 + app_subgenre 全局回填（与 digest 的
+    # _subgenres_for_apps 同口径）——存量竞品只在 app_subgenre 有分类，漏查会让它们
+    # 全落进「未分类」而绕过门控。零 ST。
+    from app.models.newcomer import AppSubgenre
+    from app.services.newcomer_i18n import AUDIT_CLEAR_NON_SLG
+    subgenre_fallback = dict((await db.execute(
+        select(AppSubgenre.app_id, AppSubgenre.subgenre_cn)
+        .where(AppSubgenre.subgenre_cn.is_not(None))
+    )).all())
+
     # 读时归属（与新品监测页同口径）：存档 is_slg 是检出时点快照，app 先在 free 榜检出
     # （is_slg=false 落库）后才建档/pin app_id 的，存档不回写仍是 false，会永远赖在「待建档」
     # 里。活算归属把已归属已建档主体的 app（app_id pin 或 publisher 命中 alias）排除掉。
@@ -987,9 +1012,10 @@ async def list_download_leads(
         rep = by_app.get(r.app_id)
         if rep is None:
             by_app[r.app_id] = {"row": r, "genre": r.genre, "summary_cn": r.summary_cn,
-                                "store_url": r.store_url, "icon_url": r.icon_url}
+                                "store_url": r.store_url, "icon_url": r.icon_url,
+                                "subgenre_cn": r.subgenre_cn}
         else:
-            for k in ("genre", "summary_cn", "store_url", "icon_url"):
+            for k in ("genre", "summary_cn", "store_url", "icon_url", "subgenre_cn"):
                 if not rep[k] and getattr(r, k):
                     rep[k] = getattr(r, k)
 
@@ -1006,11 +1032,17 @@ async def list_download_leads(
             continue
         if resolve_entity(r.app_id, r.publisher, matchers):
             continue  # 已归属已建档主体（新品监测页显示「已归属 X」）→ 不再是待建档线索
+        # 玩法门控：LLM 判为明确非 SLG → 默认不返回（见 docstring 的黑名单 vs 白名单取舍）。
+        subgenre = rep["subgenre_cn"] or subgenre_fallback.get(r.app_id)
+        is_non_slg = subgenre in AUDIT_CLEAR_NON_SLG
+        if is_non_slg and not include_non_slg:
+            continue
         out.append(PublisherDownloadLeadOut(
             app_id=r.app_id, name=r.name, publisher=r.publisher, genre=rep["genre"],
             summary_cn=rep["summary_cn"], icon_url=rep["icon_url"], store_url=rep["store_url"],
             country=r.country, platform=r.platform, rank=r.rank,
             first_detected_at=r.first_detected_at.isoformat() if r.first_detected_at else None,
+            subgenre_cn=subgenre, non_slg=is_non_slg,
         ))
         if len(out) >= limit:
             break

@@ -964,6 +964,10 @@ export interface PublisherDownloadLead {
   platform: string
   rank: number | null
   first_detected_at: string | null
+  /** LLM 玩法子品类；null = 尚未分类（未分类不参与门控、照常展示） */
+  subgenre_cn: string | null
+  /** true = 被玩法门控判为「明确非 SLG」，仅 include_non_slg 请求里出现 */
+  non_slg: boolean
 }
 
 /** 缺口忽略名单条目：人工标过「非 SLG 主体」的发行商 / app，不再进缺口提示。 */
