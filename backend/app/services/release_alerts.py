@@ -1019,21 +1019,27 @@ def build_highlight_index(per_combo: list[dict], topn: int,
 
     **按实际有事件的市场数**判断是否渲染：只剩一个市场时这行是废话（正文就那一段，无从
     导航），空 combo 也不该把它凑成「多市场」。某市场命中「同赛道」则打 ⚔️ 提威胁面。
+
+    计数**按 app_id 去重**：`_collect_scored_items` 是打分用的、同一个 app 落在多层就产
+    多条（新品常同时在 free_market 和 free_publisher），而正文各段都按 app_id 去重渲染。
+    不去重就会报出正文没有的条数——2026-07-20 领导卡实测「韩国·安卓 2 项」而正文只有
+    Battle Kiss 一条。语义上也该去重：索引行答的是「这个市场有几个游戏值得看」，同一款
+    游戏的两条记录不是两件事。（TL;DR 的「✨新品」早就用 set 去重，这里当初漏了。）
     """
     if topn <= 0:
         return ""
     agg: dict[tuple, dict] = {}
     for score, it in _collect_scored_items(per_combo, own_matches):
         key = (it["country"], it["platform"])
-        a = agg.setdefault(key, {"n": 0, "top": 0.0, "own": False})
-        a["n"] += 1
+        a = agg.setdefault(key, {"apps": set(), "top": 0.0, "own": False})
+        a["apps"].add(it["e"].get("app_id") or id(it["e"]))   # 缺 app_id 的老结构按对象计
         a["top"] = max(a["top"], score)
         if own_matches and it["e"].get("app_id") in own_matches:
             a["own"] = True
     if len(agg) <= 1:
         return ""
     ordered = sorted(agg.items(), key=lambda kv: kv[1]["top"], reverse=True)[:topn]
-    parts = [f"{_market_label(c, p)} {a['n']} 项{' ⚔️' if a['own'] else ''}"
+    parts = [f"{_market_label(c, p)} {len(a['apps'])} 项{' ⚔️' if a['own'] else ''}"
              for (c, p), a in ordered]
     # 市场之间用 ｜ 而非 ·：市场标签内部本就含 ·（「日本 · iOS」），同符号套同符号会糊掉层次。
     return "📌 重点：" + " ｜ ".join(parts)
