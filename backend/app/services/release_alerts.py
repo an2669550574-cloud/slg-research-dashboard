@@ -311,9 +311,15 @@ def _match_own_product(text: str, subgenre: Optional[str],
 
 def _own_tag(app_id, own_matches: Optional[dict]) -> str:
     """竞品行尾「同赛道」标签：命中 → ` ⚔️《X》同赛道`，否则 ``。⚔️ 刻意避开已表
-    「看板」的 🎯。产品名过 _md_name 防破版。"""
+    「看板」的 🎯。产品名过 _md_name 防破版。
+
+    maxlen 用 _md_name 默认值（32）、**不再收窄到 20**（2026-07-19 领导卡实证）：原先
+    自家产品名比同一行的竞品名截得更狠，5 款产品里 2 款被砍——`Blade War:Three Kingdoms`
+    (24) 显示成「Blade War:Three Kin…」。这个标签的**全部价值就是告诉领导「我方哪款被
+    打」**，名字截了就等于没说；何况自家产品名来自内部 own_products 表（可控小集合），
+    没有比 ST 原始竞品名更需要防破版的理由。"""
     name = (own_matches or {}).get(app_id)
-    return f" ⚔️《{_md_name(name, maxlen=20)}》同赛道" if name else ""
+    return f" ⚔️《{_md_name(name)}》同赛道" if name else ""
 
 
 def _sg_label(entry: dict) -> str:
