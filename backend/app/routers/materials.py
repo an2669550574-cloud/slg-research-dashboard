@@ -1,12 +1,14 @@
 import json
+import shutil
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, text
+from sqlalchemy import select, func, text, delete
 from typing import Optional, Literal
 from urllib.parse import quote
 from app.database import get_db, utcnow_naive
 from app.models.material import Material, CreativeAdaptation
+from app.models.tag import MaterialTagValue
 from app.schemas import (
     MaterialCreate, MaterialUpdate, MaterialOut, MaterialTagCount,
     MaterialTagValueInput, MaterialTagValuesPut,
@@ -508,13 +510,23 @@ async def adapt_unified_directions(
 
 @router.delete("/{material_id}")
 async def delete_material(material_id: int, db: AsyncSession = Depends(get_db)):
+    """删除素材记录 + 关联痕迹。
+
+    结构化标签行必须**显式**删：DDL 里的 ondelete=CASCADE 在 SQLite 下是死字
+    （#232 刻意保持 foreign_keys=OFF），不显式删就留孤儿——prod material_id=5
+    与本地验证均实锤过。AI 解析帧图目录同理（不在 DB，文件系统残留）。
+    与删一级维度的应用层显式级联同一哲学（tags.py 删除端点）。
+    """
     result = await db.execute(select(Material).where(Material.id == material_id))
     m = result.scalar_one_or_none()
     if m:
         file_path = m.file_path if m.source == "upload" else None
+        await db.execute(delete(MaterialTagValue).where(MaterialTagValue.material_id == material_id))
         await db.delete(m)
         await db.commit()
         media.delete_file(file_path)  # DB 删除成功后再删档，避免删档后回滚成孤儿
+        # 解析帧图目录：best-effort，删不掉不阻断
+        shutil.rmtree(video_analyze.analysis_dir(material_id), ignore_errors=True)
     return {"message": "deleted"}
 
 
