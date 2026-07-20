@@ -345,6 +345,18 @@ export const zh = {
     batchResult: (ok: number, fail: number) =>
       fail ? `${ok} 个成功，${fail} 个失败` : `${ok} 个全部成功`,
     addBatch: (n: number) => `上传 ${n} 个文件`,
+    // 文件名反解打标（P0）：标题→结构化标签，composeNameFromTags 的逆方向
+    parseToggle: '按文件名解析标签',
+    parseHint: '按「日期_值_值+值」规范逐文件预填；解析出的维度优先，下方编辑器只补缺',
+    parseUnmatchedLabel: '未识别',
+    parseAllMatched: (n: number) => `${n} 个文件全部解析归位`,
+    parseSomeUnmatched: (n: number) => `${n} 个文件含未识别片段（红色标出，可上传后单条修正）`,
+    parseRequiredMissing: (file: string, names: string, total: number) =>
+      `「${file}」缺必填标签：${names}${total > 1 ? `（共 ${total} 个文件有此问题）` : ''}`,
+    fillByTitleBatch: '批量按标题补标签',
+    fillByTitleNone: '本页没有可解析补标的素材（需已归属游戏且尚无结构化标签）',
+    fillByTitleConfirm: (n: number) => `将为 ${n} 个未打标素材按标题解析写入结构化标签（不覆盖已有标签），继续？`,
+    fillByTitleResult: (n: number) => `已为 ${n} 个素材补齐标签`,
     // 标签筛选栏
     tagFilterLabel: '标签',
     tagFilterAll: '全部',

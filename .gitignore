@@ -17,6 +17,9 @@ backend/.env
 
 # Database
 backend/*.db
+# #232 WAL 模式的 sidecar 文件（本地起 dev server 即产生）
+*.db-shm
+*.db-wal
 backend/*.sqlite
 *.db
 *.sqlite3
