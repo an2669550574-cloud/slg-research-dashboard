@@ -101,6 +101,12 @@ export function parseTagsFromName(
   const dimOrder = dims.map(d => d.id)
   const dimById = new Map(dims.map(d => [d.id, d]))
 
+  // 词表命中必须落在 token 边界（后一字符是 '+' 或段尾）：防止未知 token 被
+  // 已知值劈开——'木桶王'（新桶型）若无此检查会拆成 桶子:木桶 + 未识别'王'，
+  // 静默产出错误标签；有检查则整个 '木桶王' 进 unmatched，人眼一目了然。
+  const matchAt = (seg: string, i: number) =>
+    values.find(v => seg.startsWith(v, i) && (i + v.length === seg.length || seg[i + v.length] === '+'))
+
   const assignOption = (token: string, segmentDims: Set<number>) => {
     const candidates = vocab.get(token)!
     // 消歧：本段已命中的维度 > 尚未填的维度（按维度序）> 首个候选
@@ -128,7 +134,7 @@ export function parseTagsFromName(
     while (i < seg.length) {
       if (seg[i] === '+') {
         // 可能是连接符，也可能是 '+1门' 这类值的首字符——先试选项，试不中再当连接符
-        const hit = values.find(v => seg.startsWith(v, i))
+        const hit = matchAt(seg, i)
         if (hit) {
           if (!assignOption(hit, segmentDims)) unmatched.push(hit)
           i += hit.length
@@ -145,7 +151,7 @@ export function parseTagsFromName(
         i += dm[0].length
         continue
       }
-      const hit = values.find(v => seg.startsWith(v, i))
+      const hit = matchAt(seg, i)
       if (hit) {
         if (!assignOption(hit, segmentDims)) unmatched.push(hit)
         i += hit.length

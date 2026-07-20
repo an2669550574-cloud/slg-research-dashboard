@@ -141,6 +141,13 @@ describe('parseTagsFromName', () => {
     expect(state[4].optionIds).toEqual([32, 33])
   })
 
+  it('token 边界：未知 token 含已知值前缀（木桶王）整体进 unmatched，不劈开产出错标签', () => {
+    const buckets = dim(3, '桶子', 'text', [opt(21, '木桶', 3), opt(22, '蓝桶', 3)])
+    const { state, unmatched } = parseTagsFromName('木桶王_蓝桶', [buckets])
+    expect(unmatched).toEqual(['木桶王'])
+    expect(state[3].optionIds).toEqual([22])
+  })
+
   it('词表不认识的 token 进 unmatched，不影响其余归位', () => {
     const { state, unmatched } = parseTagsFromName('2026-01-01_新桶子_3路', PARSE_DIMS)
     expect(unmatched).toEqual(['新桶子'])
