@@ -1794,3 +1794,25 @@ def test_newcomer_source_keys_cover_all_four_layers():
 
     assert set(_NEWCOMER_SOURCE_KEYS) == {
         "market", "publisher", "free_market", "free_publisher"}
+
+
+def test_own_tag_does_not_truncate_real_product_names():
+    """「同赛道」标签里的自家产品名不得被截断——那正是这个标签要传达的信息。
+
+    原先 _own_tag 用 maxlen=20，比同一行竞品名的默认 32 还严，5 款自家产品里 2 款被砍
+    （2026-07-19 领导卡实证：Blade War:Three Kingdoms → 「Blade War:Three Kin…」）。
+    夹具用 prod own_products 的真实名字，最长 24 字符。"""
+    from app.services.release_alerts import _own_tag
+
+    for name in ("Blade War:Three Kingdoms",      # 24，原被截
+                 "My War: Frozen Survival",       # 23，原被截
+                 "The War for Survival",          # 20，原卡在边界
+                 "无尽火线", "Tavern Master"):
+        tag = _own_tag("app1", {"app1": name})
+        assert f"《{name}》" in tag, f"{name!r} 被截断或走样：{tag!r}"
+        assert "…" not in tag
+    # 未命中 → 空标签
+    assert _own_tag("other", {"app1": "Blade War:Three Kingdoms"}) == ""
+    # 防破版仍在：超长名字（> _md_name 默认 32）照常截，只是门槛不再比竞品苛刻
+    long_tag = _own_tag("app1", {"app1": "X" * 40})
+    assert "…" in long_tag
