@@ -1841,3 +1841,48 @@ def test_own_tag_does_not_truncate_real_product_names():
     # 防破版仍在：超长名字（> _md_name 默认 32）照常截，只是门槛不再比竞品苛刻
     long_tag = _own_tag("app1", {"app1": "X" * 40})
     assert "…" in long_tag
+
+
+def test_primary_item_count_gates_free_layers_like_the_leader_card():
+    """平淡日计数与领导卡渲染共用同一判据——free 两层的非 SLG 噪声不得撑高计数。
+
+    原实现只门控 market 层，free 两层照计，而领导卡渲染会剥掉它们：2026-07-20 实测计数 5
+    里有 2 项领导根本看不见。计数一旦虚高就跨过平淡日阈值，「最需要兜底的日子恰恰不兜底」
+    （#241 在 market 层修过同型问题，free 层漏了）。"""
+    from app.services.release_alerts import _primary_item_count, _leader_keeps_newcomer
+
+    combo = {
+        "country": "KR", "platform": "android", "movement": None, "publisher": {},
+        "market": {"newcomers": [
+            {"app_id": "m_noise", "name": "待识别新厂", "is_slg": False, "is_reentry": False}]},
+        "free_market": {"newcomers": [
+            {"app_id": "f_slg", "name": "真SLG", "is_slg": True, "is_reentry": False},
+            {"app_id": "f_noise", "name": "下载榜噪声", "is_slg": False, "is_reentry": False}]},
+    }
+    # 只有 f_slg 会真上领导卡 → 计数 1（不是 3）
+    assert _primary_item_count([combo], [], []) == 1
+    # 判据本身：market/free 层看 is_slg，publisher 层不剥
+    assert _leader_keeps_newcomer("free_market", {"is_slg": True}) is True
+    assert _leader_keeps_newcomer("free_market", {"is_slg": False}) is False
+    assert _leader_keeps_newcomer("market", {"is_slg": False}) is False
+    assert _leader_keeps_newcomer("publisher", {"is_slg": False}) is True
+
+
+def test_wechat_alert_fires_when_status_lies_but_probe_fails():
+    """自报登录正常、真实业务调用却失败 → 仍要按「已失效」告警。
+
+    /api/admin/status 只回本地记录的 expireTime、不向微信侧核实。2026-07-20 实测它自报
+    「正常、还有 3.8 天到期」，而文章接口同时回「登录已过期」——只信自报会让告警永不触发，
+    行业动态段静默空了 6 天没人知道。"""
+    import time
+    from app.services.release_alerts import build_wechat_expiry_alert
+    from app.services.wechat_articles import WechatLoginStatus
+
+    healthy = WechatLoginStatus(logged_in=True, is_expired=False,
+                                expire_time_ms=int((time.time() + 4 * 86400) * 1000))
+    # 只看自报状态：健康 → 不告警（既有行为）
+    assert build_wechat_expiry_alert(healthy, time.time(), 1) is None
+    # 探活确认已死 → 即便自报健康也要告警
+    built = build_wechat_expiry_alert(healthy, time.time(), 1, probe_dead=True)
+    assert built is not None
+    assert "失效" in built[1]
