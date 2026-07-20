@@ -989,15 +989,12 @@ async def list_download_leads(
     ignore_app_ids = {ig.value for ig in ignores if ig.kind == "app_id"}
     ignore_pub_keys = {ig.value for ig in ignores if ig.kind == "publisher"}
 
-    # 玩法子品类：market_newcomer_log 行级优先 + app_subgenre 全局回填（与 digest 的
-    # _subgenres_for_apps 同口径）——存量竞品只在 app_subgenre 有分类，漏查会让它们
-    # 全落进「未分类」而绕过门控。零 ST。
-    from app.models.newcomer import AppSubgenre
+    # 玩法子品类：走 resolve_subgenres 的三级优先（人工 > 榜行 LLM > 存量回补 LLM），
+    # 与 digest 的「同赛道」匹配同一口径——两处各写一份就会出现「这边判 SLG、那边判非
+    # SLG」。人工判定置顶尤其重要：LLM 会在同 app 新检出时重判并覆盖榜行。零 ST。
     from app.services.newcomer_i18n import AUDIT_CLEAR_NON_SLG
-    subgenre_fallback = dict((await db.execute(
-        select(AppSubgenre.app_id, AppSubgenre.subgenre_cn)
-        .where(AppSubgenre.subgenre_cn.is_not(None))
-    )).all())
+    from app.services.app_subgenre import resolve_subgenres
+    subgenre_by_app = await resolve_subgenres({r.app_id for r in rows})
 
     # 读时归属（与新品监测页同口径）：存档 is_slg 是检出时点快照，app 先在 free 榜检出
     # （is_slg=false 落库）后才建档/pin app_id 的，存档不回写仍是 false，会永远赖在「待建档」
@@ -1033,7 +1030,7 @@ async def list_download_leads(
         if resolve_entity(r.app_id, r.publisher, matchers):
             continue  # 已归属已建档主体（新品监测页显示「已归属 X」）→ 不再是待建档线索
         # 玩法门控：LLM 判为明确非 SLG → 默认不返回（见 docstring 的黑名单 vs 白名单取舍）。
-        subgenre = rep["subgenre_cn"] or subgenre_fallback.get(r.app_id)
+        subgenre = subgenre_by_app.get(r.app_id) or rep["subgenre_cn"]
         is_non_slg = subgenre in AUDIT_CLEAR_NON_SLG
         if is_non_slg and not include_non_slg:
             continue

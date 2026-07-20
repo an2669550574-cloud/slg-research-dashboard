@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -436,6 +436,33 @@ class SubgenrePulseOut(BaseModel):
     days: int
     total: int                          # 当前窗口有子品类分类的新品总数（去重）
     buckets: list[SubgenrePulseBucket]  # 按当前窗口新品数降序
+
+
+class SubgenreOverrideIn(BaseModel):
+    """人工判定的玩法子品类。subgenre_cn=None = 人工判定「无合适子品类」（同样锁定）。"""
+    app_id: str
+    subgenre_cn: Optional[str] = None
+    name: Optional[str] = None
+
+
+@router.post("/subgenre-override", status_code=204)
+async def override_subgenre(data: SubgenreOverrideIn):
+    """人工覆盖某 app 的玩法子品类，之后 LLM 不再改动它。
+
+    深度溯源得出的结论此前撑不过下一次同 app 新检出：LLM 分类挂在 market_newcomer_log 的
+    **行**上，而新检出行（summary_cn 为空）会触发重译、并按 app_id 回写该 app 全部行——
+    2026-07-20 实测把前一天人工改好的 Battle Kiss 子品类冲掉了。本端点把判定写进
+    app_subgenre 并标 source='manual'，那是 LLM 管道碰不到的地方（回补 drain 把「已在本表
+    的 app」整体排除在候选外），读取侧 resolve_subgenres 又给它最高优先级。
+
+    只收受控词表内的值（同 LLM 写回口径），防止拍脑袋造词让精确匹配永远命不中。
+    **必须先于 GET /{...} 动态段声明**（本路由的字面量段惯例，见 /subgenre-pulse）。
+    """
+    from app.services.app_subgenre import set_manual_subgenre
+    from app.services.newcomer_i18n import SUBGENRE_VOCAB
+    if data.subgenre_cn is not None and data.subgenre_cn not in SUBGENRE_VOCAB:
+        raise HTTPException(422, f"子品类须为受控词表内的值：{'/'.join(SUBGENRE_VOCAB)}")
+    await set_manual_subgenre(data.app_id, data.subgenre_cn, name=data.name)
 
 
 @router.get("/subgenre-pulse", response_model=SubgenrePulseOut)

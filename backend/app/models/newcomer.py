@@ -117,7 +117,9 @@ class AppSubgenre(Base):
     # 游戏名中译，与 subgenre_cn 同一次 LLM 调用产出（存量竞品=movement 老熟人这条路径）。
     # NULL = 未译 / LLM 未给出；渲染层回落原名。见 market_newcomer_log.name_cn。
     name_cn: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
-    source: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # game / newcomer_log
+    # game / newcomer_log = LLM 判定的来源路径；**manual = 人工判定**，读取时最高优先级
+    # 且回补 drain 不会重分类（见 app_subgenre.set_manual_subgenre / resolve_subgenres）。
+    source: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     classified_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 
 
