@@ -278,7 +278,9 @@ class NewcomerHistoryItem(BaseModel):
     description_cn: Optional[str] = None
     # 玩法子品类（LLM 受控词表，按核心机制非题材：数字门SLG/基地建设SLG/塔防/…）。
     # 已花 LLM 算出并驱动 ⚔️ 同赛道/赛道脉搏，这里透出给卡片/抽屉直读。未分类为 NULL。
+    # 人工锁定（#255 subgenre-override）时按人工层覆盖（可为 NULL=判定无合适子品类）。
     subgenre_cn: Optional[str] = None
+    subgenre_locked: bool = False  # True=人工锁定，LLM 不再改；前端据此显 🔒 与入口态
     screenshots: list[str] = []
     # 版本号 / 版本更新日 / 支持语言（iTunes 富化有，GP 留 NULL）。切片 3.1。
     version: Optional[str] = None
@@ -388,6 +390,10 @@ async def get_newcomer_history(
         .group_by(GameRanking.country, GameRanking.platform)
     )).all()
     as_of_by_combo = {f"{c}/{p}": d for c, p, d in freshness_rows if d}
+    # 人工锁定层叠加（#255 的展示半）：行级 subgenre_cn 是 LLM 值，人工 override 写在
+    # app_subgenre、行不回写——不叠加的话锁定后页面仍显 LLM 旧值、入口看起来「没生效」。
+    from app.services.app_subgenre import get_manual_overrides
+    manual_sg = await get_manual_overrides({r.app_id for r in rows})
     return NewcomerHistoryOut(
         today=utcnow_naive().strftime("%Y-%m-%d"),
         items=[
@@ -396,9 +402,11 @@ async def get_newcomer_history(
                     "id", "country", "platform", "app_id", "chart_type", "as_of", "name",
                     "publisher", "icon_url", "rank", "revenue", "first_detected_at",
                     "store_url", "release_date", "genre", "rating", "rating_count",
-                    "price", "description", "summary_cn", "description_cn", "subgenre_cn",
+                    "price", "description", "summary_cn", "description_cn",
                     "version", "current_version_date",
                     "languages", "enrich_source", "is_reentry")},
+                subgenre_cn=(manual_sg[r.app_id] if r.app_id in manual_sg else r.subgenre_cn),
+                subgenre_locked=r.app_id in manual_sg,
                 # 落库后建档的主体读时也算 SLG——is_slg 按 app_id 聚合活算（存档值只作冗余）
                 is_slg=r.app_id in slg_app_ids,
                 is_tracked=r.app_id in tracked_ids,

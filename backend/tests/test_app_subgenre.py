@@ -241,3 +241,28 @@ async def test_resolve_subgenres_three_level_priority(app):
     assert got["only_backfill"] == "基地建设SLG"
     assert got["manual_wins"] == "数字门SLG"
     assert "missing" not in got
+
+
+@pytest.mark.asyncio
+async def test_history_overlays_manual_lock(client):
+    """/history 展示层叠加人工锁定（#255 展示半）：行级是 LLM 值、override 写 app_subgenre
+    不回写行——不叠加的话锁定后页面仍显 LLM 旧值。锁定行 subgenre_locked=True。"""
+    from app.services.app_subgenre import set_manual_subgenre
+
+    await _add_log("battlekiss", "Battle Kiss", SLG_PUB, subgenre_cn="基地建设SLG")
+    await _add_log("untouched", "隔壁不动行", SLG_PUB, subgenre_cn="国战SLG")
+    await set_manual_subgenre("battlekiss", "数字门SLG", name="Battle Kiss")
+
+    items = (await client.get("/api/newcomers/history", params={"days": 365, "chart": "all"})
+             ).json()["items"]
+    bk = next(i for i in items if i["app_id"] == "battlekiss")
+    other = next(i for i in items if i["app_id"] == "untouched")
+    assert bk["subgenre_cn"] == "数字门SLG" and bk["subgenre_locked"] is True
+    assert other["subgenre_cn"] == "国战SLG" and other["subgenre_locked"] is False
+
+    # 人工判定「无合适子品类」（None）同样锁定且展示为空
+    await set_manual_subgenre("battlekiss", None)
+    items = (await client.get("/api/newcomers/history", params={"days": 365, "chart": "all"})
+             ).json()["items"]
+    bk = next(i for i in items if i["app_id"] == "battlekiss")
+    assert bk["subgenre_cn"] is None and bk["subgenre_locked"] is True

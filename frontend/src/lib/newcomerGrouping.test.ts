@@ -12,7 +12,7 @@ function row(p: Partial<NewcomerHistoryItem> & { app_id: string }): NewcomerHist
     first_detected_at: '2026-06-01T00:00:00Z',
     store_url: null, release_date: null, genre: null, rating: null,
     rating_count: null, price: null, description: null,
-    summary_cn: null, description_cn: null, subgenre_cn: null, screenshots: [],
+    summary_cn: null, description_cn: null, subgenre_cn: null, subgenre_locked: false, screenshots: [],
     version: null, current_version_date: null, languages: null,
     enrich_source: null, entity_id: null, entity_name: null, is_reentry: false,
     is_tracked: false,
@@ -124,5 +124,21 @@ describe('groupByApp subgenre coalesce', () => {
     const byId = new Map(groups.map(g => [g.app_id, g]))
     expect(byId.get('222')!.subgenre).toBe('基地建设SLG')
     expect(byId.get('333')!.subgenre).toBeNull()
+  })
+})
+
+describe('subgenreLocked coalesce', () => {
+  it('任一行人工锁定 → 组级 locked；锁定为 null 时组级 subgenre 也为 null', () => {
+    const groups = groupByApp([
+      row({ app_id: 'bk', country: 'US', subgenre_cn: null, subgenre_locked: true }),
+      row({ app_id: 'bk', country: 'JP', subgenre_cn: null, subgenre_locked: true }),
+      row({ app_id: 'other', subgenre_cn: '国战SLG' }),
+    ])
+    const bk = groups.find(g => g.app_id === 'bk')!
+    const other = groups.find(g => g.app_id === 'other')!
+    expect(bk.subgenreLocked).toBe(true)
+    expect(bk.subgenre).toBeNull()
+    expect(other.subgenreLocked).toBe(false)
+    expect(other.subgenre).toBe('国战SLG')
   })
 })

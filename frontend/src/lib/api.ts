@@ -221,6 +221,10 @@ export const newcomersApi = {
   /** 赛道脉搏：近 N 天各玩法子品类新品分布 + 环比。 */
   subgenrePulse: (days = 30): Promise<SubgenrePulseOut> =>
     api.get('/newcomers/subgenre-pulse', { params: { days } }).then(r => r.data),
+  /** 人工锁定玩法子品类（#255）：写 app_subgenre source='manual'，LLM 不再覆盖。
+   *  subgenre_cn 传 null = 人工判定「无合适子品类」（同样锁定）。 */
+  subgenreOverride: (data: { app_id: string; subgenre_cn: string | null; name?: string }): Promise<void> =>
+    api.post('/newcomers/subgenre-override', data).then(r => r.data),
   /** 手动触发全 combo 检出落库（首次回填用）。 */
   historySync: (): Promise<{ message: string; detected: number; recorded: number; enriched: number }> =>
     api.post('/newcomers/history/sync').then(r => r.data),

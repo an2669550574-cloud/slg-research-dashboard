@@ -186,6 +186,15 @@ export const zh = {
     // 新面孔检出历史（v2：落库 + 免费源富化）
     historyHint: (d: number, n: number | 'all') => `检出历史 · 近 ${d} 天 · ${n === 'all' ? '全部名次（含主体深榜 Top200）' : `名次 ≤ ${n}`} · 免费源富化（iTunes/GP）零配额 · 同款跨市场合并`,
     subgenreHint: '玩法子品类（LLM 按核心机制分类，驱动 ⚔️ 同赛道匹配与赛道脉搏）',
+    // 人工锁定入口（#255 前端半）
+    subgenreEditHint: '玩法子品类（LLM 分类）。点击人工改判并锁定，之后 LLM 不再覆盖',
+    subgenreLockedHint: '已人工锁定，LLM 不再覆盖。点击可改判',
+    subgenrePick: '选玩法子品类…',
+    subgenreNone: '无合适子品类（锁定）',
+    subgenreNoneShort: '无子品类',
+    subgenreAdd: '分类',
+    subgenreLockDone: '已锁定人工判定（LLM 不再覆盖）',
+    subgenreLockFailed: '锁定失败',
     detectedAt: (d: string) => `检出 ${d}`,
     // 跨市场合并：同款全球游戏（同 app_id）在多市场各检出一次，收成一张卡 + 多市场徽标
     marketsBadge: (n: number) => `${n} 个市场`,

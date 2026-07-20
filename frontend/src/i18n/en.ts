@@ -164,6 +164,15 @@ export const en: Translations = {
     // Newcomer detection history (v2: persisted + free-source enrichment)
     historyHint: (d: number, n: number | 'all') => `Detection history · last ${d} days · ${n === 'all' ? 'all ranks (incl. publisher deep-chart Top 200)' : `rank ≤ ${n}`} · free enrichment (iTunes/GP), zero quota · same game merged across markets`,
     subgenreHint: 'Gameplay subgenre (LLM-classified by core mechanic; drives ⚔️ same-lane match & subgenre pulse)',
+    // Manual lock entry (#255 frontend half)
+    subgenreEditHint: 'Gameplay subgenre (LLM). Click to override manually and lock it against future LLM runs',
+    subgenreLockedHint: 'Manually locked, the LLM will not overwrite it. Click to change',
+    subgenrePick: 'Pick a subgenre…',
+    subgenreNone: 'No suitable subgenre (lock)',
+    subgenreNoneShort: 'no subgenre',
+    subgenreAdd: 'classify',
+    subgenreLockDone: 'Manual verdict locked (LLM will not overwrite)',
+    subgenreLockFailed: 'Lock failed',
     detectedAt: (d: string) => `detected ${d}`,
     // Cross-market merge: same global game (same app_id) detected once per market, collapsed to one card + multi-market badges
     marketsBadge: (n: number) => `${n} markets`,

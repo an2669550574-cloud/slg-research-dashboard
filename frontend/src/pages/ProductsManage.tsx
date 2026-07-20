@@ -8,12 +8,12 @@ import { PageHeader } from '../components/PageHeader'
 import { QueryError } from '../components/QueryError'
 import { ProductMaterials } from '../components/ProductMaterials'
 import type { OwnProduct } from '../lib/types'
+// 玩法子品类受控词表：抽到 lib/subgenres.ts（新品页锁定入口共用，防三处复制漂移）。
+import { SUBGENRE_OPTIONS } from '../lib/subgenres'
 
 type FormState = { name: string; brief: string; match_keywords: string; match_subgenre: string; is_default: boolean }
 const EMPTY_FORM: FormState = { name: '', brief: '', match_keywords: '', match_subgenre: '', is_default: false }
 type Mode = { kind: 'closed' } | { kind: 'create' } | { kind: 'edit'; id: number }
-// 玩法子品类受控词表（与后端 newcomer_i18n.SUBGENRE_VOCAB 同步）：digest 按机制精确匹配同赛道竞品。
-const SUBGENRE_OPTIONS = ['数字门SLG', '基地建设SLG', '国战SLG', '塔防', '三消合成', '城建模拟', '放置养成', '卡牌RPG', '休闲益智', '其他']
 
 export default function ProductsManage() {
   const t = useT()
