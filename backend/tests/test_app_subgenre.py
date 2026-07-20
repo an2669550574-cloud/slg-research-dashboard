@@ -75,26 +75,22 @@ async def test_classify_subgenre_valid_invalid_nodesc_nokey(app, monkeypatch):
     monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
     monkeypatch.setattr(settings, "TAISHI_API_KEY", "k")
 
-    # 返回 (subgenre, name_cn)：词表内值 → 写入；中文名同一次调用产出
+    # 词表内值 → 写入（**中文名不在这里产出**，改由 store_cn_name 查商店）
     monkeypatch.setattr(ni.llm_gateway, "get_client",
-                        lambda: _Client('{"subgenre": "数字门SLG", "name_cn": "末日先锋"}', []))
-    assert await ni.classify_subgenre("Last War", "Games", "跑酷穿门滚雪球") == ("数字门SLG", "末日先锋")
-    # 非词表值 → subgenre=None（name_cn 不受牵连，各判各的）
+                        lambda: _Client('{"subgenre": "数字门SLG"}', []))
+    assert await ni.classify_subgenre("Last War", "Games", "跑酷穿门滚雪球") == "数字门SLG"
+    # 非词表值 → None
     monkeypatch.setattr(ni.llm_gateway, "get_client",
-                        lambda: _Client('{"subgenre": "我编的子品类", "name_cn": "怪游戏"}', []))
-    assert await ni.classify_subgenre("Weird", "Games", "有描述") == (None, "怪游戏")
-    # LLM 按口径拿不准 → name_cn 空串 → None（渲染层回落原名）
-    monkeypatch.setattr(ni.llm_gateway, "get_client",
-                        lambda: _Client('{"subgenre": "塔防", "name_cn": ""}', []))
-    assert await ni.classify_subgenre("Unknown Game", "Games", "有描述") == ("塔防", None)
-    # 无描述 → (None, None)（不构造 client、不瞎猜）
+                        lambda: _Client('{"subgenre": "我编的子品类"}', []))
+    assert await ni.classify_subgenre("Weird", "Games", "有描述") is None
+    # 无描述 → None（不构造 client、不瞎猜）
     calls: list = []
     monkeypatch.setattr(ni.llm_gateway, "get_client", lambda: _Client('{"subgenre": "塔防"}', calls))
-    assert await ni.classify_subgenre("无描述", "Games", None) == (None, None)
+    assert await ni.classify_subgenre("无描述", "Games", None) is None
     assert calls == []
-    # 无 key → (None, None)
+    # 无 key → None
     monkeypatch.setattr(settings, "TAISHI_API_KEY", None)
-    assert await ni.classify_subgenre("x", "Games", "desc") == (None, None)
+    assert await ni.classify_subgenre("x", "Games", "desc") is None
 
 
 @pytest.mark.asyncio
@@ -172,28 +168,22 @@ async def test_subgenres_for_apps_log_priority_then_fallback(app):
     assert got == {"l1": "国战SLG", "veteran": "基地建设SLG"}
 
 
-def test_clean_name_cn_rejects_non_translations():
-    """游戏名中译的安全线：宁可 None（回落原名）也不写一个查不到的名字。
+def test_store_cn_name_requires_actual_chinese_title():
+    """中文名只认商店里**真的本地化过**的标题——「中文区有上架」不等于「标题是中文」。
 
-    领导拿着自造译名去搜、去跟人对话，比看英文原名更糟——所以 LLM 拿不准回空串时、
-    或干脆把原名回给我们时，都当作没译。"""
-    from app.services.newcomer_i18n import _clean_name_cn
+    2026-07-20 实测：Tribal Wars(InnoGames) 在台港 App Store 有上架，但标题栏就是英文
+    `Tribal Wars`。LLM 当时把它译成《部落战争》——那是 Clash of Clans 的知名民间别名，
+    领导拿去搜会搜到另一款游戏，比看英文原名更糟。含汉字判据正是拦这一类的。
+    """
+    from app.services.store_cn_name import has_cjk
 
-    # 正常译名
-    assert _clean_name_cn({"name_cn": "末日喧嚣"}, "Puzzles & Survival") == "末日喧嚣"
-    # 书名号剥掉（渲染层自己加）
-    assert _clean_name_cn({"name_cn": "《寒霜启示录》"}, "Whiteout Survival") == "寒霜启示录"
-    # 拿不准 → 空串 → None
-    assert _clean_name_cn({"name_cn": ""}, "Some Game") is None
-    assert _clean_name_cn({"name_cn": "   "}, "Some Game") is None
-    # 不含汉字 = LLM 把原名回给了我们 → None（否则会渲染成「《X》X」）
-    assert _clean_name_cn({"name_cn": "Puzzles & Survival"}, "Puzzles & Survival") is None
-    assert _clean_name_cn({"name_cn": "Age of Origins"}, "Age of Origins") is None
-    # 与原名相同（本就是中文名）→ None，无信息量
-    assert _clean_name_cn({"name_cn": "三国志战略版"}, "三国志战略版") is None
-    # 字段缺失 / parsed 为 None
-    assert _clean_name_cn({}, "X") is None
-    assert _clean_name_cn(None, "X") is None
+    assert has_cjk("火器文明") is True            # App Store 国服官方名
+    assert has_cjk("境界守望者") is True           # App Store 台/港官方名
+    assert has_cjk("Million Lords：世界征服") is True   # 中英混排也算本地化过
+    assert has_cjk("Tribal Wars") is False       # 台港有上架但标题未本地化 → 保留原名
+    assert has_cjk("Guns of Glory") is False
+    assert has_cjk("") is False
+    assert has_cjk(None) is False
 
 
 @pytest.mark.asyncio
