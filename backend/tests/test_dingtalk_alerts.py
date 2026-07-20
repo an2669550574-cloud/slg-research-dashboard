@@ -661,6 +661,31 @@ def test_digest_own_match_boosts_highlight_ranking():
     assert boosted.index("rival") < boosted.index("plain")
 
 
+def test_highlight_index_counts_apps_not_rows():
+    """索引行计数按 app_id 去重——同一款游戏落在多层不算两件事。
+
+    新品常同时出现在 free_market 和 free_publisher 两层，_collect_scored_items 是打分用的、
+    每层各产一条，而正文各段按 app_id 去重渲染。不去重索引行就会报出正文没有的条数：
+    2026-07-20 领导卡实测「韩国·安卓 2 项」而正文只有 Battle Kiss 一条。"""
+    from app.services.release_alerts import build_highlight_index
+
+    dup = {"app_id": "dup1", "name": "跨两层的同一款", "rank": 42, "is_slg": True, "is_reentry": False}
+    per_combo = [
+        {"country": "KR", "platform": "android", "movement": None, "market": {}, "publisher": {},
+         # 同一个 app_id 同时在 free 两层（真实形状）
+         "free_market": {"newcomers": [dict(dup)]},
+         "free_publisher": {"newcomers": [dict(dup)]}},
+        {"country": "KR", "platform": "ios", "movement": {
+            "new_entrants": [{"app_id": "kr_ios1", "name": "韩服异动", "prev_rank": 20, "cur_rank": 13}],
+            "surges": [], "drops": [], "revenue_spikes": [], "climbs": []},
+         "market": {}, "publisher": {}},
+    ]
+    line = build_highlight_index(per_combo, 5)
+    assert "安卓 1 项" in line, f"同 app 跨两层应算 1 项，实际：{line}"
+    assert "2 项" not in line
+    assert "iOS 1 项" in line
+
+
 def test_digest_highlight_index_skipped_for_single_market():
     """单市场日 → 不渲染重点索引：只有一个市场无从「导航」，那行纯属多余。"""
     from app.services import release_alerts as ra
