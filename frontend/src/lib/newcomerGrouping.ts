@@ -20,6 +20,8 @@ export interface GroupedNewcomer {
   anyFree: boolean
   /** 玩法子品类：跨行 coalesce 取首个非空（按 app 翻译产出，可能只落在部分行）。 */
   subgenre: string | null
+  /** 人工锁定（app 级，后端已按 app 叠加，任一行 true 即 true）。 */
+  subgenreLocked: boolean
 }
 
 /** 把扁平的逐市场检出按 app_id 收成卡片。保留首次出现顺序（服务端已按
@@ -47,6 +49,7 @@ export function groupByApp(items: NewcomerHistoryItem[]): GroupedNewcomer[] {
       anyReentry: rows.some(r => r.is_reentry === true),
       anyFree: rows.some(r => r.chart_type === 'free'),
       subgenre: rows.map(r => r.subgenre_cn).find(v => !!v) ?? null,
+      subgenreLocked: rows.some(r => r.subgenre_locked),
     }
   })
 }

@@ -6,7 +6,7 @@ import { newcomersApi, publishersApi, gamesApi } from '../lib/api'
 import { formatRevenue, formatNumber } from '../lib/utils'
 import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
-import { Download as DownloadIcon, Sparkles, Info, FilePlus2, Globe2, Building2, Store, RefreshCw, Star, X, ExternalLink, Repeat, Clock, Ban, ChevronDown, ChevronRight, Youtube, TrendingUp, TrendingDown, Minus, CircleOff, Radar, Activity } from 'lucide-react'
+import { Download as DownloadIcon, Sparkles, Info, FilePlus2, Globe2, Building2, Store, RefreshCw, Star, X, ExternalLink, Repeat, Clock, Ban, ChevronDown, ChevronRight, Youtube, TrendingUp, TrendingDown, Minus, CircleOff, Radar, Activity, Lock, Tag as TagIcon } from 'lucide-react'
 import { COUNTRIES, PLATFORMS, platformLabel, type Country, type Platform } from '../lib/markets'
 import { GameIcon } from '../components/GameIcon'
 import { QueryError } from '../components/QueryError'
@@ -15,6 +15,7 @@ import { WechatAccountsPanel } from '../components/WechatAccountsPanel'
 import { useLocalStorageState } from '../lib/hooks'
 import type { NewcomerHistoryItem, NewcomerTrajectory, PublisherNewcomersOut } from '../lib/types'
 import { groupByApp, groupPublisherByApp, type GroupedNewcomer, type GroupedPublisherNewcomer } from '../lib/newcomerGrouping'
+import { SUBGENRE_OPTIONS } from '../lib/subgenres'
 
 export default function NewReleases() {
   const t = useT()
@@ -422,7 +423,8 @@ export default function NewReleases() {
                   </div>
                 )}
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-data text-muted">
-                  {gr.subgenre && <span className="px-1.5 py-0.5 bg-elevated rounded text-accent" title={t.newcomers.subgenreHint}>{gr.subgenre}</span>}
+                  <SubgenreChip appId={gr.app_id} name={gr.rep.name ?? gr.app_id}
+                    subgenre={gr.subgenre} locked={gr.subgenreLocked} />
                   {g.genre && <span className="px-1.5 py-0.5 bg-elevated rounded text-secondary">{g.genre}</span>}
                   {g.rating != null && g.rating > 0 && (
                     <span className="inline-flex items-center gap-0.5 text-amber-400">
@@ -554,6 +556,62 @@ function SubgenrePulse({ days }: { days: number }) {
 /** 检出后走势徽标（P0-1）：把「新品检出即阅后即焚」补成态势——这款现在爬到哪了 / 掉榜没。
  *  climbing/falling/stable 显示「现 #名次」+ 方向箭头；dropped 显示「已掉榜」；
  *  new（检出当天、无后续数据）/ unknown（无轨迹点）不渲染，避免噪声。tooltip 带峰值 + 追踪天数。 */
+/** 玩法子品类 chip + 人工锁定入口（#255 的前端半）。
+ *  点 chip（或无分类时的 ＋分类 幽灵 chip）→ 词表下拉 → POST subgenre-override 锁定；
+ *  锁定后显 🔒（LLM 不再覆盖）。「无合适子品类」= 传 null，同样锁定。
+ *  之前改分类只能 curl（Battle Kiss 裁定就是命令行代跑的），这里把入口搬进看板。 */
+function SubgenreChip({ appId, name, subgenre, locked }: {
+  appId: string; name: string; subgenre: string | null; locked: boolean
+}) {
+  const t = useT()
+  const qc = useQueryClient()
+  const [editing, setEditing] = useState(false)
+  const mut = useMutation({
+    mutationFn: (sg: string | null) => newcomersApi.subgenreOverride({ app_id: appId, subgenre_cn: sg, name }),
+    onSuccess: () => {
+      toast.success(t.newcomers.subgenreLockDone)
+      setEditing(false)
+      qc.invalidateQueries({ queryKey: ['newcomerHistory'] })
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || t.newcomers.subgenreLockFailed),
+  })
+  if (editing) {
+    return (
+      <select
+        autoFocus
+        value={subgenre ?? ''}
+        disabled={mut.isPending}
+        onBlur={() => setEditing(false)}
+        onChange={e => {
+          const v = e.target.value
+          if (v === '__cancel__') { setEditing(false); return }
+          mut.mutate(v === '__none__' ? null : v)
+        }}
+        className="px-1 py-0.5 rounded bg-elevated border border-accent/40 text-accent text-[11px] focus:outline-none"
+        onClick={e => e.stopPropagation()}
+      >
+        <option value="" disabled>{t.newcomers.subgenrePick}</option>
+        {SUBGENRE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+        <option value="__none__">{t.newcomers.subgenreNone}</option>
+        <option value="__cancel__">{t.common.cancel}</option>
+      </select>
+    )
+  }
+  return (
+    <button
+      type="button"
+      onClick={e => { e.stopPropagation(); setEditing(true) }}
+      title={locked ? t.newcomers.subgenreLockedHint : t.newcomers.subgenreEditHint}
+      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors ${subgenre
+        ? 'bg-elevated text-accent hover:border-accent/40 border border-transparent'
+        : 'bg-elevated/60 text-muted border border-dashed border-default hover:text-accent hover:border-accent/40'}`}
+    >
+      {locked && <Lock size={9} />}
+      {subgenre ?? (locked ? t.newcomers.subgenreNoneShort : <><TagIcon size={9} />{t.newcomers.subgenreAdd}</>)}
+    </button>
+  )
+}
+
 function TrendBadge({ traj }: { traj: NewcomerTrajectory | null }) {
   const t = useT()
   if (!traj || traj.trend === 'new' || traj.trend === 'unknown') return null

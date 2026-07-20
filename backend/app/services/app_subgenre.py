@@ -137,6 +137,24 @@ async def set_manual_subgenre(app_id: str, subgenre_cn: str | None,
         await db.commit()
 
 
+async def get_manual_overrides(app_ids) -> dict[str, str | None]:
+    """人工锁定层：app_id → 人工判定子品类。值可为 None（人工判定「无合适子品类」，同样锁定）。
+
+    给展示层用（/history 卡片显示 🔒 + 人工值）：resolve_subgenres 只返回非空值、
+    区分不了「LLM 判的」和「人工锁定的」，而前端入口需要这两个信息。
+    """
+    from app.models.newcomer import AppSubgenre
+    ids = list(app_ids or [])
+    if not ids:
+        return {}
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(
+            select(AppSubgenre.app_id, AppSubgenre.subgenre_cn)
+            .where(AppSubgenre.app_id.in_(ids), AppSubgenre.source == MANUAL_SOURCE)
+        )).all()
+    return {aid: sg for aid, sg in rows}
+
+
 async def resolve_subgenres(app_ids) -> dict[str, str]:
     """app_id → 玩法子品类，**三级优先**：人工 > 榜行 LLM > 存量回补 LLM。
 
