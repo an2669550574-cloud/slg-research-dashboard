@@ -123,6 +123,39 @@ async def get_login_status() -> Optional[WechatLoginStatus]:
     )
 
 
+async def probe_articles_alive() -> Optional[bool]:
+    """**真实业务调用**探活：能不能真的拉到文章列表。True=能 / False=登录失效 / None=连不上。
+
+    为什么不能只信 `/api/admin/status`：那个端点只回本地记录的 `expireTime`，不向微信侧核实。
+    2026-07-20 实测它自报「登录正常、还有 3.8 天到期」，而 `/api/public/articles` 同时返回
+    `{"success": false, "error": "登录已过期，请重新登录"}`——服务端 session 早被踢了。
+    结果：登录检查 job 信了自报状态从不告警，行业动态段**连续 6 天空白无人知晓**
+    （最后一次有内容 07-14）。**服务自报健康 ≠ 服务可用**，探活必须打真实业务路径。
+
+    取任一已启用账号拉 1 条，够便宜、可每次登录检查时跑。
+    """
+    accounts = await _enabled_accounts()
+    if not accounts:
+        return None
+    fakeid = next(iter(accounts.values()))
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{settings.WECHAT_API_BASE}/api/public/articles",
+                params={"fakeid": fakeid, "count": 1},
+            )
+            resp.raise_for_status()
+            d = resp.json()
+    except Exception as e:
+        _logger.warning("wechat 探活请求失败（连不上，不判为登录失效）: %s", e)
+        return None
+    if d.get("success"):
+        return True
+    # HTTP 200 但 success=false —— 正是此前被静默吞掉的那条路径，务必留痕
+    _logger.warning("wechat 探活失败：%s", str(d.get("error"))[:120])
+    return False
+
+
 async def _search_account(
     client: httpx.AsyncClient, name: str, fakeid: str,
     keyword: str, cutoff_timestamp: int,
@@ -143,19 +176,22 @@ async def _search_account(
         return []
 
     out: List[WechatArticle] = []
-    if data.get("success"):
-        for a in data.get("data", {}).get("articles", []):
-            create_time = a.get("create_time", 0)
-            if create_time and create_time < cutoff_timestamp:
-                continue  # 过滤过时文章
-            out.append(WechatArticle(
-                title=_strip_html(a.get("title")),
-                digest=_strip_html(a.get("digest")),
-                link=a.get("link", ""),
-                author=name,  # 用公众号名称代替 author
-                cover=a.get("cover", ""),
-                publish_time=create_time,
-            ))
+    if not data.get("success"):
+        # HTTP 200 + success=false（典型：登录已过期）——此前静默返回空，见 _list_account_articles。
+        _logger.warning("搜索 %s 返回失败: %s", name, str(data.get("error"))[:120])
+        return out
+    for a in data.get("data", {}).get("articles", []):
+        create_time = a.get("create_time", 0)
+        if create_time and create_time < cutoff_timestamp:
+            continue  # 过滤过时文章
+        out.append(WechatArticle(
+            title=_strip_html(a.get("title")),
+            digest=_strip_html(a.get("digest")),
+            link=a.get("link", ""),
+            author=name,  # 用公众号名称代替 author
+            cover=a.get("cover", ""),
+            publish_time=create_time,
+        ))
     return out
 
 
@@ -320,19 +356,24 @@ async def _list_account_articles(
         _logger.warning("列表 %s 失败: %s", name, e)
         return []
     out: List[WechatArticle] = []
-    if data.get("success"):
-        for a in data.get("data", {}).get("articles", []):
-            ct = a.get("create_time", 0)
-            if ct and ct < cutoff_ts:
-                continue
-            out.append(WechatArticle(
-                title=_strip_html(a.get("title")),
-                digest=_strip_html(a.get("digest")),
-                link=a.get("link", ""),
-                author=name,
-                cover=a.get("cover", ""),
-                publish_time=ct,
-            ))
+    if not data.get("success"):
+        # HTTP 200 + success=false（典型：登录已过期）。此前这里直接返回空、**零日志零告警**，
+        # 于是 35 个号全部静默变 0 篇、行业动态段无声消失 6 天（最后一次有内容 2026-07-14，
+        # 07-20 才因「领导卡有点空」被查出）。必须留痕。
+        _logger.warning("列表 %s 返回失败: %s", name, str(data.get("error"))[:120])
+        return out
+    for a in data.get("data", {}).get("articles", []):
+        ct = a.get("create_time", 0)
+        if ct and ct < cutoff_ts:
+            continue
+        out.append(WechatArticle(
+            title=_strip_html(a.get("title")),
+            digest=_strip_html(a.get("digest")),
+            link=a.get("link", ""),
+            author=name,
+            cover=a.get("cover", ""),
+            publish_time=ct,
+        ))
     return out
 
 

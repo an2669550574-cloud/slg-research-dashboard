@@ -787,13 +787,31 @@ def build_region_launch_lines(changes: list[dict], cap: int) -> list[str]:
     return out
 
 
+# 领导卡口径下「这条新品会不会上卡」的**单一判据**：build_daily_digest 的剥离与
+# _primary_item_count 的平淡日计数共用。两处各写一份就会重演「计数说有、正文没有」——
+# 2026-07-20 实测 free 两层漏了门控，5 项里 2 项是领导卡根本不显示的非 SLG 噪声。
+_LEADER_STRIPPED_KEYS = ("market", "free_market", "free_publisher")
+
+
+def _leader_keeps_newcomer(key: str, n: dict) -> bool:
+    """与**正文渲染**同口径（build_free_newcomer_lines）：free_publisher 行级 is_slg 优先、
+    回退 live 厂商判定；其余看行级 is_slg。publisher 层不剥（已识别 SLG 厂的新品照常上卡）。"""
+    if key == "free_publisher":
+        from app.services.slg_publishers import is_slg as _is_slg
+        return bool(n.get("is_slg")) or _is_slg(n.get("app_id"), n.get("publisher"))
+    if key in _LEADER_STRIPPED_KEYS:
+        return bool(n.get("is_slg"))
+    return True
+
+
 def _primary_item_count(per_combo: list[dict], version_changes, region_changes) -> int:
     """当日『竞品实质信号』计数：异动 + 四层新品 + 版本 + 新区（不含待建档/兜底填充段）。
     用于判『平淡日』→ 触发兜底填充（行业动态段 + 领导卡雷达段）。
 
-    口径 = **真正会上卡的**，与渲染层对齐：
-    - market 层只数 is_slg——`is_slg=false` 是「待识别新厂」建档线索（本 docstring 声明
-      「不含待建档」，`build_daily_digest` 的领导卡也在一处剥离它们）；
+    口径 = **真正会上卡的**，与渲染层对齐——靠**共用** `_leader_keeps_newcomer` 保证，
+    不再各写一份（2026-07-20 实测：原实现只门控 market 层，free 两层的非 SLG 噪声照计，
+    而领导卡渲染时把它们剥掉了；当天 5 项里 2 项领导根本看不见）：
+    - market / free 两层只数 is_slg——`is_slg=false` 是「待识别新厂」建档线索；
     - 排除 is_reentry（回归≠首发，渲染层 market_real/publisher_real 同口径已滤）。
 
     2026-07-15 RU 同步日实证这条为何必要：次市场双周同步一次涌进大量新面孔，market 层
@@ -810,7 +828,7 @@ def _primary_item_count(per_combo: list[dict], version_changes, region_changes) 
             for x in ((c.get(key) or {}).get("newcomers") or []):
                 if x.get("is_reentry"):
                     continue
-                if key == "market" and not x.get("is_slg"):
+                if not _leader_keeps_newcomer(key, x):
                     continue
                 n += 1
     return n + len(version_changes or []) + len(region_changes or [])
@@ -1123,25 +1141,15 @@ def build_daily_digest(per_combo: list[dict], today: str,
     # 注：【榜单异动】两卡都含——2026-06-30 应要求加回（撤 #164 的 movement=None 剥离）。
     # movement 只含已识别 SLG 老熟人的排名进退，是有效竞品动态，不再对领导卡置 None。
     if is_leader:
-        from app.services.slg_publishers import is_slg as _is_slg
-
-        def _leader_keeps(key: str, n: dict) -> bool:
-            """与**正文渲染**同口径（build_free_newcomer_lines）：free_publisher 行级
-            is_slg 优先、回退 live 厂商判定；其余看行级 is_slg。口径一分叉，TL;DR 就又会
-            报出正文没有的东西。"""
-            if key == "free_publisher":
-                return bool(n.get("is_slg")) or _is_slg(n.get("app_id"), n.get("publisher"))
-            return bool(n.get("is_slg"))
-
         _filtered = []
         for _c in per_combo:
             _new = dict(_c)
-            for _key in ("market", "free_market", "free_publisher"):
+            for _key in _LEADER_STRIPPED_KEYS:
                 _seg = _c.get(_key)
                 if _seg and _seg.get("newcomers"):
                     _new[_key] = {**_seg,
                                   "newcomers": [n for n in _seg["newcomers"]
-                                                if _leader_keeps(_key, n)]}
+                                                if _leader_keeps_newcomer(_key, n)]}
             _filtered.append(_new)
         per_combo = _filtered
     sections: list[str] = []
@@ -1744,6 +1752,7 @@ async def send_daily_digest() -> bool:
     # 掩盖『数据未就位』。（雷达段已升级为每日拉取，见上方 ADR 0006 切片2 块；is_quiet 仍
     # 决定领导卡是否渲染雷达段 = 原平淡日填充行为。）
     industry_articles: list = []
+    filler_dead: Optional[str] = None   # 平淡日兜底源不可用的说明（仅维护者卡，见下）
     is_quiet = (settings.DIGEST_QUIET_THRESHOLD > 0
                 and _primary_item_count(per_combo, version_changes, region_changes)
                     < settings.DIGEST_QUIET_THRESHOLD
@@ -1765,6 +1774,14 @@ async def send_daily_digest() -> bool:
                     sent_before = await _load_sent_article_links()
                     industry_articles = [a for a in raw if a.link not in shown
                                          and a.link not in sent_before][:settings.WECHAT_INDUSTRY_MAX]
+                    # 平淡日搜出 0 篇：可能真没料，也可能**数据源本身死了**。后者此前完全静默
+                    # ——2026-07-20 查出行业动态段已空 6 天（wechat 登录失效但自报健康）。
+                    # 一次真实探活分清两者，源不可用则挂进维护者卡（见下方 filler_dead）。
+                    if not industry_articles:
+                        from app.services.wechat_articles import probe_articles_alive
+                        if await probe_articles_alive() is False:
+                            filler_dead = "微信文章源登录失效——行业动态兜底段无内容，需扫码续期"
+                            logger.error("quiet-day filler unavailable: wechat login dead")
             except Exception:
                 logger.warning("wechat industry search (quiet-day filler) failed", exc_info=True)
 
@@ -1783,6 +1800,11 @@ async def send_daily_digest() -> bool:
     # A3 前科）。**仅维护者卡**；即便平淡日 / 数据未就位也要让告警出得去（见下 None 分支）。
     from app.services.job_heartbeat import get_stale_jobs, render_stale_alert
     _stale_alert = render_stale_alert(await get_stale_jobs())
+    # 平淡日兜底源不可用 → 并进同一条维护者告警通路（不另起一套）：兜底本该在最空的日子
+    # 补内容，它自己坏了却静默，就成了「卡很空 + 没人知道为什么」（2026-07-20 实证）。
+    if filler_dead:
+        _filler_line = f"⚠️ **兜底源不可用**：{filler_dead}"
+        _stale_alert = f"{_stale_alert}\n\n{_filler_line}" if _stale_alert else _filler_line
     msg_m = _render("maintainer")
     if msg_m is not None and _stale_alert:
         msg_m = (msg_m[0], msg_m[1] + "\n\n---\n\n" + _stale_alert, msg_m[2])
@@ -2198,16 +2220,21 @@ def _wechat_alert_tier(status, now_ts: float, warn_days: int) -> Optional[str]:
     return None
 
 
-def build_wechat_expiry_alert(status, now_ts: float, warn_days: int) -> Optional[tuple[str, str, list]]:
+def build_wechat_expiry_alert(status, now_ts: float, warn_days: int,
+                              probe_dead: bool = False) -> Optional[tuple[str, str, list]]:
     """微信登录状态 → (title, markdown, btns) 提醒，或 None（健康 / 服务连不上时不提醒）。
 
     btns 带「扫码续期」按钮直达看板登录页（开页即实时二维码、免 ssh）；text 附 ssh 兜底行。
     status=None 表示 wechat-api 连不上——那是另一类问题，不误报「登录过期」。
+
+    probe_dead=True：**真实业务调用**已确认拉不到文章。此时哪怕 status 自报健康也按失效报——
+    2026-07-20 实测两者会打架（自报「正常、还有 3.8 天」，文章接口回「登录已过期」），
+    只信自报会让告警永不触发（详见 wechat_articles.probe_articles_alive）。
     """
-    if status is None:
+    if status is None and not probe_dead:
         return None
     btns = _wechat_login_btns()
-    if not status.logged_in or status.is_expired:
+    if probe_dead or not status.logged_in or status.is_expired:
         text = ("### ⚠️ 微信公众号登录已失效\n\n"
                 "新品监测日报将**暂停附带行业文章**（其余情报照常）。\n\n"
                 "**点下方「🔑 扫码续期」**打开看板登录页，用微信扫一扫即可恢复。\n\n"
@@ -2234,10 +2261,18 @@ async def alert_wechat_login_if_needed() -> bool:
     未启用 / 未配 webhook → 不发。按档去重避免每次检查刷屏。钉死 maintainer 群、永不进领导群。"""
     if not (settings.WECHAT_ENABLED and dingtalk.is_enabled()):
         return False
-    from app.services.wechat_articles import get_login_status
+    from app.services.wechat_articles import get_login_status, probe_articles_alive
     status = await get_login_status()
     now = time.time()
     tier = _wechat_alert_tier(status, now, settings.WECHAT_EXPIRY_WARN_DAYS)
+    # 自报状态说健康时，再打一次**真实业务调用**核实。`/api/admin/status` 只回本地记录的
+    # expireTime、不向微信侧核实：2026-07-20 它自报「正常、还有 3.8 天」，而文章接口同时回
+    # 「登录已过期」——于是本 job 六小时跑一次却从不告警，行业动态段静默空了 6 天。
+    # 探活 None（服务连不上）不升级为失效，避免把网络抖动误报成过期（同 status=None 的既有口径）。
+    probe_dead = False
+    if tier is None and await probe_articles_alive() is False:
+        logger.warning("wechat 自报登录正常但业务调用失败 → 按已失效告警")
+        tier, probe_dead = "expired", True
     if tier is None:
         return False
     cur_exp = status.expire_time_ms if status else None
@@ -2246,7 +2281,8 @@ async def alert_wechat_login_if_needed() -> bool:
         st["expire_ms"], st["tier"] = cur_exp, None
     if st["tier"] is not None and _TIER_RANK[tier] <= _TIER_RANK[st["tier"]]:
         return False                    # 同档/更轻，已推过、不重复
-    built = build_wechat_expiry_alert(status, now, settings.WECHAT_EXPIRY_WARN_DAYS)
+    built = build_wechat_expiry_alert(status, now, settings.WECHAT_EXPIRY_WARN_DAYS,
+                                      probe_dead=probe_dead)
     if not built:
         return False
     sent = await dingtalk.send_action_card(*built, target="maintainer")
