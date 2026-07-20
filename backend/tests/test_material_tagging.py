@@ -128,3 +128,28 @@ async def test_delete_dimension_clears_material_tags(client):
     assert d.json()["removed_material_tags"] == 1
     got = (await client.get(f"/api/materials/{m['id']}")).json()
     assert got["tag_values"] == []
+
+
+@pytest.mark.asyncio
+async def test_delete_material_clears_tag_rows(client):
+    """删素材必须显式清 material_tag_values——SQLite foreign_keys=OFF（#232 刻意），
+    DDL 的 ondelete=CASCADE 不生效，不显式删就留孤儿（prod material_id=5 实锤）。"""
+    from sqlalchemy import select, func
+    from app.models.tag import MaterialTagValue
+    from app.database import AsyncSessionLocal
+
+    dim, opts = await _mk_road_dim(client)
+    m = (await _mk_material(client)).json()
+    await client.put(f"/api/materials/{m['id']}/tag-values", json={"values": [
+        {"dimension_id": dim["id"], "option_ids": [opts["1路"], opts["2路"]]},
+    ]})
+
+    r = await client.delete(f"/api/materials/{m['id']}")
+    assert r.status_code == 200
+
+    async with AsyncSessionLocal() as db:
+        n = (await db.execute(
+            select(func.count()).select_from(MaterialTagValue)
+            .where(MaterialTagValue.material_id == m["id"])
+        )).scalar()
+    assert n == 0, f"删素材后残留 {n} 行孤儿标签"
