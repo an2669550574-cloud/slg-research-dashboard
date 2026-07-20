@@ -321,3 +321,72 @@ async def test_admin_password_gates_delete(client, monkeypatch):
     ok = await client.delete(f"/api/tags/dimensions/{dim['id']}",
                              headers={"X-Admin-Password": "s3cret"})
     assert ok.status_code == 200
+
+
+# ── 模板复制（P1，/copy-template）──────────────────────────────────────────
+
+async def _mk_scoped_dim(client, name, app_ids, *, options=None, value_type="text"):
+    d = (await client.post("/api/tags/dimensions", json={
+        "name": name, "value_type": value_type, "app_ids": app_ids,
+    })).json()
+    for v in options or []:
+        await client.post(f"/api/tags/dimensions/{d['id']}/options", json={"value": v})
+    return d
+
+
+@pytest.mark.asyncio
+async def test_copy_template_clones_scoped_dims_with_options(client):
+    """克隆语义：源专属维度+选项复制给目标；两边独立（改目标不动源）。中文数据。"""
+    await _mk_scoped_dim(client, "桶子", ["com.src.game"], options=["木桶", "金像（泥像）"])
+    await _mk_scoped_dim(client, "投放时间", ["com.src.game"], value_type="date")
+
+    r = await client.post("/api/tags/copy-template", json={
+        "source_app_id": "com.src.game", "target_app_id": "com.tgt.game",
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert sorted(body["copied"]) == ["投放时间", "桶子"]
+    assert body["options_copied"] == 2
+
+    # 目标视角能看到克隆（且选项齐）；源维度未被动
+    tgt_dims = (await client.get("/api/tags/dimensions", params={"app_id": "com.tgt.game"})).json()
+    tgt_bucket = next(d for d in tgt_dims if d["name"] == "桶子")
+    assert sorted(o["value"] for o in tgt_bucket["options"]) == ["木桶", "金像（泥像）"]
+    assert tgt_bucket["app_ids"] == ["com.tgt.game"]
+    # 独立演进：给目标克隆加选项，源不受影响
+    await client.post(f"/api/tags/dimensions/{tgt_bucket['id']}/options", json={"value": "新桶"})
+    src_dims = (await client.get("/api/tags/dimensions", params={"app_id": "com.src.game"})).json()
+    src_bucket = next(d for d in src_dims if d["name"] == "桶子")
+    assert all(o["value"] != "新桶" for o in src_bucket["options"])
+
+
+@pytest.mark.asyncio
+async def test_copy_template_idempotent_and_skips_generic(client):
+    """幂等：重复复制全部 skip；通用维度不复制（目标本就可见，复制=双份）。"""
+    await _mk_scoped_dim(client, "路型", ["com.src.game"], options=["3路"])
+    await _mk_scoped_dim(client, "通用面", [])  # 空作用域=通用
+
+    r1 = (await client.post("/api/tags/copy-template", json={
+        "source_app_id": "com.src.game", "target_app_id": "com.tgt.game",
+    })).json()
+    assert r1["copied"] == ["路型"] and "通用面" not in r1["copied"]
+
+    r2 = (await client.post("/api/tags/copy-template", json={
+        "source_app_id": "com.src.game", "target_app_id": "com.tgt.game",
+    })).json()
+    assert r2["copied"] == [] and r2["skipped"] == ["路型"]
+    # 目标视角只有一份路型
+    tgt_dims = (await client.get("/api/tags/dimensions", params={"app_id": "com.tgt.game"})).json()
+    assert sum(1 for d in tgt_dims if d["name"] == "路型") == 1
+
+
+@pytest.mark.asyncio
+async def test_copy_template_validation(client):
+    r = await client.post("/api/tags/copy-template", json={
+        "source_app_id": "com.same", "target_app_id": "com.same",
+    })
+    assert r.status_code == 400
+    r = await client.post("/api/tags/copy-template", json={
+        "source_app_id": "com.no.dims", "target_app_id": "com.tgt",
+    })
+    assert r.status_code == 404
