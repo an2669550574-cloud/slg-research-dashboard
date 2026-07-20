@@ -194,3 +194,60 @@ def test_clean_name_cn_rejects_non_translations():
     # 字段缺失 / parsed 为 None
     assert _clean_name_cn({}, "X") is None
     assert _clean_name_cn(None, "X") is None
+
+
+@pytest.mark.asyncio
+async def test_manual_override_survives_llm_reclassification(app, monkeypatch):
+    """人工判定的子品类必须扛得住后续 LLM 重判——这是这套机制存在的全部理由。
+
+    LLM 分类挂在 market_newcomer_log 的**行**上，新检出行会触发重译并按 app_id 回写该 app
+    全部行（2026-07-20 实测冲掉了前一天人工改好的 Battle Kiss）。人工判定写进 app_subgenre
+    的 source='manual'，LLM 管道碰不到，读取时又最高优先。"""
+    from app.services.app_subgenre import (
+        set_manual_subgenre, resolve_subgenres, classify_pending_app_subgenres)
+
+    await _add_log("battlekiss", "Battle Kiss", SLG_PUB, subgenre_cn="基地建设SLG")
+    # 人工溯源结论：截图实为数值门跑酷 → 数字门SLG
+    await set_manual_subgenre("battlekiss", "数字门SLG", name="Battle Kiss")
+    assert (await resolve_subgenres(["battlekiss"]))["battlekiss"] == "数字门SLG"
+
+    # 模拟同 app 新检出触发重译：LLM 又把榜行写回「基地建设SLG」
+    from app.database import AsyncSessionLocal
+    from app.models.newcomer import MarketNewcomerLog
+    from sqlalchemy import update
+    async with AsyncSessionLocal() as db:
+        await db.execute(update(MarketNewcomerLog)
+                         .where(MarketNewcomerLog.app_id == "battlekiss")
+                         .values(subgenre_cn="基地建设SLG"))
+        await db.commit()
+    assert (await resolve_subgenres(["battlekiss"]))["battlekiss"] == "数字门SLG", \
+        "人工判定被 LLM 重判覆盖了"
+
+    # 回补 drain 也不得重新分类人工行（它把已在本表的 app 整体排除）
+    from app.config import settings
+    monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
+    monkeypatch.setattr(settings, "TAISHI_API_KEY", "k")
+    calls: list = []
+    from app.services import newcomer_i18n as ni
+    monkeypatch.setattr(ni.llm_gateway, "get_client",
+                        lambda: _Client('{"subgenre": "塔防"}', calls))
+    await classify_pending_app_subgenres()
+    assert (await resolve_subgenres(["battlekiss"]))["battlekiss"] == "数字门SLG"
+
+
+@pytest.mark.asyncio
+async def test_resolve_subgenres_three_level_priority(app):
+    """三级优先：人工 > 榜行 LLM > 存量回补 LLM。"""
+    from app.services.app_subgenre import resolve_subgenres, set_manual_subgenre
+
+    await _add_log("has_log", "有榜行", SLG_PUB, subgenre_cn="国战SLG")
+    await _add_subgenre("has_log", "塔防")            # 同 app 也有回补行 → 榜行应胜出
+    await _add_subgenre("only_backfill", "基地建设SLG")  # 只有回补行
+    await _add_log("manual_wins", "人工优先", SLG_PUB, subgenre_cn="卡牌RPG")
+    await set_manual_subgenre("manual_wins", "数字门SLG")
+
+    got = await resolve_subgenres(["has_log", "only_backfill", "manual_wins", "missing"])
+    assert got["has_log"] == "国战SLG"
+    assert got["only_backfill"] == "基地建设SLG"
+    assert got["manual_wins"] == "数字门SLG"
+    assert "missing" not in got

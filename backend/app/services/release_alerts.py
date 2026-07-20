@@ -349,32 +349,14 @@ async def _load_own_products() -> list[tuple[str, list[str], set[str]]]:
 
 
 async def _subgenres_for_apps(app_ids: set[str]) -> dict[str, str]:
-    """候选竞品 app_id → 玩法子品类 `subgenre_cn`（给 own_matches「同赛道」匹配用）。
+    """候选竞品 app_id → 玩法子品类（给 own_matches「同赛道」匹配用）。
 
-    `market_newcomer_log` 优先（新品/曾建档竞品有），缺的 fallback `app_subgenre`（P1-2 存量
-    回补，覆盖 movement 老熟人 + subgenre 特性前老检出行）——让 ⚔️ 同赛道对老竞品也生效。零 ST。
+    薄封装：真正的三级优先（人工 > 榜行 LLM > 存量回补 LLM）收口在
+    `app_subgenre.resolve_subgenres`，与下载榜线索的玩法门控共用同一口径——两处各写一份
+    就会出现「这边判 SLG、那边判非 SLG」。零 ST。
     """
-    out: dict[str, str] = {}
-    if not app_ids:
-        return out
-    from app.models.newcomer import MarketNewcomerLog, AppSubgenre
-    ids = list(app_ids)
-    async with AsyncSessionLocal() as db:
-        for aid, sg in (await db.execute(
-            select(MarketNewcomerLog.app_id, MarketNewcomerLog.subgenre_cn)
-            .where(MarketNewcomerLog.app_id.in_(ids),
-                   MarketNewcomerLog.subgenre_cn.is_not(None))
-        )).all():
-            out.setdefault(aid, sg)
-        missing = [a for a in ids if a not in out]
-        if missing:
-            for aid, sg in (await db.execute(
-                select(AppSubgenre.app_id, AppSubgenre.subgenre_cn)
-                .where(AppSubgenre.app_id.in_(missing),
-                       AppSubgenre.subgenre_cn.is_not(None))
-            )).all():
-                out.setdefault(aid, sg)
-    return out
+    from app.services.app_subgenre import resolve_subgenres
+    return await resolve_subgenres(app_ids)
 
 
 async def _slg_gate_probe_items(items: list[dict],

@@ -96,3 +96,83 @@ async def classify_pending_app_subgenres(cap: int | None = None) -> int:
     if done:
         logger.info("app subgenre backfill: %d app(s) classified", done)
     return done
+
+
+# ── 人工判定覆盖层（source='manual'）────────────────────────────────────────
+
+MANUAL_SOURCE = "manual"
+
+
+async def set_manual_subgenre(app_id: str, subgenre_cn: str | None,
+                              name: str | None = None) -> None:
+    """把人工判定的子品类写进 app_subgenre 并标 source='manual'（覆盖 LLM 判定）。
+
+    深度溯源得出的结论此前撑不过下一次同 app 新检出：LLM 分类挂在 market_newcomer_log 的
+    **行**上，而 `translate_pending_newcomers` 对新检出行（summary_cn 为空）会重跑一次分类、
+    并按 app_id 回写该 app 的**全部行**——2026-07-20 实测把前一天人工改好的 Battle Kiss
+    子品类冲掉了。人工结论因此必须存在一个 LLM 不会去动的地方。
+
+    落在 app_subgenre 而非新加字段，有三个好处：零迁移（source 列本就有）、天然 app 级
+    （一次覆盖该 app 所有榜行）、且 `classify_pending_app_subgenres` 把「已在本表的 app」
+    整体排除在候选外，人工行不会被回补 drain 重新分类。读取侧优先级见 `resolve_subgenres`。
+
+    subgenre_cn 传 None = 人工判定「无合适子品类」，同样记为 manual（不再被 LLM 填）。
+    """
+    from app.models.newcomer import AppSubgenre
+    async with AsyncSessionLocal() as db:
+        row = (await db.execute(
+            select(AppSubgenre).where(AppSubgenre.app_id == app_id))).scalar_one_or_none()
+        if row is None:
+            db.add(AppSubgenre(app_id=app_id, name=name, subgenre_cn=subgenre_cn,
+                               source=MANUAL_SOURCE))
+        else:
+            row.subgenre_cn = subgenre_cn
+            row.source = MANUAL_SOURCE
+            if name:
+                row.name = name
+        await db.commit()
+
+
+async def resolve_subgenres(app_ids) -> dict[str, str]:
+    """app_id → 玩法子品类，**三级优先**：人工 > 榜行 LLM > 存量回补 LLM。
+
+    子品类的**唯一读取口径**——digest 的「同赛道」匹配、下载榜线索的玩法门控都走这里。
+    此前两处各写各的（一处 log 优先 + app_subgenre fallback，一处直接读 app_subgenre 全表），
+    口径一分叉就会出现「这边判 SLG、那边判非 SLG」的鬼故事，故收口到一个函数。
+
+    人工层置顶是这个函数存在的主要理由：LLM 会在每次同 app 新检出时重判并覆盖榜行，
+    只有 source='manual' 的行它碰不到（见 set_manual_subgenre）。
+    """
+    from app.models.newcomer import MarketNewcomerLog, AppSubgenre
+    out: dict[str, str] = {}
+    ids = list(app_ids or [])
+    if not ids:
+        return out
+    async with AsyncSessionLocal() as db:
+        # ① 人工判定：最高优先级，LLM 不会覆盖
+        for aid, sg in (await db.execute(
+            select(AppSubgenre.app_id, AppSubgenre.subgenre_cn)
+            .where(AppSubgenre.app_id.in_(ids),
+                   AppSubgenre.source == MANUAL_SOURCE,
+                   AppSubgenre.subgenre_cn.is_not(None))
+        )).all():
+            out[aid] = sg
+        # ② 榜行 LLM 分类（新品/曾建档竞品）
+        rest = [a for a in ids if a not in out]
+        if rest:
+            for aid, sg in (await db.execute(
+                select(MarketNewcomerLog.app_id, MarketNewcomerLog.subgenre_cn)
+                .where(MarketNewcomerLog.app_id.in_(rest),
+                       MarketNewcomerLog.subgenre_cn.is_not(None))
+            )).all():
+                out.setdefault(aid, sg)
+        # ③ 存量回补 LLM（movement 老熟人 / subgenre 特性前的老检出行）
+        rest = [a for a in ids if a not in out]
+        if rest:
+            for aid, sg in (await db.execute(
+                select(AppSubgenre.app_id, AppSubgenre.subgenre_cn)
+                .where(AppSubgenre.app_id.in_(rest),
+                       AppSubgenre.subgenre_cn.is_not(None))
+            )).all():
+                out.setdefault(aid, sg)
+    return out
