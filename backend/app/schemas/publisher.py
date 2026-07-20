@@ -273,6 +273,10 @@ class PublisherDownloadLeadOut(BaseModel):
     platform: str
     rank: Optional[int] = None
     first_detected_at: Optional[str] = None  # ISO，检出时间（最新在前）
+    subgenre_cn: Optional[str] = None        # LLM 玩法子品类；None = 尚未分类
+    # 玩法门控判定：True = LLM 判为「明确非 SLG」（AUDIT_CLEAR_NON_SLG），默认不返回，
+    # 仅 include_non_slg=true 时出现在结果里、供 UI 折叠展示（no silent caps）。
+    non_slg: bool = False
 
 
 class PublisherArtistSuggestionOut(BaseModel):

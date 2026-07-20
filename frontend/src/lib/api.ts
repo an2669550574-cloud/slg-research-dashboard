@@ -439,8 +439,12 @@ export const publishersApi = {
   artistSuggestions: (limit = 40): Promise<PublisherArtistSuggestion[]> =>
     api.get('/publishers/itunes-artist-suggestions', { params: { limit } }).then(r => r.data),
   // 下载榜早期信号：下载榜 is_slg=false 但 genre=Strategy 的新品（待建档新厂线索）。零 ST。
-  downloadLeads: (days = 90, limit = 20): Promise<PublisherDownloadLead[]> =>
-    api.get('/publishers/download-leads', { params: { days, limit } }).then(r => r.data),
+  // 默认按 LLM 玩法子品类门控掉「明确非 SLG」（Play 的 genre 字段开发者可随便挂，噪声大）；
+  // includeNonSlg=true 连同被滤条目返回（带 non_slg 标记），供 UI 折叠展示、不静默丢弃。
+  downloadLeads: (days = 90, limit = 20, includeNonSlg = false): Promise<PublisherDownloadLead[]> =>
+    api.get('/publishers/download-leads', {
+      params: { days, limit, include_non_slg: includeNonSlg },
+    }).then(r => r.data),
   // 缺口忽略名单：把已知非 SLG 巨头从缺口里剔掉（publisher / app_id 两种粒度）。
   ignores: (): Promise<PublisherIgnore[]> =>
     api.get('/publishers/ignores').then(r => r.data),

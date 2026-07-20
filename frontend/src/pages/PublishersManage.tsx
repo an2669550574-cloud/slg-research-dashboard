@@ -147,11 +147,16 @@ export default function PublishersManage() {
   })
 
   // 下载榜早期信号：下载榜 is_slg=false 但 genre=Strategy 的新品（待建档新厂线索）。零 ST。
-  const { data: leads = [], isLoading: leadsLoading } = useQuery({
+  // 拉全量（含被玩法门控滤掉的），在前端按 non_slg 分成「待核查 / 已门控」两组——一次请求
+  // 拿两组数据，切换展开不再打后端；默认只显示待核查那组。
+  const { data: allLeads = [], isLoading: leadsLoading } = useQuery({
     queryKey: LEADS_QK,
-    queryFn: () => publishersApi.downloadLeads(90, 20),
+    queryFn: () => publishersApi.downloadLeads(90, 50, true),
   })
+  const leads = allLeads.filter(l => !l.non_slg)
+  const gatedLeads = allLeads.filter(l => l.non_slg)
   const [leadsOpen, setLeadsOpen] = useState(false)
+  const [gatedOpen, setGatedOpen] = useState(false)
 
   const invalidate = () => qc.invalidateQueries({ queryKey: QK })
   // 忽略/恢复后缺口与忽略名单都要刷新
@@ -824,6 +829,13 @@ export default function PublishersManage() {
                         <div className="text-[11px] text-muted truncate">
                           {l.publisher ?? '—'} · {tt.leadsMarket(l.country, l.platform)}{l.rank ? ` ${tt.leadsRank(l.rank)}` : ''}{l.genre ? ` · ${l.genre}` : ''}
                         </div>
+                        {l.subgenre_cn && (
+                          <div className="text-[11px] mt-0.5">
+                            <span className={`inline-block px-1.5 py-px rounded ${l.non_slg ? 'bg-elevated text-muted' : 'bg-violet-500/15 text-violet-300'}`}>
+                              {l.subgenre_cn}
+                            </span>
+                          </div>
+                        )}
                         {l.summary_cn && <div className="text-[11px] text-secondary truncate mt-0.5">📝 {l.summary_cn}</div>}
                       </div>
                       <button
@@ -845,6 +857,49 @@ export default function PublishersManage() {
                       </button>
                     </div>
                   ))}
+                </div>
+              )}
+              {/* 被玩法门控滤掉的条目：不静默丢弃，折叠可查（误杀=该 app 的玩法分类要修） */}
+              {gatedLeads.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-default/50">
+                  <button
+                    onClick={() => setGatedOpen(o => !o)}
+                    className="flex items-center gap-1.5 text-[11px] text-muted hover:text-secondary transition-colors"
+                    title={tt.leadsGatedHint}
+                  >
+                    <span>🧹 {tt.leadsGatedTitle(gatedLeads.length)}</span>
+                    <span className="underline">{gatedOpen ? tt.leadsGatedCollapse : tt.leadsGatedExpand}</span>
+                  </button>
+                  {gatedOpen && (
+                    <>
+                      <div className="text-[11px] text-muted mt-2 mb-2">{tt.leadsGatedHint}</div>
+                      <div className="grid gap-1.5 opacity-70">
+                        {gatedLeads.map(l => (
+                          <div
+                            key={l.app_id}
+                            className="flex items-center gap-2.5 bg-elevated/40 border border-default/40 rounded-lg px-3 py-1.5"
+                          >
+                            <GameIcon src={l.icon_url} name={l.name} className="w-6 h-6 rounded shrink-0" />
+                            <div className="min-w-0 flex-1">
+                              <div className="text-[12px] text-secondary truncate">{l.name}</div>
+                              <div className="text-[11px] text-muted truncate">
+                                {l.publisher ?? '—'} · {tt.leadsMarket(l.country, l.platform)}{l.rank ? ` ${tt.leadsRank(l.rank)}` : ''}
+                                {l.subgenre_cn ? ` · ${l.subgenre_cn}` : ''}
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => openCreate({ name: l.publisher ?? l.name, alias: l.publisher ?? undefined })}
+                              title={tt.leadsCreateHint}
+                              className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-muted border border-default hover:text-secondary hover:border-strong transition-colors"
+                            >
+                              <Plus size={10} />
+                              {tt.leadsCreate}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </div>

@@ -630,6 +630,59 @@ async def test_download_leads_filters_dedups_and_excludes(client):
 
 
 @pytest.mark.asyncio
+async def test_download_leads_subgenre_gate_blacklist_not_whitelist(client):
+    """玩法门控：LLM 判「明确非 SLG」的滤掉；未分类 / 三消合成**保留**。
+
+    Play 的 genre 字段开发者可随便挂（实测找茬解谜 / 塔防 / 竞技卡牌都挂成 Strategy），
+    单靠它筛出来的线索多数是噪声。改用同表已有的 LLM 子品类（读商店描述判玩法机制）。
+
+    刻意用**黑名单**而非 SLG_CORE 白名单，与探测层（#242）相反：那边是推送门控、推错直达
+    领导群，宁可不推；这里是维护者 backlog、漏了就永远错过建档。所以只滤有明确反证的，
+    未分类和「三消合成」（P&S 类三消+SLG 混合品的落点）都放行。"""
+    from app.database import AsyncSessionLocal
+    from app.models.newcomer import MarketNewcomerLog, AppSubgenre
+
+    def mk(**kw):
+        base = dict(country="US", platform="android", as_of="2026-06-29",
+                    chart_type="free", is_slg=False, is_reentry=False, genre="Strategy")
+        base.update(kw)
+        return MarketNewcomerLog(**base)
+
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            mk(app_id="slg_core", name="真SLG新厂", publisher="RealCo", subgenre_cn="基地建设SLG"),
+            mk(app_id="unclassified", name="尚未分类", publisher="NewCo", subgenre_cn=None),
+            mk(app_id="match3", name="三消混合", publisher="MixCo", subgenre_cn="三消合成"),
+            mk(app_id="td", name="塔防噪声", publisher="TdCo", subgenre_cn="塔防"),
+            mk(app_id="puzzle", name="找茬噪声", publisher="PzCo", subgenre_cn="休闲益智"),
+            # 存量竞品：log 行没分类，分类只在 app_subgenre 表里 → 回填后应被门控滤掉
+            mk(app_id="veteran", name="老竞品塔防", publisher="VetCo", subgenre_cn=None),
+        ])
+        db.add(AppSubgenre(app_id="veteran", name="老竞品塔防", subgenre_cn="塔防", source="test"))
+        await db.commit()
+
+    leads = (await client.get("/api/publishers/download-leads")).json()
+    got = {l["app_id"] for l in leads}
+    assert "slg_core" in got                      # SLG 核心：留
+    assert "unclassified" in got                  # 未分类：留（不漏杀新检出）
+    assert "match3" in got                        # 三消合成：留（P&S 类混合品）
+    assert "td" not in got and "puzzle" not in got    # 明确非 SLG：滤
+    assert "veteran" not in got, "app_subgenre 回填没生效 → 存量竞品会绕过门控"
+
+    by_app = {l["app_id"]: l for l in leads}
+    assert by_app["slg_core"]["subgenre_cn"] == "基地建设SLG"   # 子品类暴露给 UI
+    assert by_app["slg_core"]["non_slg"] is False
+
+    # 不静默丢弃：include_non_slg 连同被滤条目返回并标记，供 UI 折叠展示
+    all_leads = (await client.get(
+        "/api/publishers/download-leads", params={"include_non_slg": "true"})).json()
+    all_by_app = {l["app_id"]: l for l in all_leads}
+    assert {"td", "puzzle", "veteran"} <= set(all_by_app)
+    assert all_by_app["td"]["non_slg"] is True
+    assert all_by_app["slg_core"]["non_slg"] is False
+
+
+@pytest.mark.asyncio
 async def test_download_leads_excludes_rows_attributed_to_built_entity(client):
     """存档 is_slg 是检出时点快照：app 先在 free 榜检出（is_slg=false 落库），主体随后建档
     并 pin 该 app_id —— 存档不回写仍是 false。下载榜信号必须与新品监测页同口径**读时归属**，
