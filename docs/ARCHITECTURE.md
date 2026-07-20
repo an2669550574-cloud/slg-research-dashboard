@@ -157,7 +157,7 @@ nginx：`/assets` 永久缓存、`index.html` `no-cache`（已在 `frontend/ngin
 
 上面是 **newcomers**（全榜首次出现）的回归判定；**movement**（`detect_movement`，收入榜 Top `COMPETITOR_ALERT_TOPN`=15 名次进退）另有同名异源的回归问题：它只比 today vs **上一可用日**两快照，老 SLG 短暂跌出 Top15 又回来会被错标「🆕 空降」并打高分顶上今日要闻（prod 实测 US/iOS top 榜 ~32% app 有出榜又回缺口；某日 2 个 new_entrant **全是**回归）。
 
-`detect_movement` 加一道历史窗：上一可用日**之前** `COMPETITOR_REENTRY_WINDOW_DAYS`(默认 30) 天内曾在 Top15 的 app_id → new_entrant 打 `is_reentry=True`（每 combo 多一条本地查询，零 ST；窗口取 `[cutoff, prev_date)` 避开当期对比日；`=0` 关此判定；只看 `rank<=topn` 的历史，仅榜尾出现过不算回归）。渲染层（`release_alerts.py`）：文案「🆕 空降」→「🔄 重回」（`build_movement_lines` + `_highlight_line` 两处），重要度 ×`_REENTRY_PENALTY`(0.4) **降权**——高名次回归仍可冒头、不硬排除，但不再压过真首发污染今日要闻。surge/drop/revenue_spike 无回归概念、不受影响。
+`detect_movement` 加一道历史窗：上一可用日**之前** `COMPETITOR_REENTRY_WINDOW_DAYS`(默认 30) 天内曾在 Top15 的 app_id → new_entrant 打 `is_reentry=True`（每 combo 多一条本地查询，零 ST；窗口取 `[cutoff, prev_date)` 避开当期对比日；`=0` 关此判定；只看 `rank<=topn` 的历史，仅榜尾出现过不算回归）。渲染层（`release_alerts.py`）：文案「🆕 空降」→「🔄 重回」（`build_movement_lines`；`_highlight_line` 已随今日要闻改版删除，见下方「今日重点」节），重要度 ×`_REENTRY_PENALTY`(0.4) **降权**——高名次回归仍可冒头、不硬排除，但不再压过真首发污染重要度排序。surge/drop/revenue_spike 无回归概念、不受影响。
 
 > **检出用两个独立名次闸门（#200/#201，2026-07-05 减量）**：空降/窜升/跌出 + 回归候选集共用 `COMPETITOR_ALERT_TOPN`=15（由 20 收紧、只盯更靠头部的竞品，砍 #16–20 中段抖动）；**收入异动已解耦、走独立更宽的 `COMPETITOR_REVENUE_TOPN`=20**——收入大幅变动是高信号，不随名次收窄，#16–20 竞品收入大涨仍报（`movement.py` 把原共用循环的 `r.rank>topn` 拆成两个循环：名次异动 gate 在 `topn`、收入异动 gate 在 `rev_topn`=ST revenue 上限 Top20）；连涨走 `COMPETITOR_CLIMB_TOPN`=30（下节）。同一 app 可既出名次异动行又出收入异动行（渲染层有意不跨类去重）。
 
@@ -220,7 +220,7 @@ US-only 非次市场同步日 + 美区平淡时卡很薄（实测某日仅 2 异
 
 ### digest 渲染格式 + 手机端链接可达性（PR #133）
 
-**渲染格式（钉钉 markdown 坑）**：新品行的「meta 引用块 + 📝摘要 + 🔗/🎯链接 + 📰文章」若用单 `\n` 续行，钉钉**手机端**会把引用块后的续行 lazy-continuation 吸进同一引用块、并把换行折叠成空格 → 全黏成一坨（真机样卡验证）。故各「段」必须用 `\n\n` 空行分隔（`_block` helper），meta 用 `_meta_inner`（纯内容）拼独立 `> ` 引用段；movement 行无后续续行、仍用 `_meta_line` 行尾 `\n> ` 拼接（不黏）。链接合并成一行（`_link_line`：🎯看板 · 📰文章）减少续行。开头 `_digest_tldr` 一句话总览（异动/新品/版本/新区/视频/待建档计数），领导先有锚点。combo 标题用 `_market_label`（不带「畅销榜」后缀），避免与下属【下载榜新品】子段口径打架。国旗 / `---` / `> ` 引用块真机渲染正常，无需规避。
+**渲染格式（钉钉 markdown 坑）**：新品行的「meta 引用块 + 📝摘要 + 🔗/🎯链接 + 📰文章」若用单 `\n` 续行，钉钉**手机端**会把引用块后的续行 lazy-continuation 吸进同一引用块、并把换行折叠成空格 → 全黏成一坨（真机样卡验证）。故各「段」必须用 `\n\n` 空行分隔（`_block` helper），meta 用 `_meta_inner`（纯内容）拼独立 `> ` 引用段；movement 行无后续续行、仍用 `_meta_line` 行尾 `\n> ` 拼接（不黏）。链接合并成一行（`_link_line`：🎯看板 · 📰文章）减少续行。开头 `_digest_tldr` 一句话总览（异动/新品/版本/新区/视频/待建档计数），领导先有锚点。combo 标题用 `_market_label`（不带「畅销榜」后缀），避免与下属【下载榜新品】子段口径打架。`---` / `> ` 引用块真机渲染正常，无需规避。**国旗 emoji 已于 2026-07-20 移除**（`_market_label` 不再带 flag，`_COMBO_FLAG` 随之删除）：钉钉群消息里它是纯装饰、每卡约 8 个，而市场中文名本身已说清是哪个市场（用户裁定）。同轮给 `_COUNTRY_CN` 补了 `ru`——此前俄罗斯一直回落成大写国码 `RU · iOS`，D2 之后它已是每周同步的正式次市场。
 
 **手机端链接可达性（关键约束）**：公司网络下钉钉**电脑端能开外网、手机端打不开**（App Store / Google Play / YouTube）。钉钉 ActionCard 是同一份 markdown、**无法按客户端区分链接**，故按可达性分类标注：
 
@@ -241,8 +241,8 @@ US-only 非次市场同步日 + 美区平淡时卡很薄（实测某日仅 2 异
 - `_event_score(kind, e)`：单事件「强度」分（不含市场权重）。`_rank_height(rank)`（名次越靠前权重越大，0..1）做主轴，叠收入异动 `|pct|` / 窜升跳数。相对序拍定：高名次收入异动 > 头部空降/市场新品 > 大幅窜升 > 榜尾长尾空降/跌出（`test_digest_importance_event_score_ordering` 锁死）。
 - `_market_weight(country, platform)`：市场权重 US 1.5 / JP 1.15 / KR 1.1…× 平台 iOS 1.0 / 安卓 0.9。**刻意压窄到 1.0~1.5**——只做轻微倾斜，不能把事件强度整个吃掉（否则今日要闻被核心市场榜尾占满）；KR 的 #1 空降仍压过 US 的 #45 长尾（`test_digest_importance_market_weight_is_gentle_tilt`）。
 - **五处的修法**：① combo 段按 `_combo_sort_key`（市场权重为**主键**、combo 内最高单项为辅）排序——核心 US/iOS 永居前列、全局封顶砍的必是次市场；② `build_movement_lines` 内按 `_event_score` 降序再切 `DIGEST_MOVEMENT_TOPN`（combo 内市场权重恒定，故只按事件强度）；③ 按钮 `_ranked_newcomer_buttons` 全局按 `_event_score × 市场权重` 排序取头部新品；④ overflow 计数不变，但砍的已是真·次要项。「核心 combo 永不被封顶挤掉」由排序主键保证，与市场权重量级解耦。
-- **跨 combo「📌 今日要闻」置顶**（`build_highlight_lines` + `_highlight_line`）：`_collect_scored_items` 收全 combo 的 movement + 三类新品（下载榜只算 is_slg=True，与推送门控一致；回归项已滤）→ 取重要度 Top `DIGEST_HIGHLIGHTS_TOPN`（默认 5）→ 内联市场标签的紧凑行，放 TL;DR 之后、combo 段之前。覆盖面**仅 ranking 派生的 per-combo 竞品事件**——版本/新区/视频/待建档是各自独立的全局段（本就不受地理顺序挤压），不纳入要闻。
-  - **#162 去重（领导反馈「重复内容太多」）**：排除「正文首位 combo」（`_combo_sort_key` 最高，通常核心 US/iOS——本就排正文最前）的事件，**再**判「（排除后）事件数 > TOPN 才渲染」。**无损去重**（正文一字不动）：单/少 combo 日今日要闻自然消失，多 combo 日只上浮「排在后面、可能被折叠的次要市场」大事件。选此方向而非「从正文删抽顶事件」——后者会丢新品的摘要/链接。
+- **跨 combo「📌 今日重点」一行索引**（`build_highlight_index`）：按市场汇总「哪个市场有几个 app 值得看」，放 TL;DR 之后、combo 段之前，形如 `📌 重点：日本 · iOS 4 项 ⚔️ ｜ 美国 · iOS 2 项`。**不含任何游戏名**，故与正文结构性零重复；与紧邻其上的 TL;DR 正交（那行按**事件类型**汇总，这行按**市场**）。命中同赛道的市场打 ⚔️。**仅当多于一个市场真有事件时渲染**，且判据是「有事件的市场数」而非 `len(per_combo)`——空 combo 不得把计数凑成「多市场」而渲出只指向唯一市场的废话索引（golden 快照抓到过）。计数**按 app_id 去重**：`_collect_scored_items` 是打分用的、同一 app 落多层就产多条（新品常同时在 free_market + free_publisher），而正文各段按 app_id 去重渲染，不去重就会报出正文兑现不了的条数（#254）。
+  - **演进史（别回头改回逐条列举）**：#136 初版逐条列 Top N 事件；#162 加「排除正文首位 combo + 事件数 > TOPN 才渲染」两道去重仍不够——2026-07-19 领导卡实测 5 条要闻在正文中**全部原样重复**（被排除的首位 combo 是 US，而要闻上浮的全是 JP 的，JP 段正文完整渲染）。**也不要改成「仅 overflow>0 时渲染」**：`DIGEST_MAX_ITEMS`=30 而典型卡约 12 项，overflow 几乎恒 0，那等于把这段悄悄删掉。改一行索引才同时满足「零重复」与「保留导航价值」。`build_highlight_lines` / `_highlight_line` 已随之删除。
 - **同赛道加权（PR #148）**：`_collect_scored_items` 对命中 `own_matches`（同赛道竞品）的 ×`_OWN_MATCH_BOOST`(2.5) 上浮——竞品打进我方赛道是领导第一决策轴，#139 此前只加 ⚔️ 标签不参与排序（榜尾同赛道竞品会被次市场高名次长尾挤出今日要闻）。仅影响今日要闻排序，⚔️ 标签照常。
 - 入参 `per_combo` 不被 mutate（排序走副本，`test_digest_does_not_mutate_input_order`）；常态下排序与现地理顺序几乎一致（US→JP→KR、iOS→安卓），只有次市场冒大事件才上浮，低惊扰。
 
@@ -367,6 +367,32 @@ digest 给新品行附行业公众号文章（`_match_articles_to_apps`）。匹
 ### 存量竞品 subgenre 回补（`app_subgenre` 表，alembic 0039，P1-2，#189）
 
 `market_newcomer_log.subgenre_cn` 只在新品被翻译（`translate_pending_newcomers`）时产出，**结构性覆盖不到**：① 从未作为新品检出的 established 竞品（movement 老熟人——⚔️ 同赛道对这些行**从不命中**）② subgenre 特性上线前的老检出行（`summary_cn` 已写但 `subgenre_cn=NULL`，不被重译）。新表 `app_subgenre(app_id 唯一, subgenre_cn?, source)` 按 app_id 全局补：`services/app_subgenre.py::classify_pending_app_subgenres`（候选 = tracked games 全纳入 + 有描述的 `is_slg` `market_newcomer_log` 行，排除已分类；digest 内每轮 drain `APP_SUBGENRE_BACKFILL_CAP`=15、前进式累积）。digest 建 `own_matches` 时 `release_alerts._subgenres_for_apps`（`market_newcomer_log` 优先 + `app_subgenre` fallback）→ ⚔️ 同赛道对老竞品也生效。分类复用 `newcomer_i18n.classify_subgenre`（子品类定义抽成单一来源 `_SUBGENRE_DEFS`，只分类不翻译、`max_tokens=1024` 给思考型模型留 reasoning 余量）。**坑**：`app_subgenre.subgenre_cn` 可空 =「已尝试但 LLM 未给词表内值」（写行即已尝试、不再重烧，同 newcomer_i18n 防重试坑）。零 ST。
+
+### 子品类读取三级优先 + 人工锁定（`resolve_subgenres` / `set_manual_subgenre`，#255）
+
+子品类的**唯一读取口径**：`app_subgenre.resolve_subgenres()`，优先级 **人工 > 榜行 LLM > 存量回补 LLM**。digest 的 ⚔️ 同赛道匹配（`_subgenres_for_apps` 现为薄封装）与下载榜线索的玩法门控都走它——此前两处各写各的优先级（一处榜行优先+fallback，一处直接读 `app_subgenre` 全表），正是会产生「这边判 SLG、那边判非 SLG」的分叉。
+
+**人工层为什么必须存在**：LLM 分类挂在 `market_newcomer_log` 的**行**上，而新检出行（`summary_cn` 为空）会触发重译、并按 app_id 回写该 app **全部行**——2026-07-20 实测把前一天人工改好的 Battle Kiss 子品类冲掉了。人工结论因此必须存放在 LLM 管道碰不到的地方：`app_subgenre` + `source='manual'`。选它有三个现成好处——零迁移（`source` 列本就有）、天然 app 级（一次覆盖该 app 所有榜行）、且 `classify_pending_app_subgenres` 把「已在本表的 app」整体排除在候选外，回补 drain 不会重分类。
+
+入口 `POST /api/newcomers/subgenre-override`，只收受控词表内的值（造词会让精确匹配永远命不中）；传 `null` = 人工判定「无合适子品类」，同样锁定。**已知限制**：iOS 和安卓是两个独立 app_id、各自分类，同一款游戏仍可能带两个子品类，覆盖需按平台各做一次。
+
+### 游戏中文名以商店为准（`store_cn_name`，#258）
+
+游戏名中译**不问 LLM**，查中文区商店实际标题：iOS 走 iTunes lookup（cn → tw → hk），Android 抓 Play 页（zh_CN → zh_TW），均免费零 ST。
+
+**为什么弃用 LLM 译名**（#250 抽样后的裁定，别回头改回去）：4 条样本 3 条命中真实官方名，第 4 条 `Tribal Wars`(InnoGames) 被译成《部落战争》——该游戏**没有中文区发行**，而《部落战争》恰是 Clash of Clans 的知名民间别名，领导搜到的会是另一款游戏，**比看英文原名更糟**。失败模式不是「译错」而是「编造」：有中文区发行的 LLM 命中真名，没有的它就直译。#250 的 prompt 已写明「拿不准就留空」，但模型不认为这算拿不准——**自我评估是错的机制**，故改客观校验。
+
+**载荷判据是「标题必须含汉字」**（`has_cjk`）：中文区有上架 ≠ 标题做了本地化。Tribal Wars 在台港确实有上架、但标题栏就是英文，于是正确判为无中文名、渲染层保留原名。取舍：商店标题有时不如干净译名好读（韩服 Guns of Glory 解析为 `Guns of Glory: 迷失大陸` 而非国服的 `火器文明`，因该版本在 cn 未上架）——**选正确性而非简洁**。
+
+**覆盖率现状**：两条管道都是前进式的，已处理过的记录不再被碰，故约 238 个存量 app（`newcomer_log` 198 + `app_subgenre` 40）拿不到中文名，只有新检出的才有。**渲染层尚未接入**（数据先落库观察质量）。
+
+### 平淡日兜底的探活与留痕（#257）
+
+平淡日兜底（行业动态 + 领导卡雷达段）在 2026-07-20 被发现**静默失效 6 天**（最后一次有内容 07-14），三层静默叠加：① wechat-api 的 `/api/admin/status` 只回本地存的 `expireTime`、不向微信侧核实，自报「登录正常、还有 3.8 天」而文章接口同时回「登录已过期」；② 登录检查 job 信任该端点故从不告警；③ `_list_account_articles` 把 HTTP 200 + `success:false` 当空结果——不进 except、不打日志，35 个号全部静默返回 0 篇。
+
+对策：`probe_articles_alive()` 打**真实业务路径**探活，自报健康但探活失败 → 登录检查升级为 `expired` 告警（`build_wechat_expiry_alert(probe_dead=True)`）；探活连不上返回 `None` 不误报。`success:false` 在列表/搜索两条路径都留 warning。平淡日搜出 0 篇时探活一次分清「真没料」与「源死了」，后者挂进已有的维护者卡告警通路（`_stale_alert`）。
+
+**原则**：**服务自报健康 ≠ 服务可用**，探活必须走真实业务路径。
 
 ### 商店雷达软启动新品接入富化（`chart_type='radar'` 影子行，P1-1，#190）
 
