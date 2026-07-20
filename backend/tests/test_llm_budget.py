@@ -170,3 +170,26 @@ async def test_budget_alert_dedup_per_scope_per_day(client, monkeypatch):
     await video_analyze._alert_budget_hit("day", 9.0, 5.0)
     await video_analyze._alert_budget_hit("day", 9.0, 5.0)
     assert len(sent) == 2   # 两次都尝试发（未去重）
+
+
+def test_day_and_month_start_follow_utc_not_local_clock(monkeypatch):
+    """日/月边界必须跟 UTC 走，不能跟机器本地时钟走。
+
+    成本表的时间列全是 utcnow_naive（UTC）。边界若用 date.today()（本地日），在 UTC+N 机器上
+    本地每天 00:00–N:00 这段本地已翻页、UTC 未翻，时间锚会落到**未来**，当日花费恒算成 0
+    —— #194 的日/月预算闸门静默失效且不报错（2026-07-20 在 UTC+8 开发机实测；CI 跑 UTC 看不见）。
+
+    这里把 UTC「现在」钉在 7/19 深夜（此刻 UTC+8 的本地日已是 7/20）：边界必须落在 7/19，
+    跟随被 mock 的 UTC 时钟。用 date.today() 的旧实现完全不看这个 mock，会返回本地今天而挂掉。
+    """
+    from datetime import datetime
+    from app.services import llm_budget
+
+    monkeypatch.setattr(llm_budget, "utcnow_naive", lambda: datetime(2026, 7, 19, 23, 30))
+    assert llm_budget._day_start() == datetime(2026, 7, 19, 0, 0)
+    assert llm_budget._month_start() == datetime(2026, 7, 1, 0, 0)
+
+    # 跨月同理：UTC 仍在 6/30，边界不得跳到 7 月
+    monkeypatch.setattr(llm_budget, "utcnow_naive", lambda: datetime(2026, 6, 30, 22, 0))
+    assert llm_budget._day_start() == datetime(2026, 6, 30, 0, 0)
+    assert llm_budget._month_start() == datetime(2026, 6, 1, 0, 0)

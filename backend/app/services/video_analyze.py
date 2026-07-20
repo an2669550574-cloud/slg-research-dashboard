@@ -27,7 +27,7 @@ import logging
 import shutil
 import subprocess
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -319,7 +319,10 @@ async def _alert_budget_hit(scope: str, spent: float, cap: float) -> None:
 
     未配 webhook / 发送失败均不阻断闸门（告警是旁路，429 该照常抛）。
     """
-    today = date.today()
+    # **UTC** 日（不是 date.today() 的本地日）：去重窗口必须与 llm_budget 的预算统计窗口
+    # 同口径，否则在 UTC+N 机器上本地跨日而 UTC 未跨时，标记被提前重置 → 同一个 UTC 预算日
+    # 重复告警一次。生产容器为 UTC，此改动对线上行为无影响。
+    today = utcnow_naive().date()
     key = (
         f"month:{today.year}-{today.month:02d}" if scope == "month"
         else f"day:{today.isoformat()}"
