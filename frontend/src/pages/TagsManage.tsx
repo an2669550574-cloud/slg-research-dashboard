@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
-import { Plus, Trash2, Pencil, X, Calendar, Type, Asterisk, Globe2, Package, Lock, Save } from 'lucide-react'
+import { Plus, Trash2, Pencil, X, Calendar, Type, Asterisk, Globe2, Package, Lock, Save, Copy } from 'lucide-react'
 import { tagsApi, gamesApi } from '../lib/api'
 import { useT } from '../i18n'
 import { PageHeader } from '../components/PageHeader'
@@ -498,6 +498,27 @@ function ProductScopeView({ dims, games, gameMap, inputClass, onSaved }: Product
     },
   })
 
+  // 模板复制（P1）：以另一产品的专属维度为模板克隆给当前产品（新品建库场景，如 Kingshot）。
+  // 后端克隆语义 + 幂等（同名可见维度自动跳过），前端只负责选源和展示结果。
+  const [copySrc, setCopySrc] = useState('')
+  const [copyOpts, setCopyOpts] = useState(true)
+  const copyMut = useMutation({
+    mutationFn: () => tagsApi.copyTemplate({
+      source_app_id: copySrc, target_app_id: pid, include_options: copyOpts,
+    }),
+    onSuccess: (res) => {
+      if (res.copied.length === 0) toast(tt.copyTemplateAllSkipped(res.skipped.length))
+      else toast.success(tt.copyTemplateDone(res.copied.length, res.options_copied, res.skipped.length))
+      setCopySrc(''); onSaved()
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || tt.copyTemplateFailed),
+  })
+  // 只有「有专属维度」的产品才配当模板源（通用维度后端本就不复制）
+  const templateSources = useMemo(() => {
+    const scoped = new Set(dims.flatMap(d => d.app_ids ?? []))
+    return games.filter(g => g.app_id !== pid && scoped.has(g.app_id))
+  }, [dims, games, pid])
+
   // 行状态：universal（通用，可勾）/ exclusive（仅本产品，可取消）/ complex（只读）
   type RowKind = 'universal' | 'exclusive' | 'complex'
   const classify = (orig: string[]): RowKind => {
@@ -581,6 +602,32 @@ function ProductScopeView({ dims, games, gameMap, inputClass, onSaved }: Product
         </div>
         {pid && <p className="text-[11px] text-muted">{tt.productViewHint}</p>}
       </div>
+
+      {/* 模板复制：给刚建档的新产品一键克隆另一产品的整套专属维度（复制后各自独立演进） */}
+      {pid && templateSources.length > 0 && (
+        <div className="bg-surface border border-default rounded-xl p-4 flex flex-wrap items-center gap-3">
+          <span className="text-xs text-secondary">{tt.copyTemplateLabel}</span>
+          <select value={copySrc} onChange={e => setCopySrc(e.target.value)} className={inputClass}>
+            <option value="">{tt.copyTemplatePlaceholder}</option>
+            {templateSources.map(g => <option key={g.app_id} value={g.app_id}>{g.name}</option>)}
+          </select>
+          <label className="flex items-center gap-1.5 text-xs text-secondary cursor-pointer select-none">
+            <input type="checkbox" checked={copyOpts} onChange={e => setCopyOpts(e.target.checked)}
+              className="accent-brand-500" />
+            {tt.copyTemplateWithOptions}
+          </label>
+          <button type="button" disabled={!copySrc || copyMut.isPending}
+            onClick={() => {
+              const src = templateSources.find(g => g.app_id === copySrc)
+              if (window.confirm(tt.copyTemplateConfirm(src?.name || copySrc, gameMap[pid] || pid))) copyMut.mutate()
+            }}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs border border-default text-secondary hover:text-accent hover:border-accent/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+            <Copy size={13} />
+            {copyMut.isPending ? t.common.saving : tt.copyTemplateBtn}
+          </button>
+          <span className="text-[10px] text-muted basis-full">{tt.copyTemplateHint}</span>
+        </div>
+      )}
 
       {!pid ? (
         <div className="text-center text-muted text-sm py-12 bg-surface border border-default rounded-xl">{tt.productViewEmpty}</div>

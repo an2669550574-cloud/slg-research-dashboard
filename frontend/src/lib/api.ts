@@ -49,6 +49,8 @@ import type {
   TagOptionUpdate,
   TagScopeBatchInput,
   TagScopeBatchOut,
+  TagTemplateCopyInput,
+  TagTemplateCopyOut,
   TagDeleteResponse,
   TagAggregateOut,
   TagAggregateParams,
@@ -361,6 +363,9 @@ export const tagsApi = {
   // 产品视角批量改作用域（S4）：一次原子提交多条维度/选项的 replace-all
   scopeBatch: (data: TagScopeBatchInput): Promise<TagScopeBatchOut> =>
     api.put('/tags/scope/batch', data).then(r => r.data),
+  // 模板复制（P1）：克隆源产品的专属维度（含选项）给目标产品，单事务幂等
+  copyTemplate: (data: TagTemplateCopyInput): Promise<TagTemplateCopyOut> =>
+    api.post('/tags/copy-template', data).then(r => r.data),
 }
 
 // AI 标签分析 Agent（P6）：跑报告 / 追问、会话回查、导出 md·csv。走公司网关，零 ST 配额。

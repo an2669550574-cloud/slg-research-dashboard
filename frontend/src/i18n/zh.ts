@@ -681,6 +681,18 @@ export const zh = {
     scopePlusOthers: (n: number) => `+${n} 其他`,
     pendingChanges: (n: number) => `${n} 项待保存`,
     scopeBatchSaved: (d: number, o: number) => `已更新 ${d} 个维度 / ${o} 个二级标签的作用域`,
+    // 模板复制（P1）
+    copyTemplateLabel: '从其它产品复制标签体系',
+    copyTemplatePlaceholder: '选模板源产品…',
+    copyTemplateWithOptions: '连二级标签一起',
+    copyTemplateBtn: '复制',
+    copyTemplateConfirm: (src: string, tgt: string) =>
+      `将把「${src}」的专属维度克隆一套给「${tgt}」（复制后两边独立演进，互不影响）。继续？`,
+    copyTemplateDone: (d: number, o: number, s: number) =>
+      `已复制 ${d} 个维度 / ${o} 个二级标签${s ? `（${s} 个同名维度已存在，跳过）` : ''}`,
+    copyTemplateAllSkipped: (s: number) => `没有新复制：${s} 个同名维度目标产品已可见`,
+    copyTemplateFailed: '复制失败',
+    copyTemplateHint: '克隆语义：复制后给新产品增删选项不影响源产品；通用维度对所有产品本就可见，不参与复制',
     productViewEmpty: '先在上方选择一个产品',
     noProducts: '暂无可选产品',
   },

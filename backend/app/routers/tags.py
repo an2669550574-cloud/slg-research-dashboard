@@ -20,6 +20,7 @@ from app.schemas import (
     TagDimensionCreate, TagDimensionUpdate, TagDimensionOut,
     TagOptionCreate, TagOptionUpdate, TagOptionOut,
     TagScopeBatchInput, TagScopeBatchOut,
+    TagTemplateCopyInput, TagTemplateCopyOut,
     TagAggregateOut, TagAggregateBucket, TagAggregateSubBucket,
 )
 from app.security import require_admin_password
@@ -358,6 +359,59 @@ async def update_scope_batch(data: TagScopeBatchInput, db: AsyncSession = Depend
         updated_dimensions=len(data.dimensions),
         updated_options=len(data.options),
     )
+
+
+@router.post("/copy-template", response_model=TagTemplateCopyOut)
+async def copy_template(data: TagTemplateCopyInput, db: AsyncSession = Depends(get_db)):
+    """以源产品的**专属**维度为模板，克隆一套给目标产品（新品建标签库场景）。
+
+    语义刻意选「克隆」而非「共享作用域」：复制后两边独立演进——给新产品增删选项
+    不会污染源产品词表；代价是管理态出现同名维度，靠作用域徽标区分。
+    - 只复制显式作用域**含源产品**的维度；通用维度（空名单）对目标本就可见，
+      复制反而会让目标看到双份，跳过。
+    - 目标已有同名可见维度（通用或已挂目标）→ 跳过并报告（幂等，防双击双份）。
+    - include_options 时连二级选项复制（value/sort_order）；**选项作用域不复制**
+      ——克隆出的维度已是目标专属，选项再挂名单是冗余门禁。
+    - 单事务：任何失败整体回滚，不留半套。
+    """
+    src, tgt = data.source_app_id.strip(), data.target_app_id.strip()
+    if not src or not tgt or src == tgt:
+        raise HTTPException(status_code=400, detail="源产品与目标产品必须是两个不同的 app_id")
+
+    dims = (await db.execute(
+        select(TagDimension).order_by(TagDimension.sort_order, TagDimension.id)
+    )).scalars().all()
+    scope_map = await _dim_app_ids([d.id for d in dims], db)
+    # 目标当前可见的维度名（通用 + 显式挂目标），同名即跳过
+    visible_to_tgt = {
+        d.name for d in dims
+        if not scope_map.get(d.id) or tgt in scope_map[d.id]
+    }
+    sources = [d for d in dims if scope_map.get(d.id) and src in scope_map[d.id]]
+    if not sources:
+        raise HTTPException(status_code=404, detail="源产品没有专属维度可作模板")
+
+    copied: list[str] = []
+    skipped: list[str] = []
+    options_copied = 0
+    src_opts = await _options_of([d.id for d in sources], db) if data.include_options else {}
+    for d in sources:
+        if d.name in visible_to_tgt:
+            skipped.append(d.name)
+            continue
+        clone = TagDimension(
+            name=d.name, value_type=d.value_type, material_type=d.material_type,
+            is_required=d.is_required, allow_multi=d.allow_multi, sort_order=d.sort_order,
+        )
+        db.add(clone)
+        await db.flush()  # 拿 clone.id 挂作用域/选项
+        db.add(TagDimensionProduct(dimension_id=clone.id, app_id=tgt))
+        for o in src_opts.get(d.id, []):
+            db.add(TagOption(dimension_id=clone.id, value=o.value, sort_order=o.sort_order))
+            options_copied += 1
+        copied.append(d.name)
+    await db.commit()
+    return TagTemplateCopyOut(copied=copied, skipped=skipped, options_copied=options_copied)
 
 
 # ── 二级标签 ───────────────────────────────────────────────────────────────

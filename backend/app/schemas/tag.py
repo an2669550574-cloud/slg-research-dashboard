@@ -95,6 +95,19 @@ class TagScopeBatchOut(BaseModel):
     updated_options: int
 
 
+class TagTemplateCopyInput(BaseModel):
+    """以源产品的专属维度为模板，克隆一套给目标产品（新品建标签库场景）。"""
+    source_app_id: str = Field(..., min_length=1)
+    target_app_id: str = Field(..., min_length=1)
+    include_options: bool = True
+
+
+class TagTemplateCopyOut(BaseModel):
+    copied: list[str]      # 新建维度名
+    skipped: list[str]     # 目标已有同名可见维度而跳过（幂等）
+    options_copied: int
+
+
 # ── 素材打标签（material_tag_values，P2）──────────────────────────────────
 # 打标签 = 给素材在各一级标签维度下选定值：text 维度选 option(可多)，date 维度选日期。
 
