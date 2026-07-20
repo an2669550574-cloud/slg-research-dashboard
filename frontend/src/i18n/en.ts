@@ -322,6 +322,18 @@ export const en: Translations = {
     batchResult: (ok: number, fail: number) =>
       fail ? `${ok} succeeded, ${fail} failed` : `All ${ok} succeeded`,
     addBatch: (n: number) => `Upload ${n} file${n === 1 ? '' : 's'}`,
+    // Filename→tags parsing (P0): inverse of composeNameFromTags
+    parseToggle: 'Parse tags from filenames',
+    parseHint: 'Prefills per-file tags from the "date_value_value+value" convention; parsed dimensions win, the editor below only fills gaps',
+    parseUnmatchedLabel: 'unknown',
+    parseAllMatched: (n: number) => `All ${n} file${n === 1 ? '' : 's'} parsed cleanly`,
+    parseSomeUnmatched: (n: number) => `${n} file${n === 1 ? '' : 's'} with unrecognized segments (in red; fix per item after upload)`,
+    parseRequiredMissing: (file: string, names: string, total: number) =>
+      `"${file}" is missing required tags: ${names}${total > 1 ? ` (${total} files affected)` : ''}`,
+    fillByTitleBatch: 'Fill tags from titles',
+    fillByTitleNone: 'Nothing to fill on this page (needs a game assigned and no structured tags yet)',
+    fillByTitleConfirm: (n: number) => `Parse titles and write structured tags for ${n} untagged material${n === 1 ? '' : 's'} (existing tags untouched). Continue?`,
+    fillByTitleResult: (n: number) => `Tags filled for ${n} material${n === 1 ? '' : 's'}`,
     // tag filter bar
     tagFilterLabel: 'Tags',
     tagFilterAll: 'All',

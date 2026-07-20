@@ -11,7 +11,7 @@ import {
   type TagValueState,
 } from '../components/StructuredTagEditor'
 import { tagsApi } from '../lib/api'
-import { composeNameFromTags, composeNameFromTagValues } from '../lib/tagName'
+import { composeNameFromTags, composeNameFromTagValues, parseTagsFromName, mergeTagStates } from '../lib/tagName'
 import { TagAggregatePanel } from '../components/TagAggregatePanel'
 import { TagAnalysisAgent } from '../components/TagAnalysisAgent'
 import { Select } from '../components/Select'
@@ -22,7 +22,7 @@ import { useT } from '../i18n'
 import { Pagination } from '../components/Pagination'
 import { QueryError } from '../components/QueryError'
 import { useDebouncedValue } from '../lib/hooks'
-import type { MaterialOut } from '../lib/types'
+import type { MaterialOut, TagDimension } from '../lib/types'
 
 const PAGE_SIZE = 12
 const MAX_UPLOAD = 200 * 1024 * 1024
@@ -60,6 +60,7 @@ export default function Materials() {
   const [analyzing, setAnalyzing] = useState<MaterialOut | null>(null)
   const [agentOpen, setAgentOpen] = useState(false)
   const [files, setFiles] = useState<File[]>([])
+  const [parseOn, setParseOn] = useState(true) // 文件名反解打标（P0）：默认开
   const [queue, setQueue] = useState<QItem[]>([])
   const [busy, setBusy] = useState(false)
   const [dragActive, setDragActive] = useState(false)
@@ -143,12 +144,27 @@ export default function Materials() {
   const editorMaterialType = mode === 'upload' && !editing
     ? (files[0] ? inferType(files[0].name) : 'video')
     : form.material_type
-  // 同一 queryKey 与编辑器内部共享缓存（不重复请求）；用于提交前的必填本地校验。
+  // 与 StructuredTagEditor 内部同一 3 段 queryKey（type + appId）真正共享缓存；
+  // 补上产品作用域后，必填校验与文件名反解都只看该产品可见的维度。
   const { data: editorDims = [] } = useQuery({
-    queryKey: ['tagDimensions', editorMaterialType || 'all'],
-    queryFn: () => tagsApi.listDimensions(editorMaterialType || undefined),
+    queryKey: ['tagDimensions', editorMaterialType || 'all', form.app_id || 'any'],
+    queryFn: () => tagsApi.listDimensions(editorMaterialType || undefined, form.app_id || undefined),
     enabled: showForm,
   })
+  // 文件名反解（P0）：选完文件即逐文件解析，预填结构化标签；提交时解析维度优先、
+  // 共享编辑器补缺（mergeTagStates）。纯前端确定性词表匹配，零 LLM。
+  const parsedByFile = useMemo(
+    () => (mode === 'upload' && !editing && parseOn && editorDims.length
+      ? files.map(f => parseTagsFromName(stem(f.name), editorDims))
+      : []),
+    [files, editorDims, parseOn, mode, editing],
+  )
+  const dimNameById = useMemo(() => new Map(editorDims.map(d => [d.id, d.name])), [editorDims])
+  const optValueById = useMemo(
+    () => new Map(editorDims.flatMap(d => d.options.map(o => [o.id, o.value] as const))),
+    [editorDims],
+  )
+  const parseUnmatchedFiles = parsedByFile.filter(p => p.unmatched.length > 0).length
   // 自动命名（P5）：从当前已选结构化标签按维度顺序拼出标题（模板化，零 LLM/配额）。
   const autoNameSuggestion = useMemo(
     () => composeNameFromTags(tagValues, editorDims),
@@ -222,6 +238,40 @@ export default function Materials() {
     }
     qc.invalidateQueries({ queryKey: ['materials'] })
     toast.success(t.materials.nameByTagsBatchResult(done))
+  }
+
+  // 按标题解析补标（P0 的镜像动作）：对「本页」零结构化标签且已归属游戏的素材，
+  // 用文件名解析器从标题反解并写入。**只补空、绝不覆盖已打标签**（人工标签是权威）；
+  // 维度按 (素材类型, app_id) 取作用域名单，跨调用缓存避免重复请求。
+  const fillTagsByTitleBatch = async () => {
+    const candidates = materials.filter(m => m.app_id && !(m.tag_values ?? []).length)
+    if (candidates.length === 0) { toast(t.materials.fillByTitleNone); return }
+    const dimsCache = new Map<string, TagDimension[]>()
+    const dimsFor = async (m: MaterialOut) => {
+      const key = `${m.material_type}|${m.app_id}`
+      if (!dimsCache.has(key)) {
+        dimsCache.set(key, await tagsApi.listDimensions(m.material_type || undefined, m.app_id))
+      }
+      return dimsCache.get(key)!
+    }
+    // 先全部试解析拿到真实可补数，再让用户确认
+    const jobs: { m: MaterialOut; inputs: ReturnType<typeof tagStateToInputs> }[] = []
+    for (const m of candidates) {
+      const dims = await dimsFor(m)
+      if (!dims.length) continue
+      const { state } = parseTagsFromName(m.title, dims)
+      const inputs = tagStateToInputs(state)
+      if (inputs.length) jobs.push({ m, inputs })
+    }
+    if (jobs.length === 0) { toast(t.materials.fillByTitleNone); return }
+    if (!window.confirm(t.materials.fillByTitleConfirm(jobs.length))) return
+    let done = 0
+    for (const { m, inputs } of jobs) {
+      try { await materialsApi.setTagValues(m.id, inputs); done++ } catch { /* 单条失败跳过 */ }
+    }
+    qc.invalidateQueries({ queryKey: ['materials'] })
+    qc.invalidateQueries({ queryKey: ['materialTags'] })
+    toast.success(t.materials.fillByTitleResult(done))
   }
 
   const gameMap = useMemo(() => Object.fromEntries(allGames.map(g => [g.app_id, g])), [allGames])
@@ -322,7 +372,17 @@ export default function Materials() {
   // 部分失败不影响其余；大文件(≤200MB)逐个走，比单请求收一堆稳。
   const runBatch = async () => {
     const tags = form.tags ? form.tags.split(',').map(s => s.trim()).filter(Boolean) : []
-    const tagValuesJson = JSON.stringify(tagStateToInputs(tagValues))
+    // 逐文件标签：文件名解析出的维度优先，共享编辑器只补未解析出的维度
+    const mergedFor = (i: number) =>
+      parseOn && parsedByFile[i] ? mergeTagStates(tagValues, parsedByFile[i].state) : tagValues
+    // 必填预检（合并后口径）：任一文件缺必填就整批不发，避免中途碎败
+    const problems = files
+      .map((f, i) => ({ name: stem(f.name), missing: missingRequiredNames(editorDims, mergedFor(i)) }))
+      .filter(p => p.missing.length)
+    if (problems.length) {
+      toast.error(t.materials.parseRequiredMissing(problems[0].name, problems[0].missing.join('、'), problems.length))
+      return
+    }
     const list = files
     setQueue(list.map(f => ({ name: f.name, status: 'pending', pct: 0 })))
     setBusy(true)
@@ -337,7 +397,7 @@ export default function Materials() {
       fd.append('platform', form.platform)
       fd.append('material_type', inferType(f.name))
       fd.append('tags', tags.join(','))
-      fd.append('tag_values', tagValuesJson)
+      fd.append('tag_values', JSON.stringify(tagStateToInputs(mergedFor(i))))
       if (form.notes) fd.append('notes', form.notes)
       try {
         await materialsApi.upload(fd, pct =>
@@ -361,9 +421,13 @@ export default function Materials() {
     e.preventDefault()
     const tags = form.tags ? form.tags.split(',').map(s => s.trim()).filter(Boolean) : []
     const tagInputs = tagStateToInputs(tagValues)
-    // 提交前本地必填校验（后端仍是权威，这里只为少跑一次 400）
-    const missing = missingRequiredNames(editorDims, tagValues)
-    if (missing.length) { toast.error(t.materials.missingRequiredTags(missing.join('、'))); return }
+    // 提交前本地必填校验（后端仍是权威，这里只为少跑一次 400）。
+    // 上传路径不在这查：文件名解析后各文件标签不同，runBatch 里按合并后口径逐文件预检。
+    const isUploadBatch = mode === 'upload' && !editing
+    if (!isUploadBatch) {
+      const missing = missingRequiredNames(editorDims, tagValues)
+      if (missing.length) { toast.error(t.materials.missingRequiredTags(missing.join('、'))); return }
+    }
 
     if (editing) {
       const data: any = {
@@ -662,6 +726,47 @@ export default function Materials() {
               </div>
               <div className="font-data text-[11px] text-muted">{t.materials.maxHint}</div>
               {files.length > 1 && <div className="text-[11px] text-muted">{t.materials.batchTitleNote}</div>}
+
+              {/* 文件名反解打标（P0）：预填核对表。解析是建议、提交前人眼过目；
+                  未命中 token 红色高亮，可上传后单条修正或先改文件名重选。 */}
+              {files.length > 0 && editorDims.length > 0 && (
+                <div className="rounded-xl border border-default bg-elevated/30 p-3 space-y-2">
+                  <label className="flex items-center gap-2 text-xs text-secondary cursor-pointer select-none">
+                    <input type="checkbox" checked={parseOn} onChange={e => setParseOn(e.target.checked)}
+                      className="accent-brand-500" />
+                    <span className="font-medium text-primary">{t.materials.parseToggle}</span>
+                    <span className="text-[10px] text-muted">{t.materials.parseHint}</span>
+                  </label>
+                  {parseOn && parsedByFile.length > 0 && (
+                    <>
+                      <div className="text-[11px] font-data text-muted">
+                        {parseUnmatchedFiles === 0
+                          ? t.materials.parseAllMatched(parsedByFile.length)
+                          : t.materials.parseSomeUnmatched(parseUnmatchedFiles)}
+                      </div>
+                      <ul className="max-h-56 overflow-y-auto space-y-1.5 pr-1">
+                        {parsedByFile.map((p, i) => (
+                          <li key={i} className="text-[11px] leading-relaxed">
+                            <span className="text-secondary break-all">{stem(files[i].name)}</span>
+                            <span className="ml-1.5 inline-flex flex-wrap gap-1 align-middle">
+                              {Object.entries(p.state).map(([dimId, v]) => (
+                                <span key={dimId} className="px-1.5 py-0.5 rounded bg-accent/10 text-accent border border-accent/25">
+                                  {dimNameById.get(Number(dimId))}:{v.valueDate ?? v.optionIds.map(id => optValueById.get(id)).join('+')}
+                                </span>
+                              ))}
+                              {p.unmatched.map((tk, k) => (
+                                <span key={`u${k}`} className="px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/30">
+                                  {t.materials.parseUnmatchedLabel} {tk}
+                                </span>
+                              ))}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                </div>
+              )}
               {queue.length > 0 && (
                 <ul className="space-y-1.5 pt-1">
                   {queue.map((it, i) => (
@@ -837,13 +942,21 @@ export default function Materials() {
         tagOptions={facetKey || undefined}
       />
 
-      {/* 批量「按标签命名」：对本页已打结构化标签的素材一次性按标签重命名 */}
-      {materials.some(m => m.tag_values?.length) && (
-        <div className="reveal reveal-3 mt-6 flex justify-end">
-          <button type="button" onClick={renameByTagsBatch}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-default text-secondary hover:text-accent hover:border-accent/40 transition-colors">
-            <Wand2 size={13} /> {t.materials.nameByTagsBatch}
-          </button>
+      {/* 批量「按标签命名」/「按标题解析补标」：互为镜像的两个方向，都只对本页生效 */}
+      {(materials.some(m => m.tag_values?.length) || materials.some(m => m.app_id && !m.tag_values?.length)) && (
+        <div className="reveal reveal-3 mt-6 flex justify-end gap-2">
+          {materials.some(m => m.app_id && !m.tag_values?.length) && (
+            <button type="button" onClick={fillTagsByTitleBatch}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-default text-secondary hover:text-accent hover:border-accent/40 transition-colors">
+              <Wand2 size={13} /> {t.materials.fillByTitleBatch}
+            </button>
+          )}
+          {materials.some(m => m.tag_values?.length) && (
+            <button type="button" onClick={renameByTagsBatch}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-default text-secondary hover:text-accent hover:border-accent/40 transition-colors">
+              <Wand2 size={13} /> {t.materials.nameByTagsBatch}
+            </button>
+          )}
         </div>
       )}
 
