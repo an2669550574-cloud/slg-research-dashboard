@@ -157,3 +157,40 @@ async def test_monthly_subgenre_pulse_section(client, monkeypatch):
     assert "数字门SLG" in body and "2 款新品" in body and "↑1" in body   # 升温
     assert "基地建设SLG" in body and "1 款新品" in body
     assert "国战SLG" in body and "↓1" in body                          # 降温（本窗口 0 款）
+
+
+@pytest.mark.asyncio
+async def test_monthly_group_activity_section(client, monkeypatch):
+    """段④资本集团动态：近窗口 SLG 新品按资本系聚合。
+
+    建「元趣系」母子两主体（affiliate 并组、根打 group_label）+ 各挂 alias 让新品归属命中，
+    同集团两款新品应聚合成一行、显示组名与新品样例。独立主体的新品不进本段。
+    """
+    from app.services import release_alerts as ra
+    from app.services.slg_publishers import load_index_from_db
+    # 母 = 元趣娱乐（打组名）；子 = 江娱互动（affiliate）；各配 alias 命中 publisher 串
+    parent = (await client.post("/api/publishers/", json={
+        "name": "元趣娱乐", "is_slg": True, "aliases": [{"keyword": "yuanqu"}]})).json()
+    child = (await client.post("/api/publishers/", json={
+        "name": "江娱互动", "is_slg": True, "aliases": [{"keyword": "rivergame"}]})).json()
+    await client.post(f"/api/publishers/{parent['id']}/relations", json={
+        "counterpart_id": child["id"], "counterpart_role": "child", "relation_type": "affiliate"})
+    await client.put(f"/api/publishers/{parent['id']}", json={"group_label": "元趣系"})
+    solo = (await client.post("/api/publishers/", json={
+        "name": "独立小厂", "is_slg": True, "aliases": [{"keyword": "soloslg"}]})).json()
+    await load_index_from_db()
+
+    # 归属命中靠 publisher 串（含 alias keyword）；用非上榜口径隔离段①（无 rankings）
+    await _add_newcomer("com.a.one", "元趣新品甲", rank=40, days_ago=5, publisher="Yuanqu Pte")
+    await _add_newcomer("com.a.two", "江娱新品乙", rank=45, days_ago=7, publisher="RiverGame HK")
+    await _add_newcomer("com.a.solo", "独立新品", rank=50, days_ago=9, publisher="SoloSLG Ltd")
+
+    card = await ra.build_monthly_market_rollup(days=30, cap=5)
+    assert card is not None
+    _, body = card
+    assert "资本集团动态" in body
+    # 元趣系聚合两款、显示组名
+    assert "元趣系" in body and "2 款新品" in body
+    assert "元趣新品甲" in body and "江娱新品乙" in body
+    # 独立主体不进集团段（它归属了主体但主体无集团）
+    assert "独立新品" not in body.split("资本集团动态")[1]

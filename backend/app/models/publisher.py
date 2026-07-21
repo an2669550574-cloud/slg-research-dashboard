@@ -24,6 +24,9 @@ class PublisherEntity(Base):
     hq_region: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # 国内 / 海外 / 具体国家
     is_slg: Mapped[bool] = mapped_column(Boolean, default=True)
     brief: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # 短背景 / 调研备注
+    # 资本集团报表名（迁移 0045）。成员名单由 publisher_relations 推导、不落库，本列只存
+    # 组名——根主体名常不是报表要的叫法（根「元趣娱乐」→ 报表「元趣系」）。见 publisher_groups。
+    group_label: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
     updated_at: Mapped[datetime] = mapped_column(
