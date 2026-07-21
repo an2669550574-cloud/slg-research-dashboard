@@ -25,6 +25,7 @@ export const en: Translations = {
     saving: 'Saving...',
     save: 'Save',
     cancel: 'Cancel',
+    undo: 'Undo',
     discardChanges: 'You have unsaved changes. Discard them?',
     delete: 'Delete',
     edit: 'Edit',
@@ -407,6 +408,12 @@ export const en: Translations = {
     nameByTagsDone: 'Renamed from tags',
     nameByTagsBatch: 'Name from tags (page)',
     nameByTagsBatchConfirm: (n: number) => `Rename ${n} tagged material(s) on this page from their structured tags? Titles will be overwritten.`,
+    // rename preview modal + undo
+    renamePreviewTitle: 'Rename by tags · Preview',
+    renamePreviewHint: (n: number) => `${n} material title(s) will be overwritten (old → new). Review before confirming:`,
+    renamePreviewMore: (n: number) => `${n} more not shown`,
+    renamePreviewConfirm: (n: number) => `Rename ${n}`,
+    renameUndone: (n: number) => `Undid ${n} rename(s)`,
     nameByTagsBatchNone: 'No tagged materials to rename on this page',
     nameByTagsBatchResult: (n: number) => `Renamed ${n} material(s) from tags`,
     // type / game / sort

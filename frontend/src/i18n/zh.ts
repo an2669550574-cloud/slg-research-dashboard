@@ -38,6 +38,7 @@ export const zh = {
     saving: '保存中...',
     save: '保存',
     cancel: '取消',
+    undo: '撤销',
     discardChanges: '有未保存的改动，确定丢弃？',
     delete: '删除',
     edit: '编辑',
@@ -430,6 +431,12 @@ export const zh = {
     nameByTagsDone: '已按标签重命名',
     nameByTagsBatch: '按标签命名（本页）',
     nameByTagsBatchConfirm: (n: number) => `将用结构化标签重命名本页 ${n} 个已打标签的素材，标题会被覆盖。继续？`,
+    // 重命名预览 modal + 撤销
+    renamePreviewTitle: '按标签重命名 · 预览',
+    renamePreviewHint: (n: number) => `将覆盖 ${n} 个素材的标题（旧名 → 新名）。确认前请核对：`,
+    renamePreviewMore: (n: number) => `另有 ${n} 个未在此列出`,
+    renamePreviewConfirm: (n: number) => `确认重命名 ${n} 个`,
+    renameUndone: (n: number) => `已撤销 ${n} 个重命名`,
     nameByTagsBatchNone: '本页没有已打结构化标签、可重命名的素材',
     nameByTagsBatchResult: (n: number) => `已按标签重命名 ${n} 个素材`,
     // 类型 / 游戏 / 排序

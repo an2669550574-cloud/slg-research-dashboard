@@ -32,6 +32,24 @@ const IMG_EXT = /\.(jpe?g|png|gif|webp)$/i
 const inferType = (name: string) => (IMG_EXT.test(name) ? 'image' : 'video')
 const stem = (name: string) => name.replace(/\.[^.]+$/, '')
 
+/** 按标签重命名的计划项（预览 + 执行 + 撤销共用同一份，保证「看到的=改成的=能还原的」）。 */
+type RenamePlanItem = { id: number; oldTitle: string; newTitle: string }
+/** 从本页素材算重命名计划：撞名补 -2/-3 后缀去重、跳过标题无变化的。预览与批量执行共用此函数。 */
+function computeRenamePlan(mats: MaterialOut[]): RenamePlanItem[] {
+  const seen = new Map<string, number>()
+  const plan: RenamePlanItem[] = []
+  for (const m of mats) {
+    const base = composeNameFromTagValues(m.tag_values ?? [])
+    if (!base) continue
+    const dup = seen.get(base) ?? 0
+    seen.set(base, dup + 1)
+    const newTitle = dup === 0 ? base : `${base}-${dup + 1}`
+    if (newTitle === m.title) continue  // 已是目标名，不算入计划
+    plan.push({ id: m.id, oldTitle: m.title, newTitle })
+  }
+  return plan
+}
+
 /** 分面栏单个维度行：维度名 + 一排可点二级标签 chip（通用组/产品组共用）。 */
 function FacetRow({ d, filterOptions, onToggle }: {
   d: TagDimension; filterOptions: Set<number>; onToggle: (id: number) => void
@@ -259,30 +277,56 @@ export default function Materials() {
 
   // 按结构化标签命名：直接用素材自身 tag_values 拼标题（零 LLM/配额）。
   // 卡片单条即时改；批量对「本页」已打标签的素材串行改，名字撞了补 -2/-3 后缀去重。
+  // 撤销 toast：重命名不可逆（旧标题被覆盖），完成后给 6 秒撤销窗口（点了才还原）。
+  const showUndoToast = (msg: string, undo: () => void) =>
+    toast((tst) => (
+      <span className="flex items-center gap-3">
+        <span>{msg}</span>
+        <button onClick={() => { toast.dismiss(tst.id); undo() }}
+          className="shrink-0 text-accent font-medium hover:underline">{t.common.undo}</button>
+      </span>
+    ), { duration: 6000 })
+
+  // 执行 / 撤销共用：逐条 PUT，返回真正改动了的项（供撤销）。单条失败跳过不拖累其余。
+  const applyRename = async (plan: RenamePlanItem[]) => {
+    const done: RenamePlanItem[] = []
+    for (const it of plan) {
+      try { await materialsApi.update(it.id, { title: it.newTitle }); done.push(it) } catch { /* skip */ }
+    }
+    qc.invalidateQueries({ queryKey: ['materials'] })
+    return done
+  }
+  const undoRename = async (items: RenamePlanItem[]) => {
+    for (const it of items) {
+      try { await materialsApi.update(it.id, { title: it.oldTitle }) } catch { /* skip */ }
+    }
+    qc.invalidateQueries({ queryKey: ['materials'] })
+    toast.success(t.materials.renameUndone(items.length))
+  }
+
   const renameOneByTags = async (m: MaterialOut) => {
     const name = composeNameFromTagValues(m.tag_values ?? [])
     if (!name) { toast(t.materials.nameByTagsNoTags); return }
     if (name === m.title) { toast(t.materials.nameByTagsSame); return }
-    await materialsApi.update(m.id, { title: name })
-    qc.invalidateQueries({ queryKey: ['materials'] })
-    toast.success(t.materials.nameByTagsDone)
+    const item: RenamePlanItem = { id: m.id, oldTitle: m.title, newTitle: name }
+    await applyRename([item])
+    showUndoToast(t.materials.nameByTagsDone, () => undoRename([item]))
   }
-  const renameByTagsBatch = async () => {
-    const targets = materials.filter(m => composeNameFromTagValues(m.tag_values ?? []))
-    if (targets.length === 0) { toast(t.materials.nameByTagsBatchNone); return }
-    if (!window.confirm(t.materials.nameByTagsBatchConfirm(targets.length))) return
-    const seen = new Map<string, number>()
-    let done = 0
-    for (const m of targets) {
-      const base = composeNameFromTagValues(m.tag_values)
-      const dup = seen.get(base) ?? 0
-      seen.set(base, dup + 1)
-      const name = dup === 0 ? base : `${base}-${dup + 1}`
-      if (name === m.title) continue
-      try { await materialsApi.update(m.id, { title: name }); done++ } catch { /* 单条失败跳过 */ }
-    }
-    qc.invalidateQueries({ queryKey: ['materials'] })
-    toast.success(t.materials.nameByTagsBatchResult(done))
+  // 批量：点按钮先算计划、开预览 modal（列旧名→新名），确认后才执行 + 给撤销。
+  const [renamePlan, setRenamePlan] = useState<RenamePlanItem[] | null>(null)
+  const [renaming, setRenaming] = useState(false)
+  const openRenameBatch = () => {
+    const plan = computeRenamePlan(materials)
+    if (plan.length === 0) { toast(t.materials.nameByTagsBatchNone); return }
+    setRenamePlan(plan)
+  }
+  const confirmRenameBatch = async () => {
+    if (!renamePlan) return
+    setRenaming(true)
+    const done = await applyRename(renamePlan)
+    setRenaming(false)
+    setRenamePlan(null)
+    if (done.length > 0) showUndoToast(t.materials.nameByTagsBatchResult(done.length), () => undoRename(done))
   }
 
   // 按标题解析补标（P0 的镜像动作）：对「本页」零结构化标签且已归属游戏的素材，
@@ -1010,7 +1054,7 @@ export default function Materials() {
             </button>
           )}
           {materials.some(m => m.tag_values?.length) && (
-            <button type="button" onClick={renameByTagsBatch}
+            <button type="button" onClick={openRenameBatch}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-default text-secondary hover:text-accent hover:border-accent/40 transition-colors">
               <Wand2 size={13} /> {t.materials.nameByTagsBatch}
             </button>
@@ -1056,6 +1100,43 @@ export default function Materials() {
       </div>
 
       <MaterialAnalysisDrawer material={analyzing} onClose={() => setAnalyzing(null)} />
+
+      {/* 批量重命名预览 modal：列旧名→新名，看清后果再确认（治误触 + 「确认了不知道改成啥」）。 */}
+      {renamePlan && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => { if (!renaming) setRenamePlan(null) }}>
+          <div className="bg-surface border border-strong rounded-2xl shadow-pop w-full max-w-lg p-5 space-y-4"
+            onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <div className="eyebrow text-muted">{t.materials.renamePreviewTitle}</div>
+              <button onClick={() => { if (!renaming) setRenamePlan(null) }} className="text-muted hover:text-primary transition-colors">
+                <X size={16} />
+              </button>
+            </div>
+            <p className="text-xs text-secondary">{t.materials.renamePreviewHint(renamePlan.length)}</p>
+            <div className="max-h-72 overflow-y-auto space-y-1.5 rounded-lg border border-default bg-elevated/30 p-2.5">
+              {renamePlan.slice(0, 30).map(it => (
+                <div key={it.id} className="text-[11px] leading-snug">
+                  <span className="text-muted line-through break-all">{it.oldTitle}</span>
+                  <span className="text-accent mx-1.5">→</span>
+                  <span className="text-primary break-all">{it.newTitle}</span>
+                </div>
+              ))}
+              {renamePlan.length > 30 && (
+                <div className="text-[11px] text-muted pt-1">… {t.materials.renamePreviewMore(renamePlan.length - 30)}</div>
+              )}
+            </div>
+            <div className="flex justify-end gap-2 border-t border-default pt-4">
+              <button onClick={() => setRenamePlan(null)} disabled={renaming}
+                className="px-4 py-2 text-sm text-secondary hover:text-primary disabled:opacity-50 transition-colors">{t.common.cancel}</button>
+              <button onClick={confirmRenameBatch} disabled={renaming}
+                className="px-5 py-2 bg-accent hover:brightness-110 disabled:opacity-50 rounded-lg text-sm font-semibold text-white transition-all">
+                {renaming ? t.common.saving : t.materials.renamePreviewConfirm(renamePlan.length)}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
