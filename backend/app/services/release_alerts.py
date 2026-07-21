@@ -2110,10 +2110,45 @@ async def _monthly_newcomer_survival(rep_rows: list, cap: int):
              "surviving": surviving, "dropped": dropped}, climbing[:cap])
 
 
-async def build_monthly_market_rollup(days: int, cap: int) -> Optional[tuple[str, str]]:
-    """月度市场复盘卡：名次净变动 + 新品存活小结 + 赛道升降温（读时算本地库，零 ST）。
+async def _monthly_group_activity(rep_rows: list, cap: int):
+    """近窗口 SLG 新品按资本集团聚合（报表口径，零 ST）。返回 [(group_name, count, [新品名..]) ..]
+    按新品数降序、cap 截断；无一款归属到任何集团 → None。
 
-    补 digest 阅后即焚、无复利视图断层——回答「这个月 SLG 市场发生了什么」。三段都无内容
+    只统计**归属到已建档主体、且该主体属于某资本集团**的新品——回答「哪个资本系今年在
+    密集铺新品」（元趣系一次上 3 款马甲之类）。独立主体 / 未归属新品不进本段（它们没有
+    「集团」维度，段②新品存活已覆盖总量）。集团归属复用 publisher_groups，与厂商主体页
+    /月报口径同源。
+    """
+    if not rep_rows:
+        return None
+    from app.services.newcomer_log import attribute_entities
+    from app.services.publisher_groups import load_groups
+    from app.database import AsyncSessionLocal
+    attributed = await attribute_entities(rep_rows)  # {row.id: (entity_id, name, is_slg)}
+    async with AsyncSessionLocal() as db:
+        groups = await load_groups(db)
+    by_group: dict[int, dict] = {}  # group_id -> {name, apps:set, sample:list}
+    for r in rep_rows:
+        ent = attributed.get(r.id)
+        if not ent or ent[0] is None:
+            continue
+        g = groups.get(ent[0])
+        if not g:                       # 归属主体不属任何集团 → 跳过（独立主体无集团维度）
+            continue
+        bucket = by_group.setdefault(g.group_id, {"name": g.group_name, "apps": set(), "sample": []})
+        if r.app_id not in bucket["apps"]:
+            bucket["apps"].add(r.app_id)
+            bucket["sample"].append(r.name or r.app_id)
+    if not by_group:
+        return None
+    ranked = sorted(by_group.values(), key=lambda b: (-len(b["apps"]), b["name"]))
+    return [(b["name"], len(b["apps"]), b["sample"]) for b in ranked[:cap]]
+
+
+async def build_monthly_market_rollup(days: int, cap: int) -> Optional[tuple[str, str]]:
+    """月度市场复盘卡：名次净变动 + 新品存活 + 赛道升降温 + 资本集团动态（读时算本地库，零 ST）。
+
+    补 digest 阅后即焚、无复利视图断层——回答「这个月 SLG 市场发生了什么」。四段都无内容
     → None（不发空卡）。仅维护者群（见 send_monthly_market_rollup）。返回 (title, text)。
     """
     rep_rows = await _collect_slg_newcomer_reps(days)
@@ -2123,7 +2158,8 @@ async def build_monthly_market_rollup(days: int, cap: int) -> Optional[tuple[str
     survival = await _monthly_newcomer_survival(rep_rows, cap)
     from app.services.newcomers import compute_subgenre_pulse
     _pulse_total, pulse_buckets = await compute_subgenre_pulse(days)
-    if not climbers and not fallers and survival is None and not pulse_buckets:
+    group_activity = await _monthly_group_activity(rep_rows, cap)
+    if not climbers and not fallers and survival is None and not pulse_buckets and not group_activity:
         return None
 
     today = utcnow_naive().strftime("%Y-%m-%d")
@@ -2163,6 +2199,14 @@ async def build_monthly_market_rollup(days: int, cap: int) -> Optional[tuple[str
             d = b["delta"]
             arrow = f"↑{d}" if d > 0 else (f"↓{-d}" if d < 0 else "→持平")
             lines.append(f"- **{b['subgenre']}** {b['count']} 款新品（{arrow}）")
+        sections.append("\n".join(lines))
+
+    if group_activity:
+        lines = [f"\n\n**🏢 资本集团动态（近 {days} 天各资本系铺新品，仅已建档集团）**"]
+        for name, n, sample in group_activity:
+            shown = "、".join(_md_name(s) for s in sample[:3])
+            more = f" 等 {n} 款" if n > 3 else ""
+            lines.append(f"- **{_md_name(name)}** {n} 款新品：{shown}{more}")
         sections.append("\n".join(lines))
 
     return f"SLG 市场月报 {today}", "".join(sections)

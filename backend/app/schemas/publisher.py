@@ -150,6 +150,11 @@ class PublisherEntityOut(BaseModel):
     is_slg: bool
     brief: Optional[str] = None
     sort_order: int
+    # 资本集团（报表口径）：成员由 publisher_relations 推导，组名取 group_label（手工）
+    # 或根主体名。孤立主体两者皆 None = 不属任何集团（前端归「独立主体」桶）。
+    group_label: Optional[str] = None   # 本主体自己填的组名（仅根/任一成员需要填一次）
+    group_id: Optional[int] = None      # 组稳定键 = 根主体 id
+    group_name: Optional[str] = None    # 组展示名（推导结果）
     aliases: list[PublisherAliasOut] = []
     app_ids: list[PublisherAppIdOut] = []
     itunes_artists: list[PublisherItunesArtistOut] = []
@@ -188,6 +193,8 @@ class PublisherEntityUpdate(BaseModel):
     is_slg: Optional[bool] = None
     brief: Optional[str] = None
     sort_order: Optional[int] = None
+    # 资本集团报表名；传空串 = 清除（回退根主体名）
+    group_label: Optional[str] = None
 
 
 class PublisherProductOut(BaseModel):

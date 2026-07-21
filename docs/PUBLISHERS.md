@@ -61,7 +61,7 @@
 2. **游戏名指认母体**：旗下产品名最能定公司（三国志战略版→灵犀/阿里；Wolf Game→爱奇艺；Lands of Jail→益世界）。
 3. **关系类型按证据强弱**：`wholly_owned`（收购公告/100%）> `controlling`（媒体桥 + 同开发者账号）> `affiliate`（仅聚类/弱）> `minority`（纯参股，**不并组**）。查不到股权登记就别用 wholly_owned。
 4. **溯源分级**：registry / official_filing / official_platform / official_domain = 一手；media / reference / analysis / self_report = 二手。归属断言尽量挂一手；查不到就标 unverified，别臆测。**官方主域名最稳一手**（每家公司都有官网、URL 持久、`official_domain` 类型可直升 primary tier）。
-5. **资本方 / 集团根**：纯控股母体设 `is_slg=false`（标「资本方」）。集团 = 控制级 + 品牌型关联（`GROUP_EDGE_TYPES` = wholly_owned/controlling/affiliate）连通分量 ≥2。
+5. **资本方 / 集团根**：纯控股母体设 `is_slg=false`（标「资本方」）。集团 = 控制级 + 品牌型关联（`GROUP_EDGE_TYPES` = wholly_owned/controlling/affiliate）连通分量 ≥2；纯参股（minority）不并组（否则腾讯参股 10% 会把元趣系吞进腾讯系）。**报表口径（2026-07-20）**：集团**成员名单**由 `publisher_relations` 推导（`services/publisher_groups.py`，后端/前端同一套 `GROUP_EDGE_TYPES`，改一处要改两处），不落库；`publisher_entities.group_label` 只存**组名**（手工填在组内任一成员上、根优先，如元趣娱乐#35 → 「元趣系」，空则回退根主体名）。透出 `/publishers/` 每条带 `group_id`（=根 id）/`group_name`；消费：厂商主体页集团卡标题 + CSV「资本集团」列 + 月报「🏢 资本集团动态」段。
 6. **多品类大厂模式**：旗下既有真 SLG 又有非 SLG（Warner Bros / Bandai Namco / Koei Tecmo / Level Infinite 等），用 `is_slg=False` + 按 `app_id` 精确钉 SLG 单品（绝不能用 alias 否则会把非 SLG 拉进来污染合计榜）。
 7. **命名**：中国厂尽量用中文名（「中文 English」式，如「库卡游戏 Qookka」「游族 YOOZOO」）。
 8. **negative finding 戳记**：调研验证「无关系/无母体」也是结果。用 `【调研负面发现 YYYY-MM-DD】` 或 `【复查 negative YYYY-MM-DD】` 追加到 brief 锁死研究分支，下次别再回头查（抽屉里会折叠到「调研历史 N」）。

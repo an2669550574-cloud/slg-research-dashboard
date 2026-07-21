@@ -914,6 +914,11 @@ export interface PublisherEntity {
   is_slg: boolean
   brief: string | null
   sort_order: number
+  /** 资本集团（报表口径）：成员由股权关系推导（structural 边并组、参股不并组），
+   *  组名 = group_label（手工，打在组内任一成员上）或根主体名。孤立主体全为 null。 */
+  group_label: string | null
+  group_id: number | null
+  group_name: string | null
   aliases: PublisherAlias[]
   app_ids: PublisherAppId[]
   itunes_artists: PublisherItunesArtist[]
@@ -1044,6 +1049,8 @@ export interface PublisherEntityCreate {
   hq_region?: string | null
   is_slg?: boolean
   brief?: string | null
+  /** 资本集团报表名；空串 = 清除（回退根主体名）。 */
+  group_label?: string | null
   sort_order?: number
   aliases?: PublisherAliasCreate[]
   app_ids?: PublisherAppIdCreate[]

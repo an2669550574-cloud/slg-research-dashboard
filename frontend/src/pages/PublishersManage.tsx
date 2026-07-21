@@ -60,8 +60,9 @@ type EntityForm = {
   hq_region: string
   is_slg: boolean
   brief: string
+  group_label: string
 }
-const EMPTY_FORM: EntityForm = { name: '', name_en: '', hq_region: '', is_slg: true, brief: '' }
+const EMPTY_FORM: EntityForm = { name: '', name_en: '', hq_region: '', is_slg: true, brief: '', group_label: '' }
 // create 可携带 prefillAlias——从「调研缺口」点「建主体」时用 publisher 名预填表单 +
 // 自动作为初始 alias 一并提交（POST / 端点已支持 aliases 内联）。
 type Mode = { kind: 'closed' } | { kind: 'create'; prefillAlias?: string } | { kind: 'edit'; id: number }
@@ -228,7 +229,7 @@ export default function PublishersManage() {
     setMode({ kind: 'edit', id: e.id })
     setForm({
       name: e.name, name_en: e.name_en || '', hq_region: e.hq_region || '',
-      is_slg: e.is_slg, brief: e.brief || '',
+      is_slg: e.is_slg, brief: e.brief || '', group_label: e.group_label || '',
     })
     // 编辑表单在页面顶部，从抽屉里点编辑时收起抽屉避免遮挡
     setDetailId(null)
@@ -245,6 +246,8 @@ export default function PublishersManage() {
       hq_region: form.hq_region || null,
       is_slg: form.is_slg,
       brief: form.brief.trim() || null,
+      // 空串 = 清除组名（后端归一成 NULL，回退根主体名）
+      group_label: form.group_label.trim(),
     }
     if (mode.kind === 'create') {
       // 从「调研缺口」点过来的：把 publisher 名作为初始 alias 一并提交，省去手动再加。
@@ -357,7 +360,11 @@ export default function PublishersManage() {
   const renderGroupCard = (tile: GroupTile) => {
     const open = expandedGroups.has(tile.key)
     const totalProducts = tile.members.reduce((s, m) => s + (m.product_count ?? 0), 0)
+    const slgCount = tile.members.filter(m => m.is_slg).length
     const groupIcons = tile.members.flatMap(m => m.top_products).slice(0, 5)
+    // 组名取后端推导的报表名（手工 group_label 优先，如「元趣系」）。读组内任一成员即可
+    // ——每个成员都带同一个 group_name，故本地根的挑法与后端不同也不影响。
+    const groupName = tile.members.find(m => m.group_name)?.group_name ?? tile.root.name
     return (
       <div
         key={`g-${tile.key}`}
@@ -373,11 +380,11 @@ export default function PublishersManage() {
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
-              <span className="font-display font-bold text-primary truncate">{tile.root.name}</span>
+              <span className="font-display font-bold text-primary truncate">{groupName}</span>
               <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-brand-500/15 text-brand-300 font-medium">{tt.groupBadge}</span>
             </div>
             <div className="text-[11px] text-muted flex items-center gap-1.5 min-w-0">
-              <span className="truncate">{tt.groupMembers(tile.members.length)} · {tt.statProducts} {totalProducts}</span>
+              <span className="truncate">{tt.groupMembers(tile.members.length)} · {tt.groupSlgCount(slgCount)} · {tt.statProducts} {totalProducts}</span>
               {tile.bestRank < NO_RANK && (
                 <span className="shrink-0 inline-flex items-center gap-1 text-brand-300 font-data"
                   title={tile.bestMarket ?? ''}>
@@ -509,6 +516,8 @@ export default function PublishersManage() {
     downloadCsv(`publishers-overview-${date}.csv`, filtered, [
       { header: tt.exportColName, get: e => e.name },
       { header: tt.exportColNameEn, get: e => e.name_en },
+      // 资本集团列：报表侧按此透视（孤立主体留空，不伪造只有自己的集团）
+      { header: tt.exportColGroup, get: e => e.group_name ?? '' },
       { header: tt.exportColRegion, get: e => e.hq_region },
       { header: tt.exportColType, get: e => isCapital(e) ? tt.capitalBadge : tt.slgBadge },
       { header: tt.exportColProducts, get: e => e.product_count ?? 0 },
@@ -585,6 +594,18 @@ export default function PublishersManage() {
                 className="accent-brand-500" />
               {tt.isSlgLabel}
             </label>
+          </div>
+          <div>
+            {/* 资本集团报表名：成员名单由股权关系自动推导，这里只定组怎么叫（如「元趣系」）。
+                打在组内任一主体上都生效，实践中打在集团头上。 */}
+            <label className="block text-xs text-secondary mb-1">{tt.groupLabelLabel}</label>
+            <input
+              value={form.group_label}
+              onChange={e => setForm(f => ({ ...f, group_label: e.target.value }))}
+              placeholder={tt.groupLabelPlaceholder}
+              className={`w-full ${inputClass}`}
+            />
+            <p className="text-[10px] text-muted mt-1">{tt.groupLabelHint}</p>
           </div>
           <div>
             <label className="block text-xs text-secondary mb-1">{tt.briefLabel}</label>

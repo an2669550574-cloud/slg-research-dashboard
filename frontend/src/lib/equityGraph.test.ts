@@ -10,6 +10,7 @@ function rel(entityId: number, name: string, type: PublisherRelationType = 'cont
 function entity(id: number, name: string, extra: Partial<PublisherEntity> = {}): PublisherEntity {
   return {
     id, name, name_en: null, hq_region: null, is_slg: true, brief: null, sort_order: 0,
+    group_label: null, group_id: null, group_name: null,
     aliases: [], app_ids: [], itunes_artists: [], sources: [], provenance_tier: 'none',
     parents: [], children: [], product_count: 0, top_products: [],
     best_rank: null, best_rank_market: null,

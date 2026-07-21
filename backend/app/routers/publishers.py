@@ -482,10 +482,14 @@ async def _itunes_products(entity_id: int, db: AsyncSession) -> list[tuple]:
 
 def _build_out(e: PublisherEntity, aliases, app_ids, sources, parents, children,
                product_count: int | None, itunes_artists=(), top_products=(),
-               best_rank: int | None = None, best_market: str | None = None) -> PublisherEntityOut:
+               best_rank: int | None = None, best_market: str | None = None,
+               group=None) -> PublisherEntityOut:
     return PublisherEntityOut(
         id=e.id, name=e.name, name_en=e.name_en, hq_region=e.hq_region,
         is_slg=e.is_slg, brief=e.brief, sort_order=e.sort_order,
+        group_label=e.group_label,
+        group_id=group.group_id if group else None,
+        group_name=group.group_name if group else None,
         aliases=[PublisherAliasOut.model_validate(a) for a in aliases],
         app_ids=[PublisherAppIdOut.model_validate(a) for a in app_ids],
         itunes_artists=[PublisherItunesArtistOut.model_validate(a) for a in itunes_artists],
@@ -536,6 +540,9 @@ async def list_publishers(db: AsyncSession = Depends(get_db)):
     entity_ids = [e.id for e in entities]
     match_by_entity = _compute_all_matches(
         pairs, by_alias, by_appid, itunes_by_entity, rank_by_app, entity_ids)
+    # 资本集团归属（报表口径）：复用已查出的两份数据算，零额外查询
+    from app.services.publisher_groups import compute_groups
+    groups = compute_groups(entities, all_relations)
 
     out = []
     for e in entities:
@@ -544,7 +551,7 @@ async def list_publishers(db: AsyncSession = Depends(get_db)):
             e, by_alias.get(e.id, []), by_appid.get(e.id, []), by_source.get(e.id, []),
             by_parents.get(e.id, []), by_children.get(e.id, []),
             count, itunes_artists=by_artist.get(e.id, []), top_products=top,
-            best_rank=best_rank, best_market=best_market,
+            best_rank=best_rank, best_market=best_market, group=groups.get(e.id),
         ))
     return out
 
@@ -1112,15 +1119,21 @@ async def get_publisher(entity_id: int, db: AsyncSession = Depends(get_db)):
     count, top, best_rank, best_market = _match_for_entity(
         pairs, kw_tokens, {a.app_id for a in app_ids},
         await _itunes_products(e.id, db), rank_by_app, _alias_squash_set(aliases))
+    from app.services.publisher_groups import load_groups
     return _build_out(e, aliases, app_ids, sources, parents, children, count,
                       itunes_artists=await _itunes_artists(e.id, db), top_products=top,
-                      best_rank=best_rank, best_market=best_market)
+                      best_rank=best_rank, best_market=best_market,
+                      group=(await load_groups(db)).get(e.id))
 
 
 @router.put("/{entity_id}", response_model=PublisherEntityOut)
 async def update_publisher(entity_id: int, data: PublisherEntityUpdate, db: AsyncSession = Depends(get_db)):
     e = await _get_entity_or_404(entity_id, db)
-    for k, v in data.model_dump(exclude_none=True).items():
+    payload = data.model_dump(exclude_none=True)
+    # 组名传空串 = 清除（回退根主体名）；不存 "" 免得库里两种「没填」并存
+    if "group_label" in payload:
+        payload["group_label"] = payload["group_label"].strip() or None
+    for k, v in payload.items():
         setattr(e, k, v)
     await db.commit()
     await db.refresh(e)
@@ -1134,9 +1147,11 @@ async def update_publisher(entity_id: int, data: PublisherEntityUpdate, db: Asyn
     count, top, best_rank, best_market = _match_for_entity(
         pairs, kw_tokens, {a.app_id for a in app_ids},
         await _itunes_products(e.id, db), rank_by_app, _alias_squash_set(aliases))
+    from app.services.publisher_groups import load_groups
     return _build_out(e, aliases, app_ids, sources, parents, children, count,
                       itunes_artists=await _itunes_artists(e.id, db), top_products=top,
-                      best_rank=best_rank, best_market=best_market)
+                      best_rank=best_rank, best_market=best_market,
+                      group=(await load_groups(db)).get(e.id))
 
 
 @router.delete("/{entity_id}")
