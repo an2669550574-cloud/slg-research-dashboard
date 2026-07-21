@@ -351,6 +351,9 @@ export const en: Translations = {
     // structured facet filter bar (P3)
     facetFilterLabel: 'Facets',
     facetClear: (n: number) => `Clear ${n}`,
+    facetGroupMulti: 'Shared across products',
+    facetGroupScoped: (label: string, n: number) => `${label} only (${n})`,
+    facetGroupActive: (n: number) => `${n} selected`,
     // aggregation analysis (P4)
     aggTitle: 'Aggregation',
     aggHint: 'Material distribution across structured tags within the current filter scope',
@@ -679,6 +682,15 @@ export const en: Translations = {
     copyTemplateAllSkipped: (s: number) => `Nothing new to copy: ${s} same-name dimension(s) already visible to the target`,
     copyTemplateFailed: 'Copy failed',
     copyTemplateHint: 'Clone semantics: edits on the new product never touch the source; generic dimensions already apply to every product and are not copied',
+    // reorder + collapse
+    moveUp: 'Move up',
+    moveDown: 'Move down',
+    moveTop: 'Move to top',
+    reorderFailed: 'Reorder failed',
+    collapse: 'Collapse',
+    expand: 'Expand',
+    collapseAll: 'Collapse all',
+    expandAll: 'Expand all',
     productViewEmpty: 'Pick a product above first',
     noProducts: 'No products available',
   },

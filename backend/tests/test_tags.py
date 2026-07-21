@@ -390,3 +390,37 @@ async def test_copy_template_validation(client):
         "source_app_id": "com.no.dims", "target_app_id": "com.tgt",
     })
     assert r.status_code == 404
+
+
+# ── 一级标签重排（上移/下移/置顶）──────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_reorder_dimensions(client):
+    """reorder 按传入顺序写 sort_order=0..N-1，GET 按新序返回。中文维度名。"""
+    a = (await client.post("/api/tags/dimensions", json={"name": "路型", "value_type": "text"})).json()
+    b = (await client.post("/api/tags/dimensions", json={"name": "桶子", "value_type": "text"})).json()
+    c = (await client.post("/api/tags/dimensions", json={"name": "角色", "value_type": "text"})).json()
+
+    # 置顶「角色」→ 顺序 c,a,b
+    r = await client.put("/api/tags/dimensions/reorder",
+                         json={"ordered_ids": [c["id"], a["id"], b["id"]]})
+    assert r.status_code == 200 and r.json()["reordered"] == 3
+    names = [d["name"] for d in (await client.get("/api/tags/dimensions")).json()]
+    assert names == ["角色", "路型", "桶子"]
+
+    # 再把「桶子」上移一位 → c,b,a
+    r = await client.put("/api/tags/dimensions/reorder",
+                         json={"ordered_ids": [c["id"], b["id"], a["id"]]})
+    assert r.status_code == 200
+    names = [d["name"] for d in (await client.get("/api/tags/dimensions")).json()]
+    assert names == ["角色", "桶子", "路型"]
+
+
+@pytest.mark.asyncio
+async def test_reorder_dimensions_missing_id_404(client):
+    a = (await client.post("/api/tags/dimensions", json={"name": "路型", "value_type": "text"})).json()
+    r = await client.put("/api/tags/dimensions/reorder",
+                         json={"ordered_ids": [a["id"], 99999]})
+    assert r.status_code == 404
+    # 回滚：原维度 sort_order 不被部分写坏（仍能正常列出）
+    assert len((await client.get("/api/tags/dimensions")).json()) == 1

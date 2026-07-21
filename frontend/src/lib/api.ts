@@ -370,6 +370,9 @@ export const tagsApi = {
   // 模板复制（P1）：克隆源产品的专属维度（含选项）给目标产品，单事务幂等
   copyTemplate: (data: TagTemplateCopyInput): Promise<TagTemplateCopyOut> =>
     api.post('/tags/copy-template', data).then(r => r.data),
+  // 一级标签重排（上移/下移/置顶）：传完整维度 id 顺序，后端按下标写 sort_order
+  reorderDimensions: (orderedIds: number[]): Promise<{ reordered: number }> =>
+    api.put('/tags/dimensions/reorder', { ordered_ids: orderedIds }).then(r => r.data),
 }
 
 // AI 标签分析 Agent（P6）：跑报告 / 追问、会话回查、导出 md·csv。走公司网关，零 ST 配额。

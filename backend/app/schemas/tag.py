@@ -95,6 +95,19 @@ class TagScopeBatchOut(BaseModel):
     updated_options: int
 
 
+class TagReorderInput(BaseModel):
+    """重排一级标签顺序：前端传当前显示的完整维度 id 顺序，后端按下标写 sort_order。
+
+    上移/下移/置顶都在前端做本地数组操作，再提交完整顺序——比「相邻交换两个 sort_order」
+    稳（现有 sort_order 可能有并列/空洞，交换会撞车）。一次一个原子写、无中间态。
+    """
+    ordered_ids: list[int]
+
+
+class TagReorderOutput(BaseModel):
+    reordered: int
+
+
 class TagTemplateCopyInput(BaseModel):
     """以源产品的专属维度为模板，克隆一套给目标产品（新品建标签库场景）。"""
     source_app_id: str = Field(..., min_length=1)

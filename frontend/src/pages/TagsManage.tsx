@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
-import { Plus, Trash2, Pencil, X, Calendar, Type, Asterisk, Globe2, Package, Lock, Save, Copy } from 'lucide-react'
+import { Plus, Trash2, Pencil, X, Calendar, Type, Asterisk, Globe2, Package, Lock, Save, Copy, ChevronUp, ChevronDown, ArrowUpToLine, ChevronRight } from 'lucide-react'
 import { tagsApi, gamesApi } from '../lib/api'
 import { useT } from '../i18n'
 import { PageHeader } from '../components/PageHeader'
@@ -78,6 +78,42 @@ export default function TagsManage() {
     mutationFn: ({ optId, password }: { optId: number; password?: string }) => tagsApi.deleteOption(optId, password),
     onSuccess: () => { invalidate(); toast.success(tt.optDeleted) },
   })
+
+  // 维度排序（上移/下移/置顶）：乐观更新缓存里的顺序 + 提交完整 id 序，失败回滚重拉。
+  const reorderMut = useMutation({
+    mutationFn: (orderedIds: number[]) => tagsApi.reorderDimensions(orderedIds),
+    onMutate: async (orderedIds) => {
+      await qc.cancelQueries({ queryKey: QK })
+      const prev = qc.getQueryData<TagDimension[]>(QK)
+      if (prev) {
+        const byId = new Map(prev.map(d => [d.id, d]))
+        qc.setQueryData<TagDimension[]>(QK, orderedIds.map(id => byId.get(id)!).filter(Boolean))
+      }
+      return { prev }
+    },
+    onError: (_e, _v, ctx) => { if (ctx?.prev) qc.setQueryData(QK, ctx.prev); toast.error(tt.reorderFailed) },
+    onSettled: () => invalidate(),
+  })
+  const moveDim = (idx: number, dir: -1 | 1 | 'top') => {
+    const ids = dims.map(d => d.id)
+    if (dir === 'top') {
+      if (idx === 0) return
+      const [id] = ids.splice(idx, 1); ids.unshift(id)
+    } else {
+      const j = idx + dir
+      if (j < 0 || j >= ids.length) return
+      ;[ids[idx], ids[j]] = [ids[j], ids[idx]]
+    }
+    reorderMut.mutate(ids)
+  }
+
+  // 维度卡折叠态（本地，不持久化）：折叠后只留标题行，20+ 维度一屏看全、排序更快。
+  const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
+  const toggleCollapse = (id: number) =>
+    setCollapsed(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const allCollapsed = dims.length > 0 && dims.every(d => collapsed.has(d.id))
+  const toggleCollapseAll = () =>
+    setCollapsed(allCollapsed ? new Set() : new Set(dims.map(d => d.id)))
 
   function closeForm() { setMode({ kind: 'closed' }); setForm(EMPTY_DIM) }
   function openCreate() { setMode({ kind: 'create' }); setForm(EMPTY_DIM) }
@@ -241,11 +277,25 @@ export default function TagsManage() {
         <div className="text-center text-muted text-sm py-12 bg-surface border border-default rounded-xl">{tt.empty}</div>
       ) : (
         <div className="space-y-3">
-          {dims.map(d => (
+          <div className="flex items-center justify-end">
+            <button onClick={toggleCollapseAll}
+              className="inline-flex items-center gap-1 text-[11px] text-muted hover:text-primary transition-colors">
+              {allCollapsed ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
+              {allCollapsed ? tt.expandAll : tt.collapseAll}
+            </button>
+          </div>
+          {dims.map((d, idx) => {
+            const isCollapsed = collapsed.has(d.id)
+            return (
             <div key={d.id} className="bg-surface border border-default rounded-xl p-4 space-y-3">
               <div className="flex items-start justify-between gap-2">
                 <div className="flex items-center gap-2 flex-wrap min-w-0">
-                  <span className="font-display font-bold text-primary truncate">{d.name}</span>
+                  <button onClick={() => toggleCollapse(d.id)} title={isCollapsed ? tt.expand : tt.collapse}
+                    className="shrink-0 p-0.5 -ml-1 text-muted hover:text-primary transition-colors">
+                    {isCollapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+                  </button>
+                  <button onClick={() => toggleCollapse(d.id)}
+                    className="font-display font-bold text-primary truncate hover:text-brand-400 transition-colors">{d.name}</button>
                   <span className="inline-flex items-center gap-1 text-[10px] text-secondary border border-default bg-elevated rounded px-1.5 py-0.5 shrink-0">
                     {d.value_type === 'date' ? <Calendar size={10} /> : <Type size={10} />}
                     {d.value_type === 'date' ? tt.typeDate : tt.typeText}
@@ -258,6 +308,9 @@ export default function TagsManage() {
                   <span className="text-[10px] text-muted border border-default rounded px-1.5 py-0.5 shrink-0">
                     {d.allow_multi ? tt.badgeMulti : tt.badgeSingle}
                   </span>
+                  {d.value_type !== 'date' && (
+                    <span className="text-[10px] text-muted shrink-0">{tt.optionsLabel} {d.options.length}</span>
+                  )}
                   {/* 产品作用域徽标（S1）：通用 / 仅 N 个产品；hover 提示具体产品名 */}
                   {(() => {
                     const ids = d.app_ids ?? []
@@ -274,7 +327,14 @@ export default function TagsManage() {
                     )
                   })()}
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
+                <div className="flex items-center gap-0.5 shrink-0">
+                  <button onClick={() => moveDim(idx, 'top')} disabled={idx === 0 || reorderMut.isPending} title={tt.moveTop}
+                    className="p-1.5 text-muted hover:text-brand-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"><ArrowUpToLine size={14} /></button>
+                  <button onClick={() => moveDim(idx, -1)} disabled={idx === 0 || reorderMut.isPending} title={tt.moveUp}
+                    className="p-1.5 text-muted hover:text-brand-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"><ChevronUp size={14} /></button>
+                  <button onClick={() => moveDim(idx, 1)} disabled={idx === dims.length - 1 || reorderMut.isPending} title={tt.moveDown}
+                    className="p-1.5 text-muted hover:text-brand-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"><ChevronDown size={14} /></button>
+                  <span className="w-px h-4 bg-default mx-0.5" />
                   <button onClick={() => openEdit(d)} title={t.common.edit}
                     className="p-1.5 text-muted hover:text-brand-400 transition-colors"><Pencil size={14} /></button>
                   <button onClick={() => handleDeleteDim(d)} disabled={deleteDimMut.isPending} title={t.common.delete}
@@ -282,7 +342,7 @@ export default function TagsManage() {
                 </div>
               </div>
 
-              {d.value_type === 'date' ? (
+              {isCollapsed ? null : d.value_type === 'date' ? (
                 <p className="text-xs text-muted border-t border-default pt-3">{tt.dateNoOptions}</p>
               ) : (
                 <div className="border-t border-default pt-3 space-y-2">
@@ -327,7 +387,7 @@ export default function TagsManage() {
                 </div>
               )}
             </div>
-          ))}
+          )})}
         </div>
       ))}
 
