@@ -10,6 +10,7 @@ from app.schemas.tag import (
     TagOptionCreate, TagOptionUpdate, TagOptionOut,
     TagScopeItem, TagScopeBatchInput, TagScopeBatchOut,
     TagTemplateCopyInput, TagTemplateCopyOut,
+    TagReorderInput, TagReorderOutput,
     MaterialTagValueItem, MaterialTagValueInput, MaterialTagValuesPut,
     TagAggregateSubBucket, TagAggregateBucket, TagAggregateOut,
 )
@@ -42,6 +43,8 @@ __all__ = [
     "TagScopeBatchOut",
     "TagTemplateCopyInput",
     "TagTemplateCopyOut",
+    "TagReorderInput",
+    "TagReorderOutput",
     "MaterialTagValueItem",
     "MaterialTagValueInput",
     "MaterialTagValuesPut",

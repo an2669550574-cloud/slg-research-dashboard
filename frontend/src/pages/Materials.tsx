@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tansta
 import toast from 'react-hot-toast'
 import { materialsApi, gamesApi } from '../lib/api'
 import { PLATFORM_CONFIG } from '../lib/utils'
-import { ExternalLink, Trash2, Plus, Search, Download as DownloadIcon, Upload, Film as FilmIcon, Radio, Pencil, X, Check, AlertCircle, Loader2, Tag as TagIcon, Sparkles, SlidersHorizontal, Wand2, MessagesSquare } from 'lucide-react'
+import { ExternalLink, Trash2, Plus, Search, Download as DownloadIcon, Upload, Film as FilmIcon, Radio, Pencil, X, Check, AlertCircle, Loader2, Tag as TagIcon, Sparkles, SlidersHorizontal, Wand2, MessagesSquare, ChevronDown, ChevronRight } from 'lucide-react'
 import { MaterialPreview } from '../components/MaterialPreview'
 import { MaterialAnalysisDrawer } from '../components/MaterialAnalysisDrawer'
 import {
@@ -21,7 +21,7 @@ import { downloadCsv } from '../lib/csv'
 import { useT } from '../i18n'
 import { Pagination } from '../components/Pagination'
 import { QueryError } from '../components/QueryError'
-import { useDebouncedValue } from '../lib/hooks'
+import { useDebouncedValue, useLocalStorageState } from '../lib/hooks'
 import type { MaterialOut, TagDimension } from '../lib/types'
 
 const PAGE_SIZE = 12
@@ -31,6 +31,26 @@ const IMG_EXT = /\.(jpe?g|png|gif|webp)$/i
 // 后端按扩展名判 kind 并对 material_type 不符回 400；前端用同一套规则推断，避免误报。
 const inferType = (name: string) => (IMG_EXT.test(name) ? 'image' : 'video')
 const stem = (name: string) => name.replace(/\.[^.]+$/, '')
+
+/** 分面栏单个维度行：维度名 + 一排可点二级标签 chip（通用组/产品组共用）。 */
+function FacetRow({ d, filterOptions, onToggle }: {
+  d: TagDimension; filterOptions: Set<number>; onToggle: (id: number) => void
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span className="text-[11px] text-secondary min-w-[52px]">{d.name}</span>
+      {d.options.map(o => {
+        const active = filterOptions.has(o.id)
+        return (
+          <button key={o.id} onClick={() => onToggle(o.id)} title={o.value}
+            className={`px-2.5 py-0.5 rounded-md text-xs border transition-colors ${active ? 'bg-accent/15 border-accent/40 text-accent' : 'border-default text-secondary hover:border-strong hover:text-primary'}`}>
+            {o.value}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
 
 const inputClass =
   "w-full bg-elevated/60 border border-default rounded-lg px-3 py-2.5 text-sm text-primary placeholder:text-muted focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-colors"
@@ -139,6 +159,31 @@ export default function Materials() {
     next.has(optId) ? next.delete(optId) : next.add(optId)
     return next
   })
+  // 分面按产品作用域分组（治「维度多铺满屏」）：通用维度常驻，各产品专属维度折进可展开的组。
+  // 组 key = 单产品 app_id / 多产品维度归 '__multi__'。选了游戏时 facetable 已收敛，分组自然只剩少量。
+  const gameNameMap = useMemo(() => Object.fromEntries(allGames.map(g => [g.app_id, g.name])), [allGames])
+  const facetGroups = useMemo(() => {
+    const universal = facetable.filter(d => !(d.app_ids?.length))
+    const byKey = new Map<string, { key: string; label: string; dims: TagDimension[] }>()
+    for (const d of facetable) {
+      const ids = d.app_ids ?? []
+      if (ids.length === 0) continue
+      const key = ids.length === 1 ? ids[0] : '__multi__'
+      const label = ids.length === 1 ? (gameNameMap[ids[0]] || ids[0]) : t.materials.facetGroupMulti
+      if (!byKey.has(key)) byKey.set(key, { key, label, dims: [] })
+      byKey.get(key)!.dims.push(d)
+    }
+    // 含激活筛选的组要能一眼看到有没有选中：算每组已选数
+    const groups = [...byKey.values()].map(g => ({
+      ...g, activeCount: g.dims.reduce((n, d) => n + d.options.filter(o => filterOptions.has(o.id)).length, 0),
+    }))
+    groups.sort((a, b) => a.label.localeCompare(b.label))
+    return { universal, groups }
+  }, [facetable, filterOptions, gameNameMap, t])
+  // 展开的产品组（localStorage 记忆）；产品组默认折叠。含已选中项的组自动视作展开。
+  const [expandedFacetGroups, setExpandedFacetGroups] = useLocalStorageState<string[]>('mat.facetGroups', [])
+  const toggleFacetGroup = (key: string) => setExpandedFacetGroups(
+    expandedFacetGroups.includes(key) ? expandedFacetGroups.filter(k => k !== key) : [...expandedFacetGroups, key])
 
   // 结构化标签编辑器跟随的素材类型：上传按首个文件推断，其余看表单选择。
   const editorMaterialType = mode === 'upload' && !editing
@@ -913,20 +958,33 @@ export default function Materials() {
                 </button>
               )}
             </div>
-            {facetable.map(d => (
-              <div key={d.id} className="flex flex-wrap items-center gap-1.5">
-                <span className="text-[11px] text-secondary min-w-[52px]">{d.name}</span>
-                {d.options.map(o => {
-                  const active = filterOptions.has(o.id)
-                  return (
-                    <button key={o.id} onClick={() => toggleFacet(o.id)} title={o.value}
-                      className={`px-2.5 py-0.5 rounded-md text-xs border transition-colors ${active ? 'bg-accent/15 border-accent/40 text-accent' : 'border-default text-secondary hover:border-strong hover:text-primary'}`}>
-                      {o.value}
-                    </button>
-                  )
-                })}
-              </div>
+            {/* 通用维度：常驻显示 */}
+            {facetGroups.universal.map(d => (
+              <FacetRow key={d.id} d={d} filterOptions={filterOptions} onToggle={toggleFacet} />
             ))}
+            {/* 各产品专属维度：分组折叠（默认收起，含已选项或手动展开则显示） */}
+            {facetGroups.groups.map(g => {
+              const open = expandedFacetGroups.includes(g.key) || g.activeCount > 0
+              return (
+                <div key={g.key} className="border-t border-default/50 pt-1.5 mt-0.5">
+                  <button onClick={() => toggleFacetGroup(g.key)}
+                    className="flex items-center gap-1 text-[11px] text-muted hover:text-primary transition-colors">
+                    {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                    {t.materials.facetGroupScoped(g.label, g.dims.length)}
+                    {g.activeCount > 0 && (
+                      <span className="text-accent">· {t.materials.facetGroupActive(g.activeCount)}</span>
+                    )}
+                  </button>
+                  {open && (
+                    <div className="space-y-1.5 mt-1.5">
+                      {g.dims.map(d => (
+                        <FacetRow key={d.id} d={d} filterOptions={filterOptions} onToggle={toggleFacet} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         )}
         {/* 聚合分析（P4）：scope 跟随上方 material_type + 分面筛选；零 ST 配额。

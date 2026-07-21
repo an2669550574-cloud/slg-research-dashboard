@@ -374,6 +374,9 @@ export const zh = {
     // 结构化分面筛选栏（P3）
     facetFilterLabel: '分面',
     facetClear: (n: number) => `清除 ${n} 项`,
+    facetGroupMulti: '多产品共享',
+    facetGroupScoped: (label: string, n: number) => `${label} 专属（${n}）`,
+    facetGroupActive: (n: number) => `已选 ${n}`,
     // 聚合分析（P4）
     aggTitle: '聚合分析',
     aggHint: '按结构化标签统计当前筛选范围内的素材分布',
@@ -702,6 +705,15 @@ export const zh = {
     copyTemplateAllSkipped: (s: number) => `没有新复制：${s} 个同名维度目标产品已可见`,
     copyTemplateFailed: '复制失败',
     copyTemplateHint: '克隆语义：复制后给新产品增删选项不影响源产品；通用维度对所有产品本就可见，不参与复制',
+    // 排序 + 折叠
+    moveUp: '上移',
+    moveDown: '下移',
+    moveTop: '置顶',
+    reorderFailed: '排序失败',
+    collapse: '折叠',
+    expand: '展开',
+    collapseAll: '全部折叠',
+    expandAll: '全部展开',
     productViewEmpty: '先在上方选择一个产品',
     noProducts: '暂无可选产品',
   },

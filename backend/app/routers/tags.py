@@ -21,6 +21,7 @@ from app.schemas import (
     TagOptionCreate, TagOptionUpdate, TagOptionOut,
     TagScopeBatchInput, TagScopeBatchOut,
     TagTemplateCopyInput, TagTemplateCopyOut,
+    TagReorderInput, TagReorderOutput,
     TagAggregateOut, TagAggregateBucket, TagAggregateSubBucket,
 )
 from app.security import require_admin_password
@@ -279,6 +280,29 @@ async def create_dimension(data: TagDimensionCreate, db: AsyncSession = Depends(
     await db.commit()
     await db.refresh(d)
     return _dim_out(d, [], list(data.app_ids))
+
+
+@router.put("/dimensions/reorder", response_model=TagReorderOutput)
+async def reorder_dimensions(data: TagReorderInput, db: AsyncSession = Depends(get_db)):
+    """重排一级标签顺序（标签库「上移/下移/置顶」）。前端传完整维度 id 顺序，
+    后端按下标写 sort_order=0..N-1。任一 id 不存在 → 404 整体回滚（不静默）。
+
+    **必须先于 `PUT /dimensions/{dim_id}` 声明**（字面量段惯例，否则 'reorder' 被当
+    dim_id 走 int 转换失败返 422）。
+    """
+    ids = data.ordered_ids
+    if not ids:
+        return TagReorderOutput(reordered=0)
+    existing = set((await db.execute(select(TagDimension.id))).scalars().all())
+    missing = [i for i in ids if i not in existing]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"一级标签不存在：{missing}")
+    for idx, did in enumerate(ids):
+        await db.execute(
+            sa_update(TagDimension).where(TagDimension.id == did).values(sort_order=idx)
+        )
+    await db.commit()
+    return TagReorderOutput(reordered=len(ids))
 
 
 @router.put("/dimensions/{dim_id}", response_model=TagDimensionOut)
