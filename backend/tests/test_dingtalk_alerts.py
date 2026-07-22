@@ -741,6 +741,88 @@ def test_digest_does_not_mutate_input_order():
     assert [c["country"] for c in per_combo] == ["KR", "US"]   # 入参顺序不变
 
 
+def test_digest_dedup_same_game_across_combos_and_charts():
+    """同一款 SLG 新品同日在多个市场/榜各检出一次 → 只主渲染一次 + 「🔁 另见」附注保留信号。
+
+    2026-07-22 真实事故：Lordrush（点点互动）同日 US·安卓下载榜 #52 + 德国·iOS 收入榜 #97
+    （iOS track id ≠ 安卓包名 → 旧 app_id 口径把跨平台同款当两个新品各列一遍）。去重键升到
+    「游戏名+厂商」：primary 落最高权重 combo（US·安卓 1.35 > 德国·iOS 1.05），德国那条折叠成
+    附注。TL;DR「✨新品」随之按游戏去重（1，而非 app_id 口径的 2）。"""
+    from app.services import release_alerts as ra
+    pub = "Century Games Innovation Pte. Ltd."
+    us_free = {"newcomers": [{"app_id": "com.ceng.lordrush", "rank": 52, "name": "Lordrush",
+                              "publisher": pub, "is_slg": True, "is_reentry": False}]}
+    de_gross = {"newcomers": [{"app_id": "6753000001", "rank": 97, "name": "Lordrush",
+                               "publisher": pub, "is_slg": True, "is_reentry": False}]}
+    per_combo = [
+        {"country": "US", "platform": "android", "movement": None, "market": None,
+         "publisher": None, "free_market": us_free, "free_publisher": None},
+        {"country": "DE", "platform": "ios", "movement": None, "market": de_gross, "publisher": None},
+    ]
+    _, text, _ = ra.build_daily_digest(per_combo, "2026-07-22")
+    # 正文只出现一次「Lordrush」粗体标题（primary），另一处折叠成附注
+    assert text.count("**Lordrush**") == 1, text
+    # primary 落 US·安卓下载榜（高权重），德国收入榜折叠进「🔁 另见」附注
+    assert "⬇️ **Lordrush** 下载榜 **#52**" in text
+    assert "🔁 另见：德国 · iOS 收入榜 #97" in text
+    # TL;DR「✨新品」按游戏去重 = 1（旧 app_id 口径会是 2）
+    assert "✨ 新品 1" in text and "✨ 新品 2" not in text
+    # 不 mutate 入参：原 newcomer dict 不被打上 dedup_skip / also_seen
+    assert "dedup_skip" not in de_gross["newcomers"][0]
+    assert "also_seen" not in us_free["newcomers"][0]
+
+
+def test_digest_dedup_keeps_distinct_same_name_different_publisher():
+    """同名不同厂 → 视为异款，不合并（各自渲染）。去重键含厂商，失败方向是「少去重」而非错并。"""
+    from app.services import release_alerts as ra
+    a = {"newcomers": [{"app_id": "us_a", "rank": 5, "name": "Kingdom", "publisher": "Studio A",
+                        "is_slg": True, "is_reentry": False}]}
+    b = {"newcomers": [{"app_id": "jp_b", "rank": 6, "name": "Kingdom", "publisher": "Studio B",
+                        "is_slg": True, "is_reentry": False}]}
+    per_combo = [
+        {"country": "US", "platform": "ios", "movement": None, "market": a, "publisher": None},
+        {"country": "JP", "platform": "ios", "movement": None, "market": b, "publisher": None},
+    ]
+    _, text, _ = ra.build_daily_digest(per_combo, "2026-07-22")
+    assert text.count("**Kingdom**") == 2          # 两款各自渲染
+    assert "🔁 另见" not in text                     # 无错误合并附注
+    assert "✨ 新品 2" in text
+
+
+def test_digest_dedup_catches_publisher_layer_via_is_slg_fallback(monkeypatch):
+    """真实两层形状回归：归属到已建档 SLG 主体的游戏同时落 market 层（带 is_slg 字段）+ publisher
+    层（detect_publisher_newcomers 不加 is_slg，只有 entity_id）。去重键靠 `is_slg(app_id,
+    publisher)` 回退认出 publisher 层副本——否则它漏成 🏢 厂商新品照样重复（2026-07-22 真实
+    Lordrush 德国·iOS 收入榜正是这层）。且同一款同 combo 落两层时「🔁 另见」只记一次。"""
+    from app.services import release_alerts as ra
+    pub = "Century Games Innovation Pte. Ltd."
+    monkeypatch.setattr("app.services.slg_publishers.is_slg",
+                        lambda aid=None, publisher=None: publisher == pub)
+    us_free = {"newcomers": [{"app_id": "com.ceng.lordrush", "rank": 52, "name": "Lordrush",
+                              "publisher": pub, "is_slg": True, "is_reentry": False}]}
+    de_market = {"newcomers": [
+        {"app_id": "6753000001", "rank": 97, "name": "Lordrush", "publisher": pub,
+         "is_slg": True, "is_reentry": False},
+        {"app_id": "6753000002", "rank": 45, "name": "Frost Siege", "publisher": pub,
+         "is_slg": True, "is_reentry": False}]}
+    # publisher 层同一款：无 is_slg 字段、仅 entity_id/entity_name（真实 detect_publisher_newcomers 形状）
+    de_pub = {"newcomers": [{"app_id": "6753000001", "rank": 97, "name": "Lordrush",
+                             "publisher": pub, "entity_id": 42, "entity_name": "点点互动",
+                             "is_reentry": False}]}
+    per_combo = [
+        {"country": "US", "platform": "android", "movement": None, "market": None,
+         "publisher": None, "free_market": us_free, "free_publisher": None},
+        {"country": "DE", "platform": "ios", "movement": None, "market": de_market, "publisher": de_pub},
+    ]
+    _, text, _ = ra.build_daily_digest(per_combo, "2026-07-22")
+    assert text.count("**Lordrush**") == 1          # 只主渲染一次（market + publisher 两副本都 skip）
+    assert "🏢" not in text                          # publisher 层副本没漏成 🏢 厂商新品
+    assert text.count("🔁 另见") == 1                # 同 combo 两层，附注只记一次
+    assert "德国 · iOS 收入榜 #97" in text
+    assert "Frost Siege" in text                     # DE combo 的非重复内容照常渲染
+    assert "✨ 新品 2" in text                        # Lordrush + Frost Siege = 2 款（非 app_id 口径的 3）
+
+
 # ── P0-2: 游戏名/厂商名 markdown 转义 + 截断 ──────────────────────────────────
 
 def test_md_name_escapes_and_truncates():
