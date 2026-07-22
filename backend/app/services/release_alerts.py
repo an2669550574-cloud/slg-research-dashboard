@@ -169,6 +169,23 @@ def _block(parts) -> str:
     return "\n\n".join(p for p in parts if p)
 
 
+# chart_type → 中文榜名，供跨 combo 去重的「🔁 另见」附注区分收入榜 / 下载榜。
+_CHART_CN = {"grossing": "收入榜", "free": "下载榜"}
+
+
+def _also_seen_suffix(n: dict) -> str:
+    """跨 combo/榜去重后，主渲染行下的「🔁 另见」附注：同一款游戏在别的市场/榜也检出过
+    （多市场同日冒头本身是有价值的信号，去重不该把它悄悄抹掉）。无 also_seen 则空串。"""
+    also = n.get("also_seen")
+    if not also:
+        return ""
+    segs = [f"{_market_label(a['country'], a['platform'])} "
+            f"{_CHART_CN.get(a.get('chart_type'), '榜')} "
+            f"{('#' + str(a['rank'])) if a.get('rank') else '上榜'}"
+            for a in also]
+    return "> 🔁 另见：" + "、".join(segs)
+
+
 def _link_line(app_id: str, view: str, *, country=None, platform=None,
                with_store: bool = False, articles=None) -> str:
     """新品行的链接段，合并成一行（少续行 = 钉钉移动端更清爽）：
@@ -586,7 +603,8 @@ def build_newcomer_lines(market: dict, publisher: dict,
     entities = entities or {}
     summaries = summaries or {}
     lines = []
-    market_real = [n for n in (market.get("newcomers") or []) if not n.get("is_reentry")]
+    market_real = [n for n in (market.get("newcomers") or [])
+                   if not n.get("is_reentry") and not n.get("dedup_skip")]
     # 「待识别新厂」(is_slg=false) 限量 + 折叠：次市场批量同步日会一次涌进几十个未识别新面孔
     # （混足球/塔防/恐怖等非 SLG 噪声，genre 仅本地化大类无法精准门控）。只详列前
     # DIGEST_MARKET_LEAD_TOPN 个（按榜排名），其余折叠成一行——建档线索仍可经折叠行→看板追溯，
@@ -619,6 +637,7 @@ def build_newcomer_lines(market: dict, publisher: dict,
             f"> {inner}" if inner else "",
             f"📝 {summaries.get(aid)}" if summaries.get(aid) else "",   # LLM 一句话：领导秒懂
             action,
+            _also_seen_suffix(n),   # 跨 combo/榜同款去重后的「🔁 另见」附注
         ]))
     lead_hidden = lead_total - lead_shown
     if lead_hidden > 0:
@@ -629,7 +648,8 @@ def build_newcomer_lines(market: dict, publisher: dict,
     # 市场层 Top50 时，✨ 市场行与 🏢 厂商行会把同一游戏渲染两遍——市场行先到先得
     # （厂商归属已在其 meta 行内），主体层只补市场层没露出的深名次行。
     publisher_real = [n for n in (publisher.get("newcomers") or [])
-                      if not n.get("is_reentry") and n.get("app_id") not in shown_market_ids]
+                      if not n.get("is_reentry") and not n.get("dedup_skip")
+                      and n.get("app_id") not in shown_market_ids]
     for n in publisher_real[:10]:
         aid = n.get("app_id")
         rank = f"#{n['rank']}" if n.get("rank") else "进榜"
@@ -642,6 +662,7 @@ def build_newcomer_lines(market: dict, publisher: dict,
             f"> {inner}" if inner else "",
             f"📝 {summaries.get(aid)}" if summaries.get(aid) else "",
             action,
+            _also_seen_suffix(n),   # 跨 combo/榜同款去重后的「🔁 另见」附注
         ]))
     return lines
 
@@ -665,11 +686,11 @@ def build_free_newcomer_lines(market: dict, publisher: dict,
     summaries = summaries or {}
     merged: dict[str, dict] = {}
     for n in (market.get("newcomers") or []):
-        if n.get("is_slg") and not n.get("is_reentry"):
+        if n.get("is_slg") and not n.get("is_reentry") and not n.get("dedup_skip"):
             merged[n["app_id"]] = n
     for n in (publisher.get("newcomers") or []):
         aid = n.get("app_id")
-        if n.get("is_reentry") or aid in merged:
+        if n.get("is_reentry") or n.get("dedup_skip") or aid in merged:
             continue
         # 主体行也按 is_slg 门控（必须 SLG 才推）。行级 is_slg 先查——digest 拼卡前
         # 已做跨 combo OR 传播回写，比 live 判定多认得「别的 combo 判过 SLG」的行。
@@ -690,6 +711,7 @@ def build_free_newcomer_lines(market: dict, publisher: dict,
             # 下载榜是「收入未起、下载先爆」的最早期信号，领导最缺先验——📝 与收入榜行对齐
             f"📝 {summaries.get(aid)}" if summaries.get(aid) else "",
             action,
+            _also_seen_suffix(n),   # 跨 combo/榜同款去重后的「🔁 另见」附注
         ]))
     return lines
 
@@ -948,7 +970,7 @@ def _digest_tldr(per_combo: list[dict], version_changes, region_changes,
                     _MOVEMENT_KEYS)
         for key in _NEWCOMER_SOURCE_KEYS:
             for x in ((c.get(key) or {}).get("newcomers") or []):
-                if not x.get("is_reentry") and x.get("app_id"):
+                if not x.get("is_reentry") and not x.get("dedup_skip") and x.get("app_id"):
                     new_apps.add(x["app_id"])
     bits = []
     if own_match_count:
@@ -991,14 +1013,14 @@ def _collect_scored_items(per_combo: list[dict],
             for e in mv.get(key) or []:
                 add(kind, e, country, platform)
         for e in (c.get("market") or {}).get("newcomers") or []:
-            if not e.get("is_reentry"):
+            if not e.get("is_reentry") and not e.get("dedup_skip"):
                 add("market_newcomer", e, country, platform)
         for e in (c.get("publisher") or {}).get("newcomers") or []:
-            if not e.get("is_reentry"):
+            if not e.get("is_reentry") and not e.get("dedup_skip"):
                 add("publisher_newcomer", e, country, platform)
         for key in ("free_market", "free_publisher"):
             for e in (c.get(key) or {}).get("newcomers") or []:
-                if e.get("is_reentry"):
+                if e.get("is_reentry") or e.get("dedup_skip"):
                     continue
                 slg = e.get("is_slg") if key == "free_market" else is_slg(e.get("app_id"), e.get("publisher"))
                 if slg:
@@ -1063,6 +1085,85 @@ def _combo_sort_key(c: dict) -> tuple[float, float]:
     return (mw, best)
 
 
+# combo 各新品层 → 榜种（grossing 收入榜 / free 下载榜），供去重附注标注「另见」在哪个榜。
+_CHART_OF_KEY = {"market": "grossing", "publisher": "grossing",
+                 "free_market": "free", "free_publisher": "free"}
+
+
+def _game_dedup_key(n: dict) -> Optional[tuple[str, str]]:
+    """跨 combo/榜「同一款游戏」去重键 = (规范化游戏名, 规范化厂商)。仅对**已识别 SLG 非回归**
+    行去重——待识别新厂 / 回归项走各自通道、门控不同，不并。
+
+    SLG 判定与各渲染段门控**逐层对齐**：market/free_market 层的行带 `is_slg` 字段
+    （newcomers._row_dict + detect_market_newcomers）；publisher/free_publisher 层**不带**
+    （detect_publisher_newcomers 只加 entity_id/entity_name）——故回退 `is_slg(app_id, publisher)`
+    白名单查。缺了这层回退，归属到已建档 SLG 主体的**厂商层**新品会漏去重：真实 Lordrush
+    德国·iOS 收入榜同时落在 market 层（is_slg=True）和 publisher 层（无 is_slg），只按 is_slg
+    字段去重会跳掉 market 副本、却把 publisher 副本漏成 🏢 厂商新品照样重复渲染。
+
+    厂商进键做兜底：同名不同厂视为异款（同名 SLG 极罕见；iOS/Android 同款厂商文本实测一致，
+    见 Lordrush）。失败方向是**少去重**（厂商文本某端缺失→键不同→各自渲染）而非错并，安全。"""
+    from app.services.slg_publishers import is_slg
+    if n.get("is_reentry"):
+        return None
+    if not (n.get("is_slg") or is_slg(n.get("app_id"), n.get("publisher"))):
+        return None
+    name = " ".join(str(n.get("name") or "").split()).casefold()
+    if not name:
+        return None
+    pub = " ".join(str(n.get("publisher") or n.get("entity_name") or "").split()).casefold()
+    return (name, pub)
+
+
+def _dedup_games_across_combos(ordered: list[dict]) -> list[dict]:
+    """跨 combo/榜「同一款游戏」去重：同名 SLG 新品同日在多个市场/榜各检出一次时，只在重要度
+    最高的 combo 主渲染，其余折叠成主行下的「🔁 另见」附注（保留多市场同日起量这个真信号）。
+
+    起因：整卡的新品去重锚点原本全是 app_id，而 iOS 数字 track id ≠ Android 包名 ≠ 同款，
+    于是同一款游戏跨平台被当两个新品各列一遍（2026-07-22 Lordrush：US·安卓下载榜 + 德国·iOS
+    收入榜）。这里把去重维度升到「游戏名+厂商」（见 `_game_dedup_key`），一处标注、全下游统一消费。
+
+    返回**标注后的新 per_combo**（浅拷 combo/seg + 拷贝参与去重的 newcomer 再打标，绝不 mutate
+    入参——领导/维护者两卡共用同一份 per_combo 先后各调一次）。`ordered` 须已按 `_combo_sort_key`
+    降序：首个遇到某 key 的行即 primary，后续同 key 行标 `dedup_skip=True` 并把其市场/榜/名次
+    汇入 primary 的 `also_seen`。下游所有出口（渲染段 / TL;DR / 今日重点 / 按钮）统一跳过
+    `dedup_skip`，计数与正文一致。
+
+    附注做位置去重（`locs`）：同一款游戏可能同 combo 同时落在 market 层（✨）和 publisher 层
+    （🏢）——两副本都要 skip，但「另见」只记一次；也不把 primary **自身**所在位置写进附注。"""
+    seen: dict[tuple[str, str], dict] = {}   # gkey -> {"prim": nn, "own": loc, "locs": set()}
+    out: list[dict] = []
+    for c in ordered:
+        nc = dict(c)
+        for key in _NEWCOMER_SOURCE_KEYS:
+            seg = c.get(key)
+            if not isinstance(seg, dict) or not seg.get("newcomers"):
+                continue
+            new_ncs = []
+            chart = _CHART_OF_KEY.get(key, "free")
+            loc = (c["country"], c["platform"], chart)
+            for n in seg["newcomers"]:
+                gkey = _game_dedup_key(n)
+                if gkey is None:
+                    new_ncs.append(n)            # 不参与去重（原引用只读，不 mutate）
+                    continue
+                nn = dict(n)                      # 拷贝后再标注，绝不动入参
+                rec = seen.get(gkey)
+                if rec is None:
+                    seen[gkey] = {"prim": nn, "own": loc, "locs": set()}
+                else:
+                    nn["dedup_skip"] = True
+                    if loc != rec["own"] and loc not in rec["locs"]:
+                        rec["locs"].add(loc)
+                        rec["prim"].setdefault("also_seen", []).append({
+                            "country": c["country"], "platform": c["platform"],
+                            "chart_type": chart, "rank": nn.get("rank")})
+                new_ncs.append(nn)
+            nc[key] = {**seg, "newcomers": new_ncs}
+        out.append(nc)
+    return out
+
+
 def _ranked_newcomer_buttons(per_combo: list[dict]) -> list[tuple[str, str]]:
     """商店按钮（最多 5）：全 combo 的市场/厂商新品按重要度排序取头部 → 看板深链。
     此前按 combo 地理顺序各取头条，次市场的高价值新品永远排不进 5 个名额；改成全局
@@ -1074,7 +1175,7 @@ def _ranked_newcomer_buttons(per_combo: list[dict]) -> list[tuple[str, str]]:
         for key, kind, view in (("market", "market_newcomer", "market"),
                                  ("publisher", "publisher_newcomer", "publisher")):
             for e in (c.get(key) or {}).get("newcomers") or []:
-                if not e.get("is_reentry") and e.get("app_id"):
+                if not e.get("is_reentry") and not e.get("dedup_skip") and e.get("app_id"):
                     cands.append((_event_score(kind, e) * mw, {"e": e, "view": view}))
     cands.sort(key=lambda x: x[0], reverse=True)
     btns: list[tuple[str, str]] = []
@@ -1163,6 +1264,12 @@ def build_daily_digest(per_combo: list[dict], today: str,
     # combo 按重要度排序（市场权重为主）：全局封顶砍的是真·次要 combo，核心 US/iOS 永不
     # 被次市场长尾挤折叠。原列表不变（不 mutate 入参），按钮另走全局重要度排序。
     ordered = sorted(per_combo, key=_combo_sort_key, reverse=True)
+    # 跨 combo/榜「同一款游戏」去重：同名 SLG 新品同日在多个市场/榜各检出一次时，只在重要度
+    # 最高的 combo 主渲染，其余折叠成主行下的「🔁 另见」附注（保留多市场同日起量信号）。必须在
+    # 排序之后（primary = 最高重要度 combo），且返回标注后的新 per_combo（不 mutate 入参——两卡
+    # 共用同一份）。重绑 per_combo 让下方 TL;DR / 今日重点 / 按钮同读标注后数据，计数与正文一致。
+    ordered = _dedup_games_across_combos(ordered)
+    per_combo = ordered
     for c in ordered:
         mv_all = (build_movement_lines(c["movement"], entities=entities, own_matches=own_matches)
                   if c.get("movement") else [])
