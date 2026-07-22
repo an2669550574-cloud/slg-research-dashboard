@@ -81,7 +81,9 @@ if [[ -n "${COS_BACKUP_DIR:-}" ]]; then
     if [[ -d "$MATERIALS_DIR" ]] && [[ -n "$(ls -A "$MATERIALS_DIR" 2>/dev/null)" ]]; then
       mkdir -p "${COS_BACKUP_DIR}/materials"
       if command -v rsync >/dev/null 2>&1; then
-        rsync -a "$MATERIALS_DIR"/ "${COS_BACKUP_DIR}/materials/" \
+        # 去属主/属组保留：源素材是容器 root 写的 bind mount，cron 以 ubuntu 跑无权
+        # 在 cosfs 目标 chown 成 root，若保留属主会 exit 23 静默失败。只镜像数据、不传属主。
+        rsync -a --no-o --no-g "$MATERIALS_DIR"/ "${COS_BACKUP_DIR}/materials/" \
           && echo "[backup] materials mirrored (rsync) → ${COS_BACKUP_DIR}/materials/" \
           || echo "[backup] materials mirror had errors — DB backup unaffected" >&2
       else
