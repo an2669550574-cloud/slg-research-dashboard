@@ -15,6 +15,7 @@ from app.models.material import Material
 from app.models.tag import (
     TagDimension, TagOption, MaterialTagValue,
     TagDimensionProduct, TagOptionProduct,
+    TagPack, TagPackDimension, TagPackProduct, TagPackSetting,
 )
 from app.schemas import (
     TagDimensionCreate, TagDimensionUpdate, TagDimensionOut,
@@ -22,6 +23,8 @@ from app.schemas import (
     TagScopeBatchInput, TagScopeBatchOut,
     TagTemplateCopyInput, TagTemplateCopyOut,
     TagReorderInput, TagReorderOutput,
+    TagPackCreate, TagPackUpdate, TagPackOut,
+    TagPackSettingOut, TagPackSettingPut,
     TagAggregateOut, TagAggregateBucket, TagAggregateSubBucket,
 )
 from app.security import require_admin_password
@@ -343,6 +346,8 @@ async def delete_dimension(dim_id: int, db: AsyncSession = Depends(get_db)):
         await db.execute(sa_delete(TagOptionProduct).where(TagOptionProduct.option_id.in_(opt_ids)))
     await db.execute(sa_delete(TagOption).where(TagOption.dimension_id == dim_id))
     await db.execute(sa_delete(TagDimensionProduct).where(TagDimensionProduct.dimension_id == dim_id))
+    # 标签包成员关系一并摘除（包本身保留，允许空包）
+    await db.execute(sa_delete(TagPackDimension).where(TagPackDimension.dimension_id == dim_id))
     await db.delete(d)
     await db.commit()
     return {"message": "已删除", "id": dim_id, "removed_options": opt_n, "removed_material_tags": used}
@@ -436,6 +441,218 @@ async def copy_template(data: TagTemplateCopyInput, db: AsyncSession = Depends(g
         copied.append(d.name)
     await db.commit()
     return TagTemplateCopyOut(copied=copied, skipped=skipped, options_copied=options_copied)
+
+
+# ── 标签包（tag pack）──────────────────────────────────────────────────────
+# 把一级标签分组成自定义大类（如「物资链路」「投放要点」）。包是视图不是分区：
+# 一个维度可同属多个包。素材库按包切分面视图；产品级开关（tag_pack_settings）
+# 决定某产品是否启用包视图，无记录 = 默认关。
+
+
+async def _pack_or_404(pack_id: int, db: AsyncSession) -> TagPack:
+    p = (await db.execute(select(TagPack).where(TagPack.id == pack_id))).scalar_one_or_none()
+    if not p:
+        raise HTTPException(status_code=404, detail="标签包不存在")
+    return p
+
+
+async def _pack_dim_ids(pack_ids: list[int], db: AsyncSession) -> dict[int, list[int]]:
+    """{pack_id: [dimension_id, ...]}，按加入顺序（id）稳定输出。"""
+    if not pack_ids:
+        return {}
+    rows = (await db.execute(
+        select(TagPackDimension.pack_id, TagPackDimension.dimension_id)
+        .where(TagPackDimension.pack_id.in_(pack_ids))
+        .order_by(TagPackDimension.id)
+    )).all()
+    by_pack: dict[int, list[int]] = {}
+    for pid, did in rows:
+        by_pack.setdefault(pid, []).append(did)
+    return by_pack
+
+
+async def _set_pack_dim_ids(pack_id: int, dim_ids: list[int], db: AsyncSession) -> None:
+    """replace-all 重设包的成员维度。任一 id 不存在 → 404 整体回滚（不静默跳过）。"""
+    uniq: list[int] = []
+    seen: set[int] = set()
+    for did in dim_ids:
+        if did not in seen:
+            seen.add(did)
+            uniq.append(did)
+    if uniq:
+        found = set((await db.execute(
+            select(TagDimension.id).where(TagDimension.id.in_(uniq))
+        )).scalars().all())
+        missing = [i for i in uniq if i not in found]
+        if missing:
+            raise HTTPException(status_code=404, detail=f"一级标签不存在：{missing}")
+    await db.execute(sa_delete(TagPackDimension).where(TagPackDimension.pack_id == pack_id))
+    for did in uniq:
+        db.add(TagPackDimension(pack_id=pack_id, dimension_id=did))
+
+
+async def _pack_app_ids(pack_ids: list[int], db: AsyncSession) -> dict[int, list[str]]:
+    """{pack_id: [app_id, ...]}。空列表 = 通用包（无作用域名单）。"""
+    if not pack_ids:
+        return {}
+    rows = (await db.execute(
+        select(TagPackProduct.pack_id, TagPackProduct.app_id)
+        .where(TagPackProduct.pack_id.in_(pack_ids))
+    )).all()
+    by_pack: dict[int, list[str]] = {}
+    for pid, aid in rows:
+        by_pack.setdefault(pid, []).append(aid)
+    return by_pack
+
+
+async def _set_pack_app_ids(pack_id: int, app_ids: list[str], db: AsyncSession) -> None:
+    """replace-all 重设包的产品作用域名单。空 = 通用。去重 + 保序。"""
+    await db.execute(sa_delete(TagPackProduct).where(TagPackProduct.pack_id == pack_id))
+    seen: set[str] = set()
+    for aid in app_ids:
+        aid = (aid or "").strip()
+        if not aid or aid in seen:
+            continue
+        seen.add(aid)
+        db.add(TagPackProduct(pack_id=pack_id, app_id=aid))
+
+
+def _pack_out(p: TagPack, dim_ids: list[int], app_ids: list[str]) -> TagPackOut:
+    out = TagPackOut.model_validate(p)
+    out.dimension_ids = list(dim_ids)
+    out.app_ids = list(app_ids)
+    return out
+
+
+async def _ensure_pack_name_free(name: str, db: AsyncSession, exclude_id: int | None = None) -> None:
+    """包名唯一（包总量少、名字撞车只会添乱）。"""
+    stmt = select(TagPack).where(TagPack.name == name)
+    if exclude_id is not None:
+        stmt = stmt.where(TagPack.id != exclude_id)
+    if (await db.execute(stmt)).scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="已存在同名标签包")
+
+
+@router.get("/packs", response_model=list[TagPackOut])
+async def list_packs(app_id: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+    """列出标签包（含成员维度 id + 产品作用域名单）。
+
+    - app_id 给定（素材库浏览态）→ 按包作用域过滤：「无名单 OR 名单含该 app_id」。
+    - 不给（管理态）→ 返回全部，UI 据 app_ids 渲染「通用 / N 个产品」徽标。
+    dimension_ids 恒为全量成员，不按 app_id 收敛——前端自行与可见维度求交集。
+    """
+    packs = (await db.execute(
+        select(TagPack).order_by(TagPack.sort_order, TagPack.id)
+    )).scalars().all()
+    app_map = await _pack_app_ids([p.id for p in packs], db)
+    if app_id:
+        packs = [p for p in packs if not app_map.get(p.id) or app_id in app_map[p.id]]
+    dim_map = await _pack_dim_ids([p.id for p in packs], db)
+    return [_pack_out(p, dim_map.get(p.id, []), app_map.get(p.id, [])) for p in packs]
+
+
+@router.post("/packs", response_model=TagPackOut, status_code=201)
+async def create_pack(data: TagPackCreate, db: AsyncSession = Depends(get_db)):
+    name = data.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="包名不能为空")
+    await _ensure_pack_name_free(name, db)
+    p = TagPack(name=name, sort_order=data.sort_order)
+    db.add(p)
+    await db.flush()  # 拿 p.id 写成员/作用域
+    await _set_pack_dim_ids(p.id, data.dimension_ids, db)
+    if data.app_ids:
+        await _set_pack_app_ids(p.id, data.app_ids, db)
+    await db.commit()
+    await db.refresh(p)
+    dim_ids = (await _pack_dim_ids([p.id], db)).get(p.id, [])
+    app_ids = (await _pack_app_ids([p.id], db)).get(p.id, [])
+    return _pack_out(p, dim_ids, app_ids)
+
+
+@router.put("/packs/reorder", response_model=TagReorderOutput)
+async def reorder_packs(data: TagReorderInput, db: AsyncSession = Depends(get_db)):
+    """重排标签包顺序，语义同 dimensions/reorder（传完整 id 序，按下标写 sort_order）。
+
+    **必须先于 `PUT /packs/{pack_id}` 声明**（字面量段惯例）。
+    """
+    ids = data.ordered_ids
+    if not ids:
+        return TagReorderOutput(reordered=0)
+    existing = set((await db.execute(select(TagPack.id))).scalars().all())
+    missing = [i for i in ids if i not in existing]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"标签包不存在：{missing}")
+    for idx, pid in enumerate(ids):
+        await db.execute(sa_update(TagPack).where(TagPack.id == pid).values(sort_order=idx))
+    await db.commit()
+    return TagReorderOutput(reordered=len(ids))
+
+
+@router.get("/packs/settings/{app_id}", response_model=TagPackSettingOut)
+async def get_pack_setting(app_id: str, db: AsyncSession = Depends(get_db)):
+    """查产品级包视图开关。无记录 = 默认关。"""
+    row = (await db.execute(
+        select(TagPackSetting).where(TagPackSetting.app_id == app_id)
+    )).scalar_one_or_none()
+    return TagPackSettingOut(app_id=app_id, enabled=bool(row and row.enabled))
+
+
+@router.put("/packs/settings/{app_id}", response_model=TagPackSettingOut)
+async def put_pack_setting(app_id: str, data: TagPackSettingPut, db: AsyncSession = Depends(get_db)):
+    """设产品级包视图开关（upsert）。**必须先于 `PUT /packs/{pack_id}` 声明**。"""
+    app_id = app_id.strip()
+    if not app_id:
+        raise HTTPException(status_code=422, detail="app_id 不能为空")
+    row = (await db.execute(
+        select(TagPackSetting).where(TagPackSetting.app_id == app_id)
+    )).scalar_one_or_none()
+    if row:
+        row.enabled = data.enabled
+    else:
+        db.add(TagPackSetting(app_id=app_id, enabled=data.enabled))
+    await db.commit()
+    return TagPackSettingOut(app_id=app_id, enabled=data.enabled)
+
+
+@router.put("/packs/{pack_id}", response_model=TagPackOut)
+async def update_pack(pack_id: int, data: TagPackUpdate, db: AsyncSession = Depends(get_db)):
+    p = await _pack_or_404(pack_id, db)
+    patch = data.model_dump(exclude_none=True)
+    new_dim_ids = patch.pop("dimension_ids", None)
+    new_app_ids = patch.pop("app_ids", None)
+    if "name" in patch:
+        name = patch["name"].strip()
+        if not name:
+            raise HTTPException(status_code=422, detail="包名不能为空")
+        await _ensure_pack_name_free(name, db, exclude_id=pack_id)
+        p.name = name
+    if "sort_order" in patch:
+        p.sort_order = patch["sort_order"]
+    if new_dim_ids is not None:
+        await _set_pack_dim_ids(pack_id, new_dim_ids, db)
+    if new_app_ids is not None:
+        await _set_pack_app_ids(pack_id, new_app_ids, db)
+    await db.commit()
+    await db.refresh(p)
+    dim_ids = (await _pack_dim_ids([pack_id], db)).get(pack_id, [])
+    app_ids = (await _pack_app_ids([pack_id], db)).get(pack_id, [])
+    return _pack_out(p, dim_ids, app_ids)
+
+
+@router.delete("/packs/{pack_id}")
+async def delete_pack(pack_id: int, db: AsyncSession = Depends(get_db)):
+    """删标签包：只删分组配置（成员关系 + 作用域名单），**不动任何维度/选项/已打标记**，
+    故不走管理员口令 gate（与删维度/选项不同，无数据损失）。"""
+    p = await _pack_or_404(pack_id, db)
+    n = (await db.execute(
+        select(func.count()).select_from(TagPackDimension).where(TagPackDimension.pack_id == pack_id)
+    )).scalar() or 0
+    await db.execute(sa_delete(TagPackDimension).where(TagPackDimension.pack_id == pack_id))
+    await db.execute(sa_delete(TagPackProduct).where(TagPackProduct.pack_id == pack_id))
+    await db.delete(p)
+    await db.commit()
+    return {"message": "已删除", "id": pack_id, "removed_members": n}
 
 
 # ── 二级标签 ───────────────────────────────────────────────────────────────

@@ -121,6 +121,51 @@ class TagTemplateCopyOut(BaseModel):
     options_copied: int
 
 
+# ── 标签包（tag pack）──────────────────────────────────────────────────────
+# 把一级标签分组成自定义大类。包名上限 20 字符（比维度 8 字宽松）。
+PACK_NAME_MAX = 20
+
+
+class TagPackCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=PACK_NAME_MAX)
+    sort_order: int = 0
+    # 成员一级标签 id 列表；空 = 空包（先建壳后圈维度）。
+    dimension_ids: list[int] = []
+    # 包级产品作用域；空 = 通用。
+    app_ids: list[str] = []
+
+
+class TagPackUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=PACK_NAME_MAX)
+    sort_order: Optional[int] = None
+    # None = 不动；[] = 清空成员；非空 = replace-all。
+    dimension_ids: Optional[list[int]] = None
+    # None = 不动；[] = 改回通用；非空 = replace-all。
+    app_ids: Optional[list[str]] = None
+
+
+class TagPackOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    sort_order: int
+    created_at: datetime
+    # 成员维度 id（全量，不按 app_id 收敛——前端浏览态自行与可见维度求交集）。
+    dimension_ids: list[int] = []
+    # 包级作用域名单；空 = 通用。
+    app_ids: list[str] = []
+
+
+class TagPackSettingOut(BaseModel):
+    app_id: str
+    enabled: bool
+
+
+class TagPackSettingPut(BaseModel):
+    enabled: bool
+
+
 # ── 素材打标签（material_tag_values，P2）──────────────────────────────────
 # 打标签 = 给素材在各一级标签维度下选定值：text 维度选 option(可多)，date 维度选日期。
 

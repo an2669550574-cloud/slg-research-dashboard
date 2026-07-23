@@ -48,6 +48,10 @@ import type {
   TagOptionCreate,
   TagOptionUpdate,
   TagScopeBatchInput,
+  TagPack,
+  TagPackCreate,
+  TagPackUpdate,
+  TagPackSetting,
   TagScopeBatchOut,
   TagTemplateCopyInput,
   TagTemplateCopyOut,
@@ -373,6 +377,23 @@ export const tagsApi = {
   // 一级标签重排（上移/下移/置顶）：传完整维度 id 顺序，后端按下标写 sort_order
   reorderDimensions: (orderedIds: number[]): Promise<{ reordered: number }> =>
     api.put('/tags/dimensions/reorder', { ordered_ids: orderedIds }).then(r => r.data),
+  // ── 标签包：把一级标签分组成自定义大类（视图不是分区，一维度可同属多包）──
+  listPacks: (appId?: string): Promise<TagPack[]> =>
+    api.get('/tags/packs', { params: appId ? { app_id: appId } : {} }).then(r => r.data),
+  createPack: (data: TagPackCreate): Promise<TagPack> =>
+    api.post('/tags/packs', data).then(r => r.data),
+  updatePack: (id: number, data: TagPackUpdate): Promise<TagPack> =>
+    api.put(`/tags/packs/${id}`, data).then(r => r.data),
+  // 删包只删分组配置（不动维度/选项/已打标记），后端不设管理员口令 gate
+  deletePack: (id: number): Promise<DeleteResponse> =>
+    api.delete(`/tags/packs/${id}`).then(r => r.data),
+  reorderPacks: (orderedIds: number[]): Promise<{ reordered: number }> =>
+    api.put('/tags/packs/reorder', { ordered_ids: orderedIds }).then(r => r.data),
+  // 产品级包视图开关：无记录 = 默认关
+  getPackSetting: (appId: string): Promise<TagPackSetting> =>
+    api.get(`/tags/packs/settings/${encodeURIComponent(appId)}`).then(r => r.data),
+  putPackSetting: (appId: string, enabled: boolean): Promise<TagPackSetting> =>
+    api.put(`/tags/packs/settings/${encodeURIComponent(appId)}`, { enabled }).then(r => r.data),
 }
 
 // AI 标签分析 Agent（P6）：跑报告 / 追问、会话回查、导出 md·csv。走公司网关，零 ST 配额。

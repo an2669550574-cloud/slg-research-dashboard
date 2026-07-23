@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
-import { Plus, Trash2, Pencil, X, Calendar, Type, Asterisk, Globe2, Package, Lock, Save, Copy, ChevronUp, ChevronDown, ArrowUpToLine, ChevronRight } from 'lucide-react'
+import { Plus, Trash2, Pencil, X, Calendar, Type, Asterisk, Globe2, Package, Lock, Save, Copy, ChevronUp, ChevronDown, ArrowUpToLine, ChevronRight, Layers } from 'lucide-react'
 import { tagsApi, gamesApi } from '../lib/api'
 import { useT } from '../i18n'
 import { PageHeader } from '../components/PageHeader'
 import { QueryError } from '../components/QueryError'
-import type { TagDimension, TagOption, TagValueType, GameOut } from '../lib/types'
+import type { TagDimension, TagOption, TagPack, TagValueType, GameOut } from '../lib/types'
 
 // 计算「字符数」用 code point 长度（[...s].length），与后端 max_length=8 口径一致；
 // 直接 s.length 会把代理对算成 2、给中文/emoji 错误计数。
@@ -269,6 +269,10 @@ export default function TagsManage() {
         </form>
       )}
 
+      {viewMode === 'tag' && (
+        <PacksPanel dims={dims} games={allGames} gameMap={gameMap} inputClass={inputClass} />
+      )}
+
       {viewMode === 'tag' && (isError ? (
         <QueryError compact onRetry={() => refetch()} />
       ) : isLoading ? (
@@ -402,6 +406,258 @@ export default function TagsManage() {
           onSaved={() => { invalidate(); setScopeModal(null) }}
         />
       )}
+    </div>
+  )
+}
+
+// ── 标签包管理（把一级标签分组成自定义大类）────────────────────────────────
+// 包是**视图不是分区**：一个维度可同属多个包。删包只删分组配置，不动任何标签数据。
+const PACKS_QK = ['tagPacks'] as const
+
+type PacksPanelProps = {
+  dims: TagDimension[]
+  games: GameOut[]
+  gameMap: Record<string, string>
+  inputClass: string
+}
+function PacksPanel({ dims, games, gameMap, inputClass }: PacksPanelProps) {
+  const t = useT()
+  const tt = t.tagsManage
+  const qc = useQueryClient()
+  const { data: packs = [] } = useQuery({
+    queryKey: PACKS_QK,
+    queryFn: () => tagsApi.listPacks(),
+  })
+  const [modal, setModal] = useState<{ kind: 'create' } | { kind: 'edit'; pack: TagPack } | null>(null)
+  const [expanded, setExpanded] = useState(true)
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: PACKS_QK })
+  const dimNameMap = useMemo(() => new Map(dims.map(d => [d.id, d.name])), [dims])
+
+  const deleteMut = useMutation({
+    mutationFn: (id: number) => tagsApi.deletePack(id),
+    onSuccess: () => { invalidate(); toast.success(tt.packDeleted) },
+  })
+  // 排序与维度同套路：乐观更新 + 提交完整 id 序，失败回滚重拉
+  const reorderMut = useMutation({
+    mutationFn: (orderedIds: number[]) => tagsApi.reorderPacks(orderedIds),
+    onMutate: async (orderedIds) => {
+      await qc.cancelQueries({ queryKey: PACKS_QK })
+      const prev = qc.getQueryData<TagPack[]>(PACKS_QK)
+      if (prev) {
+        const byId = new Map(prev.map(p => [p.id, p]))
+        qc.setQueryData<TagPack[]>(PACKS_QK, orderedIds.map(id => byId.get(id)!).filter(Boolean))
+      }
+      return { prev }
+    },
+    onError: (_e, _v, ctx) => { if (ctx?.prev) qc.setQueryData(PACKS_QK, ctx.prev); toast.error(tt.reorderFailed) },
+    onSettled: () => invalidate(),
+  })
+  const movePack = (idx: number, dir: -1 | 1 | 'top') => {
+    const ids = packs.map(p => p.id)
+    if (dir === 'top') {
+      if (idx === 0) return
+      const [id] = ids.splice(idx, 1); ids.unshift(id)
+    } else {
+      const j = idx + dir
+      if (j < 0 || j >= ids.length) return
+      ;[ids[idx], ids[j]] = [ids[j], ids[idx]]
+    }
+    reorderMut.mutate(ids)
+  }
+  const handleDelete = (p: TagPack) => {
+    if (!window.confirm(tt.confirmDeletePack(p.name))) return
+    deleteMut.mutate(p.id)
+  }
+
+  return (
+    <div className="bg-surface border border-default rounded-xl p-4 space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <button onClick={() => setExpanded(v => !v)}
+          className="flex items-center gap-2 min-w-0 text-left">
+          {expanded ? <ChevronDown size={15} className="text-muted shrink-0" /> : <ChevronRight size={15} className="text-muted shrink-0" />}
+          <Layers size={14} className="text-brand-400 shrink-0" />
+          <span className="font-display font-bold text-primary">{tt.packsTitle}</span>
+          <span className="text-[10px] text-muted shrink-0">（{packs.length}）</span>
+          <span className="text-[11px] text-muted truncate hidden sm:inline">{tt.packsHint}</span>
+        </button>
+        <button onClick={() => setModal({ kind: 'create' })}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-default text-secondary hover:text-accent hover:border-accent/40 transition-colors shrink-0">
+          <Plus size={13} />
+          {tt.packAdd}
+        </button>
+      </div>
+
+      {expanded && (packs.length === 0 ? (
+        <p className="text-xs text-muted border-t border-default pt-3">{tt.packEmpty}</p>
+      ) : (
+        <div className="border-t border-default pt-3 space-y-2">
+          {packs.map((p, idx) => {
+            const memberNames = p.dimension_ids
+              .map(id => dimNameMap.get(id))
+              .filter((x): x is string => Boolean(x))
+            return (
+              <div key={p.id} className="flex items-center gap-2 bg-elevated border border-default rounded-lg px-3 py-2">
+                <div className="flex items-center gap-2 flex-wrap min-w-0 flex-1">
+                  <span className="text-sm font-semibold text-primary">{p.name}</span>
+                  <span className="text-[10px] text-muted shrink-0">{tt.packMembersCount(memberNames.length)}</span>
+                  {p.app_ids.length === 0 ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-muted border border-default rounded px-1.5 py-0.5 shrink-0"
+                      title={tt.scopeUniversal}>
+                      <Globe2 size={10} /> {tt.scopeUniversal}
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-accent border border-accent/40 bg-accent/10 rounded px-1.5 py-0.5 shrink-0"
+                      title={p.app_ids.map(a => gameMap[a] || a).join(' · ')}>
+                      <Package size={10} /> {tt.scopeNGames(p.app_ids.length)}
+                    </span>
+                  )}
+                  {memberNames.length > 0 && (
+                    <span className="text-[11px] text-secondary truncate">
+                      {memberNames.join(' · ')}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-0.5 shrink-0">
+                  <button onClick={() => movePack(idx, 'top')} disabled={idx === 0 || reorderMut.isPending} title={tt.moveTop}
+                    className="p-1 text-muted hover:text-brand-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"><ArrowUpToLine size={13} /></button>
+                  <button onClick={() => movePack(idx, -1)} disabled={idx === 0 || reorderMut.isPending} title={tt.moveUp}
+                    className="p-1 text-muted hover:text-brand-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"><ChevronUp size={13} /></button>
+                  <button onClick={() => movePack(idx, 1)} disabled={idx === packs.length - 1 || reorderMut.isPending} title={tt.moveDown}
+                    className="p-1 text-muted hover:text-brand-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"><ChevronDown size={13} /></button>
+                  <span className="w-px h-4 bg-default mx-0.5" />
+                  <button onClick={() => setModal({ kind: 'edit', pack: p })} title={t.common.edit}
+                    className="p-1 text-muted hover:text-brand-400 transition-colors"><Pencil size={13} /></button>
+                  <button onClick={() => handleDelete(p)} disabled={deleteMut.isPending} title={t.common.delete}
+                    className="p-1 text-muted hover:text-red-400 transition-colors"><Trash2 size={13} /></button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      ))}
+
+      {modal && (
+        <PackFormModal
+          mode={modal}
+          dims={dims}
+          games={games}
+          gameMap={gameMap}
+          inputClass={inputClass}
+          onClose={() => setModal(null)}
+          onSaved={() => { invalidate(); setModal(null) }}
+        />
+      )}
+    </div>
+  )
+}
+
+type PackFormModalProps = {
+  mode: { kind: 'create' } | { kind: 'edit'; pack: TagPack }
+  dims: TagDimension[]
+  games: GameOut[]
+  gameMap: Record<string, string>
+  inputClass: string
+  onClose: () => void
+  onSaved: () => void
+}
+function PackFormModal({ mode, dims, games, gameMap, inputClass, onClose, onSaved }: PackFormModalProps) {
+  const t = useT()
+  const tt = t.tagsManage
+  const editing = mode.kind === 'edit' ? mode.pack : null
+  const [name, setName] = useState(editing?.name ?? '')
+  const [memberIds, setMemberIds] = useState<Set<number>>(new Set(editing?.dimension_ids ?? []))
+  const [appIds, setAppIds] = useState<string[]>(editing?.app_ids ?? [])
+  const [q, setQ] = useState('')
+
+  const filteredDims = useMemo(() => {
+    const k = q.trim().toLowerCase()
+    if (!k) return dims
+    return dims.filter(d => d.name.toLowerCase().includes(k))
+  }, [dims, q])
+
+  const mut = useMutation({
+    mutationFn: () => {
+      // 成员顺序跟随维度列表顺序（sort_order），不引入包内自定义排序
+      const dimension_ids = dims.filter(d => memberIds.has(d.id)).map(d => d.id)
+      const payload = { name: name.trim(), dimension_ids, app_ids: appIds }
+      return editing ? tagsApi.updatePack(editing.id, payload) : tagsApi.createPack(payload)
+    },
+    onSuccess: () => { toast.success(editing ? tt.packUpdated : tt.packAdded); onSaved() },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || tt.packSaveFailed),
+  })
+
+  const toggleMember = (id: number) =>
+    setMemberIds(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+
+  const handleSave = () => {
+    const nm = name.trim()
+    if (!nm) { toast.error(tt.packNameRequired); return }
+    if (charLen(nm) > 20) { toast.error(tt.packNameTooLong); return }
+    mut.mutate()
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      onClick={onClose}>
+      <div className="bg-surface border border-default rounded-xl p-5 max-w-lg w-full space-y-4 max-h-[85vh] overflow-y-auto"
+        onClick={e => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-2">
+          <h3 className="text-sm font-semibold text-primary">
+            {editing ? tt.packEditTitle : tt.packAddTitle}
+          </h3>
+          <button onClick={onClose} className="text-muted hover:text-red-400"><X size={14} /></button>
+        </div>
+
+        <div>
+          <label className="block text-xs text-secondary mb-1">{tt.packNameLabel}</label>
+          <input value={name} onChange={e => setName(e.target.value)}
+            placeholder={tt.packNamePlaceholder} className={`w-full ${inputClass}`} />
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-secondary">{tt.packMembersLabel}</label>
+            <span className="text-[10px] text-muted">{tt.packMembersHint}</span>
+          </div>
+          <input value={q} onChange={e => setQ(e.target.value)}
+            placeholder={tt.packMemberSearchPlaceholder} className={`w-full ${inputClass}`} />
+          <div className="max-h-48 overflow-y-auto border border-default rounded-lg bg-elevated">
+            {filteredDims.length === 0 ? (
+              <p className="text-[11px] text-muted px-3 py-2">{t.common.noData}</p>
+            ) : (
+              <div className="divide-y divide-default">
+                {filteredDims.map(d => (
+                  <label key={d.id}
+                    className="flex items-center gap-2 px-3 py-1.5 text-xs text-secondary hover:bg-surface cursor-pointer">
+                    <input type="checkbox" checked={memberIds.has(d.id)} onChange={() => toggleMember(d.id)}
+                      className="accent-brand-500" />
+                    <span className="text-primary truncate">{d.name}</span>
+                    {(d.app_ids ?? []).length > 0 && (
+                      <span className="inline-flex items-center gap-0.5 text-[10px] text-accent ml-auto"
+                        title={(d.app_ids ?? []).map(a => gameMap[a] || a).join(' · ')}>
+                        <Package size={10} />{(d.app_ids ?? []).length}
+                      </span>
+                    )}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <ProductScopePicker value={appIds} onChange={setAppIds}
+          games={games} gameMap={gameMap} inputClass={inputClass} />
+
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose}
+            className="px-3 py-1.5 text-sm text-secondary hover:text-primary">{t.common.cancel}</button>
+          <button type="button" disabled={mut.isPending} onClick={handleSave}
+            className="px-4 py-1.5 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 rounded-lg text-sm text-white transition-colors">
+            {mut.isPending ? t.common.saving : t.common.save}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

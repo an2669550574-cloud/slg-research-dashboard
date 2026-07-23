@@ -678,6 +678,33 @@ export interface TagOptionCreate {
   app_ids?: string[]
 }
 
+/** 标签包：把一级标签分组成自定义大类（视图不是分区，一个维度可同属多包）。
+ * app_ids 沿用作用域范式：空 = 通用；非空 = 仅名单内产品可见。 */
+export interface TagPack {
+  id: number
+  name: string
+  sort_order: number
+  created_at: IsoDateString
+  /** 成员维度 id（全量，不按产品收敛）；浏览态前端自行与可见维度求交集。 */
+  dimension_ids: number[]
+  app_ids: string[]
+}
+
+export interface TagPackCreate {
+  name: string
+  sort_order?: number
+  dimension_ids?: number[]
+  app_ids?: string[]
+}
+
+export type TagPackUpdate = Partial<TagPackCreate>
+
+/** 产品级包视图开关；后端无记录 = 默认关。 */
+export interface TagPackSetting {
+  app_id: string
+  enabled: boolean
+}
+
 export type TagOptionUpdate = Partial<TagOptionCreate>
 
 /** 产品视角批量改作用域（S4）：一次提交多条维度/选项的 replace-all。 */
