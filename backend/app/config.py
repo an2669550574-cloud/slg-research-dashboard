@@ -275,6 +275,9 @@ class Settings(BaseSettings):
     # 折进 digest 一段，给平淡日一个「近期雷达catch」的日级汇总视图。仅维护者卡、仅平淡日。
     # 零 ST（纯本地 publisher_itunes_apps 读）。<=0 = 关闭该段。
     DIGEST_RADAR_RECENT_DAYS: int = 2
+    # 发现层【📮 发现层线报】段：人工线报核实写的 chart_type='discovery' 影子行，近 N 天进维护者卡。
+    # 窗口略宽于 radar（人工确认后需一夜 drain 出中文摘要/子品类，次日才带全信息露出）。<=0=关段。
+    DIGEST_DISCOVERY_RECENT_DAYS: int = 3
     # 新品周察周报卡（P0-1③ 新品生命周期追踪）：周级独立卡，回顾近 N 天检出的 SLG 新品
     # 「存活/爬升/掉榜」分层（读时算 game_rankings 走势，零 ST）。补「检出即阅后即焚」断层——
     # 领导看到「新品 X 上架」后没人答「它后来怎么样了」。两卡都发（SLG-only，领导可读）。

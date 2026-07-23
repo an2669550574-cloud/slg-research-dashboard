@@ -337,13 +337,14 @@ async def get_newcomer_history(
     from app.models.newcomer import MarketNewcomerLog
     from sqlalchemy import or_, func as sa_func
     from app.models.game import GameRanking, CHART_GROSSING
-    from app.services.newcomer_log import CHART_RADAR
+    from app.services.newcomer_log import CHART_RADAR, CHART_DISCOVERY
     from app.services.rss_earlybird import CHART_RSS
     since = utcnow_naive() - timedelta(days=days)
     q = select(MarketNewcomerLog).where(MarketNewcomerLog.first_detected_at >= since)
-    # 影子行不进市场卡片网格（含 chart=all）：radar（P1-1）与 rss（ADR 0005）都只为
-    # riding 富化/翻译/视频管道 + 各自分发面（商店雷达区块 / 维护者卡「⚡ RSS 早鸟」段）。
-    q = q.where(MarketNewcomerLog.chart_type.notin_((CHART_RADAR, CHART_RSS)))
+    # 影子行不进市场卡片网格（含 chart=all）：radar（P1-1）/ rss（ADR 0005）/ discovery（发现层
+    # 切片1）都只为 riding 富化/翻译/视频管道 + 各自分发面（商店雷达区块 / 维护者卡「⚡ RSS 早鸟」
+    # /「📮 发现层线报」段），不当作市场榜检出。
+    q = q.where(MarketNewcomerLog.chart_type.notin_((CHART_RADAR, CHART_RSS, CHART_DISCOVERY)))
     if chart != "all":
         q = q.where(MarketNewcomerLog.chart_type == chart)
     if country:
