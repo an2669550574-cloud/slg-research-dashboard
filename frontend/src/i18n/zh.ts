@@ -753,6 +753,10 @@ export const zh = {
     packDeleted: '已删除标签包',
     confirmDeletePack: (name: string) =>
       `删除标签包"${name}"只移除分组本身，一级标签与素材上已打的标记均不受影响。确认删除？`,
+    // 产品视角的包速览（只读 + 开关）
+    packMaterialsSwitch: '素材库标签包视图',
+    packGoEdit: '去标签视角编辑包 →',
+    packSummaryEmpty: '该产品暂无可见标签包（去标签视角新建，或把现有包的作用域加上本产品）',
   },
   publishersManage: {
     exportOverview: '导出总览',

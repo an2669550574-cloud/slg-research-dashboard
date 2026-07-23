@@ -730,6 +730,10 @@ export const en: Translations = {
     packDeleted: 'Tag pack deleted',
     confirmDeletePack: (name: string) =>
       `Deleting pack "${name}" only removes the grouping itself — dimensions and tagged materials are untouched. Continue?`,
+    // Product-view pack summary (read-only + switch)
+    packMaterialsSwitch: 'Tag-pack view in materials',
+    packGoEdit: 'Edit packs in tag view →',
+    packSummaryEmpty: 'No packs visible to this product yet (create one in tag view, or add this product to an existing pack’s scope)',
   },
   publishersManage: {
     exportOverview: 'Export overview',
