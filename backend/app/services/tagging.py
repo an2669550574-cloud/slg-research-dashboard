@@ -45,6 +45,24 @@ async def apply_facet_filter(db: AsyncSession, base, tag_options: str | None):
     return base
 
 
+def apply_has_dimensions_filter(base, has_dimensions: str | None):
+    """给一个以 Material 为根的 select 追加「已打标」筛选：素材在给定维度中
+    **至少一个**维度上存在已打标记（维度间 OR，一条 EXISTS）。
+
+    素材库「仅看已打标」复选框用：前端把标签包的成员维度 id 逗号分隔传入——
+    参数刻意收维度 id 而非 pack id，与标签包概念解耦（任何按维度有无打标的
+    场景可复用）。与 apply_facet_filter 是叠加（AND）关系。脏值/空段静默忽略。"""
+    dim_ids = _parse_option_ids(has_dimensions)  # 同一解析语义：逗号分隔正整数
+    if not dim_ids:
+        return base
+    return base.where(
+        select(MaterialTagValue.id).where(
+            MaterialTagValue.material_id == Material.id,
+            MaterialTagValue.dimension_id.in_(dim_ids),
+        ).exists()
+    )
+
+
 async def applicable_dimensions(db: AsyncSession, material_type: str | None) -> list[TagDimension]:
     """适用于某素材类型的一级标签：material_type 精确匹配 + 通用(NULL)，按 sort 排。"""
     stmt = select(TagDimension).order_by(TagDimension.sort_order, TagDimension.id)

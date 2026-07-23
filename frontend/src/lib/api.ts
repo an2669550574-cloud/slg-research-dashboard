@@ -254,6 +254,8 @@ export interface MaterialListParams {
   material_type?: string
   tag?: string
   tag_options?: string
+  /** 「仅看已打标」（标签包）：一级标签 id 逗号分隔，至少一维有已打标记（维度间 OR）。 */
+  has_dimensions?: string
   q?: string
   analysis_status?: MaterialAnalysisStatus
   sort_by?: 'created_at' | 'title' | 'analyzed_at' | 'analysis_cost_usd'
