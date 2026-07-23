@@ -74,6 +74,68 @@ class TagDimensionProduct(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 
 
+class TagPack(Base):
+    """标签包（migration 0046）：把一级标签分组成自定义大类（如「物资链路」「投放要点」）。
+
+    包是**视图不是分区**：一个维度可同属多个包（多对多，见 TagPackDimension）。
+    素材库启用包视图的产品（TagPackSetting.enabled）可按包切换分面；不建包 / 开关关 =
+    行为与无此功能时完全一致。名称提交时限 20 字符（比维度的 8 字宽松，包名允许更长）。
+    """
+    __tablename__ = "tag_packs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(50))  # 中文展示名，如「物资链路」
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class TagPackDimension(Base):
+    """标签包 ↔ 一级标签 多对多（migration 0046）。
+
+    删包由 FK ondelete=CASCADE 清理；删维度时应用层显式连带清理本表
+    （与 delete_dimension 既有套路一致，SQLite 不强制 FK）。
+    """
+    __tablename__ = "tag_pack_dimensions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    pack_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("tag_packs.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    dimension_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("tag_dimensions.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class TagPackProduct(Base):
+    """标签包 ↔ 产品(app_id) 作用域（migration 0046）。
+
+    沿用 0024/0025 范式：空名单 = 通用包（所有产品可见）；非空 = 仅名单内产品可见。
+    """
+    __tablename__ = "tag_pack_products"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    pack_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("tag_packs.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    app_id: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class TagPackSetting(Base):
+    """产品级标签包总开关（migration 0046）。
+
+    素材库是否对该产品启用「按包筛选」视图。**无记录 = 默认关**（新功能对所有产品
+    静默，逐产品手动开启）——所以只存显式设置过的行，别为全量产品预建。
+    """
+    __tablename__ = "tag_pack_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    app_id: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
 class MaterialTagValue(Base):
     """素材 ↔ 标签值的关联（junction，migration 0011）。结构化打标签用，与扁平
     materials.tags / analysis_tags 并存不冲突。
