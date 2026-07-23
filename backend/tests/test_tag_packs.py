@@ -142,3 +142,72 @@ async def test_pack_setting_default_off_and_upsert(client):
     # 再关（upsert 更新既有行）
     r = await client.put("/api/tags/packs/settings/com.example.战争游戏", json={"enabled": False})
     assert r.status_code == 200 and r.json()["enabled"] is False
+
+
+# ── 「仅看已打标」has_dimensions 筛选（切片 2）────────────────────────────
+
+async def _mk_material_titled(client, title: str):
+    r = await client.post("/api/materials/", json={
+        "app_id": "com.test.slg", "title": title,
+        "url": f"https://e.com/{title}", "material_type": "video",
+    })
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+async def _mk_dim_with_opt(client, dim_name: str, opt_value: str):
+    dim = (await client.post("/api/tags/dimensions", json={"name": dim_name})).json()
+    opt = (await client.post(f"/api/tags/dimensions/{dim['id']}/options",
+                             json={"value": opt_value})).json()
+    return dim, opt
+
+
+@pytest.mark.asyncio
+async def test_has_dimensions_filter(client):
+    """素材在给定维度中至少一个有已打标记才命中（维度间 OR）。"""
+    d1, o1 = await _mk_dim_with_opt(client, "一级物资", "木头")
+    d2, o2 = await _mk_dim_with_opt(client, "二级物资", "鱼肉")
+    tagged1 = await _mk_material_titled(client, "打了物资标的素材")
+    tagged2 = await _mk_material_titled(client, "打了二级标的素材")
+    untagged = await _mk_material_titled(client, "白板素材")
+    await client.put(f"/api/materials/{tagged1['id']}/tag-values", json={"values": [
+        {"dimension_id": d1["id"], "option_ids": [o1["id"]]},
+    ]})
+    await client.put(f"/api/materials/{tagged2['id']}/tag-values", json={"values": [
+        {"dimension_id": d2["id"], "option_ids": [o2["id"]]},
+    ]})
+
+    # 单维度：只命中 tagged1
+    got = (await client.get("/api/materials/", params={"has_dimensions": str(d1["id"])})).json()
+    assert {m["id"] for m in got} == {tagged1["id"]}
+    # 两个维度 OR：命中 tagged1 + tagged2，白板不进
+    got = (await client.get("/api/materials/",
+                            params={"has_dimensions": f"{d1['id']},{d2['id']}"})).json()
+    assert {m["id"] for m in got} == {tagged1["id"], tagged2["id"]}
+    # 不传 = 不过滤
+    got = (await client.get("/api/materials/")).json()
+    assert {m["id"] for m in got} >= {tagged1["id"], tagged2["id"], untagged["id"]}
+    # 脏值静默忽略（不 500、不过滤）
+    got = (await client.get("/api/materials/", params={"has_dimensions": "abc,,"})).json()
+    assert {m["id"] for m in got} >= {untagged["id"]}
+
+
+@pytest.mark.asyncio
+async def test_has_dimensions_stacks_with_tag_options(client):
+    """与 tag_options 分面叠加为 AND：都满足才命中。"""
+    d1, o1 = await _mk_dim_with_opt(client, "一级物资", "木头")
+    d2, o2 = await _mk_dim_with_opt(client, "第一步", "打熊")
+    both = await _mk_material_titled(client, "两维都打")
+    only_d2 = await _mk_material_titled(client, "只打第一步")
+    await client.put(f"/api/materials/{both['id']}/tag-values", json={"values": [
+        {"dimension_id": d1["id"], "option_ids": [o1["id"]]},
+        {"dimension_id": d2["id"], "option_ids": [o2["id"]]},
+    ]})
+    await client.put(f"/api/materials/{only_d2['id']}/tag-values", json={"values": [
+        {"dimension_id": d2["id"], "option_ids": [o2["id"]]},
+    ]})
+    got = (await client.get("/api/materials/", params={
+        "tag_options": str(o2["id"]),          # 分面选中「打熊」
+        "has_dimensions": str(d1["id"]),        # 且在「一级物资」有打标
+    })).json()
+    assert {m["id"] for m in got} == {both["id"]}

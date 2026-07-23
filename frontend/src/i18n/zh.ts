@@ -378,6 +378,15 @@ export const zh = {
     facetGroupMulti: '多产品共享',
     facetGroupScoped: (label: string, n: number) => `${label} 专属（${n}）`,
     facetGroupActive: (n: number) => `已选 ${n}`,
+    // 标签包切换（切片 2）
+    packSwitchLabel: '标签包',
+    packAll: '全部',
+    packEnableBtn: '启用标签包视图',
+    packDisableBtn: '停用标签包',
+    packTaggedOnly: '仅看已打标',
+    packUngrouped: (n: number) => `未分组（${n}）`,
+    packEnabledToast: '已启用标签包视图',
+    packDisabledToast: '已停用标签包视图',
     // 聚合分析（P4）
     aggTitle: '聚合分析',
     aggHint: '按结构化标签统计当前筛选范围内的素材分布',

@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tansta
 import toast from 'react-hot-toast'
 import { materialsApi, gamesApi } from '../lib/api'
 import { PLATFORM_CONFIG } from '../lib/utils'
-import { ExternalLink, Trash2, Plus, Search, Download as DownloadIcon, Upload, Film as FilmIcon, Radio, Pencil, X, Check, AlertCircle, Loader2, Tag as TagIcon, Sparkles, SlidersHorizontal, Wand2, MessagesSquare, ChevronDown, ChevronRight } from 'lucide-react'
+import { ExternalLink, Trash2, Plus, Search, Download as DownloadIcon, Upload, Film as FilmIcon, Radio, Pencil, X, Check, AlertCircle, Loader2, Tag as TagIcon, Sparkles, SlidersHorizontal, Wand2, MessagesSquare, ChevronDown, ChevronRight, Layers } from 'lucide-react'
 import { MaterialPreview } from '../components/MaterialPreview'
 import { MaterialAnalysisDrawer } from '../components/MaterialAnalysisDrawer'
 import {
@@ -111,10 +111,40 @@ export default function Materials() {
   // 分面筛选（P3）：选中的二级标签 id 排序后逗号拼成稳定 key，既当 queryKey 又当请求参数。
   const facetKey = useMemo(() => [...filterOptions].sort((a, b) => a - b).join(','), [filterOptions])
 
-  useEffect(() => { setOffset(0) }, [debouncedSearch, filterPlatform, filterType, filterGame, filterTag, facetKey, sort])
+  // ── 标签包（切片 2）：选了具体游戏且该产品开关开启时，分面区顶部出现包切换 chips ──
+  // 包只是**分面视图**的收窄（选包 → 只展示成员维度的分面行），不直接过滤素材；
+  // 「仅看已打标」勾选后才叠加 has_dimensions 过滤。开关无记录 = 默认关，界面与现状一致。
+  const { data: packSetting } = useQuery({
+    queryKey: ['tagPackSetting', filterGame],
+    queryFn: () => tagsApi.getPackSetting(filterGame),
+    enabled: !!filterGame,
+  })
+  const { data: packs = [] } = useQuery({
+    queryKey: ['tagPacks', filterGame],
+    queryFn: () => tagsApi.listPacks(filterGame),
+    enabled: !!filterGame,
+  })
+  const packsEnabled = !!filterGame && !!packSetting?.enabled
+  const [activePackId, setActivePackId] = useLocalStorageState<number | null>('mat.activePack', null)
+  const [packTaggedOnly, setPackTaggedOnly] = useLocalStorageState<boolean>('mat.packTaggedOnly', false)
+  // 被删的包 / 换游戏后不可见的包自动回落「全部」（find 不到 = null）
+  const currentPack = packsEnabled ? (packs.find(p => p.id === activePackId) ?? null) : null
+  const packSettingMut = useMutation({
+    mutationFn: (enabled: boolean) => tagsApi.putPackSetting(filterGame, enabled),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ['tagPackSetting', filterGame] })
+      toast.success(res.enabled ? t.materials.packEnabledToast : t.materials.packDisabledToast)
+    },
+  })
+  // 「仅看已打标」请求参数：当前包成员维度 id 排序拼接（稳定 key，兼当 queryKey）
+  const hasDimsKey = currentPack && packTaggedOnly
+    ? [...currentPack.dimension_ids].sort((a, b) => a - b).join(',')
+    : ''
+
+  useEffect(() => { setOffset(0) }, [debouncedSearch, filterPlatform, filterType, filterGame, filterTag, facetKey, hasDimsKey, sort])
 
   const { data: paged, isLoading, isError, refetch } = useQuery({
-    queryKey: ['materials', debouncedSearch, filterPlatform, filterType, filterGame, filterTag, facetKey, sort, offset],
+    queryKey: ['materials', debouncedSearch, filterPlatform, filterType, filterGame, filterTag, facetKey, hasDimsKey, sort, offset],
     queryFn: () => materialsApi.listPaged({
       limit: PAGE_SIZE, offset,
       q: debouncedSearch || undefined,
@@ -123,6 +153,7 @@ export default function Materials() {
       app_id: filterGame || undefined,
       tag: filterTag || undefined,
       tag_options: facetKey || undefined,
+      has_dimensions: hasDimsKey || undefined,
       sort_by: sortBy, order,
     }),
     placeholderData: keepPreviousData,
@@ -177,13 +208,20 @@ export default function Materials() {
     next.has(optId) ? next.delete(optId) : next.add(optId)
     return next
   })
+  // 选包时分面只剩成员维度；其余进「未分组」折叠段（默认收起，防"进包视图就找不到维度"）
+  const packDimIds = currentPack ? new Set(currentPack.dimension_ids) : null
+  const effectiveFacetable = packDimIds ? facetable.filter(d => packDimIds.has(d.id)) : facetable
+  const ungroupedFacetable = packDimIds ? facetable.filter(d => !packDimIds.has(d.id)) : []
+  const ungroupedActiveCount = ungroupedFacetable.reduce(
+    (n, d) => n + d.options.filter(o => filterOptions.has(o.id)).length, 0)
+
   // 分面按产品作用域分组（治「维度多铺满屏」）：通用维度常驻，各产品专属维度折进可展开的组。
   // 组 key = 单产品 app_id / 多产品维度归 '__multi__'。选了游戏时 facetable 已收敛，分组自然只剩少量。
   const gameNameMap = useMemo(() => Object.fromEntries(allGames.map(g => [g.app_id, g.name])), [allGames])
   const facetGroups = useMemo(() => {
-    const universal = facetable.filter(d => !(d.app_ids?.length))
+    const universal = effectiveFacetable.filter(d => !(d.app_ids?.length))
     const byKey = new Map<string, { key: string; label: string; dims: TagDimension[] }>()
-    for (const d of facetable) {
+    for (const d of effectiveFacetable) {
       const ids = d.app_ids ?? []
       if (ids.length === 0) continue
       const key = ids.length === 1 ? ids[0] : '__multi__'
@@ -197,7 +235,7 @@ export default function Materials() {
     }))
     groups.sort((a, b) => a.label.localeCompare(b.label))
     return { universal, groups }
-  }, [facetable, filterOptions, gameNameMap, t])
+  }, [effectiveFacetable, filterOptions, gameNameMap, t])
   // 展开的产品组（localStorage 记忆）；产品组默认折叠。含已选中项的组自动视作展开。
   const [expandedFacetGroups, setExpandedFacetGroups] = useLocalStorageState<string[]>('mat.facetGroups', [])
   const toggleFacetGroup = (key: string) => setExpandedFacetGroups(
@@ -991,6 +1029,44 @@ export default function Materials() {
             本地 SQLite 过滤，零 ST 配额。仅在库里存在文字型一级标签时出现。 */}
         {facetable.length > 0 && (
           <div className="space-y-1.5 rounded-lg border border-default/60 bg-surface/40 px-3 py-2.5">
+            {/* 标签包切换（切片 2）：选了具体游戏且该产品有可见包时出现。
+                开关关闭 → 只显示一个低调的「启用」入口，界面其余与现状一致。 */}
+            {filterGame && packs.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 border-b border-default/50 pb-2">
+                <span className="flex items-center gap-1.5 text-xs text-muted">
+                  <Layers size={13} /> {t.materials.packSwitchLabel}
+                </span>
+                {packsEnabled ? (<>
+                  <button onClick={() => setActivePackId(null)}
+                    className={`px-2.5 py-0.5 rounded-md text-xs border transition-colors ${!currentPack ? 'bg-accent/15 border-accent/40 text-accent' : 'border-default text-secondary hover:border-strong hover:text-primary'}`}>
+                    {t.materials.packAll}
+                  </button>
+                  {packs.map(p => (
+                    <button key={p.id} onClick={() => setActivePackId(p.id)} title={p.name}
+                      className={`px-2.5 py-0.5 rounded-md text-xs border transition-colors ${currentPack?.id === p.id ? 'bg-accent/15 border-accent/40 text-accent' : 'border-default text-secondary hover:border-strong hover:text-primary'}`}>
+                      {p.name}
+                    </button>
+                  ))}
+                  {currentPack && (
+                    <label className="flex items-center gap-1.5 text-[11px] text-secondary cursor-pointer select-none ml-2">
+                      <input type="checkbox" checked={packTaggedOnly}
+                        onChange={e => setPackTaggedOnly(e.target.checked)}
+                        className="accent-brand-500" />
+                      {t.materials.packTaggedOnly}
+                    </label>
+                  )}
+                  <button onClick={() => packSettingMut.mutate(false)} disabled={packSettingMut.isPending}
+                    className="text-[11px] text-muted hover:text-red-400 transition-colors ml-auto">
+                    {t.materials.packDisableBtn}
+                  </button>
+                </>) : (
+                  <button onClick={() => packSettingMut.mutate(true)} disabled={packSettingMut.isPending}
+                    className="text-[11px] text-muted hover:text-accent transition-colors">
+                    {t.materials.packEnableBtn}
+                  </button>
+                )}
+              </div>
+            )}
             <div className="flex items-center gap-2">
               <span className="flex items-center gap-1.5 text-xs text-muted">
                 <SlidersHorizontal size={13} /> {t.materials.facetFilterLabel}
@@ -1029,6 +1105,30 @@ export default function Materials() {
                 </div>
               )
             })}
+            {/* 选包视图下的「未分组」段：不属于当前包的维度收在这（默认折叠），
+                防止"进了包视图就找不到某个维度"；有选中项时自动展开。 */}
+            {ungroupedFacetable.length > 0 && (() => {
+              const open = expandedFacetGroups.includes('__unpacked__') || ungroupedActiveCount > 0
+              return (
+                <div className="border-t border-default/50 pt-1.5 mt-0.5">
+                  <button onClick={() => toggleFacetGroup('__unpacked__')}
+                    className="flex items-center gap-1 text-[11px] text-muted hover:text-primary transition-colors">
+                    {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                    {t.materials.packUngrouped(ungroupedFacetable.length)}
+                    {ungroupedActiveCount > 0 && (
+                      <span className="text-accent">· {t.materials.facetGroupActive(ungroupedActiveCount)}</span>
+                    )}
+                  </button>
+                  {open && (
+                    <div className="space-y-1.5 mt-1.5">
+                      {ungroupedFacetable.map(d => (
+                        <FacetRow key={d.id} d={d} filterOptions={filterOptions} onToggle={toggleFacet} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
           </div>
         )}
         {/* 聚合分析（P4）：scope 跟随上方 material_type + 分面筛选；零 ST 配额。

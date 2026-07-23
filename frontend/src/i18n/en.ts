@@ -355,6 +355,15 @@ export const en: Translations = {
     facetGroupMulti: 'Shared across products',
     facetGroupScoped: (label: string, n: number) => `${label} only (${n})`,
     facetGroupActive: (n: number) => `${n} selected`,
+    // Tag pack switcher (slice 2)
+    packSwitchLabel: 'Tag packs',
+    packAll: 'All',
+    packEnableBtn: 'Enable tag-pack view',
+    packDisableBtn: 'Disable packs',
+    packTaggedOnly: 'Tagged only',
+    packUngrouped: (n: number) => `Ungrouped (${n})`,
+    packEnabledToast: 'Tag-pack view enabled',
+    packDisabledToast: 'Tag-pack view disabled',
     // aggregation analysis (P4)
     aggTitle: 'Aggregation',
     aggHint: 'Material distribution across structured tags within the current filter scope',
