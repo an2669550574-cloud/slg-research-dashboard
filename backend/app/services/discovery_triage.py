@@ -136,10 +136,26 @@ async def _resolve_itunes_by_name(name: str) -> Optional[dict]:
             "publisher": top.get("artistName"), "match": _name_match(name, top.get("trackName") or "")}
 
 
+_TRAIL_PAREN_RE = re.compile(r"[（(][^）)]*[)）]\s*$")
+_WRAP_CHARS = "《》「」『』“”‘’【】〈〉<>（）() \t\"'"
+
+
+def _clean_query_name(name: str) -> str:
+    """抽取名常带书名号/引号包裹 + 尾部中文括注（如「《Age of Spirits》（灵神祭祀）」），会打崩商店
+    搜索——实测 `《Last Duo: Survival》` 反解到错 iOS app，去号后 → com.codex.lastduo 命中。去尾部
+    括注 + 剥两端包裹符，再交搜索。"""
+    s = (name or "").strip()
+    s = _TRAIL_PAREN_RE.sub("", s).strip()
+    return s.strip(_WRAP_CHARS)
+
+
 async def resolve_name_to_store(name: str, platform_hint: Optional[str] = None) -> Optional[dict]:
-    """游戏名 → 商店 app_id（零 ST）。安卓/未知先 GP 搜索首结果、再 iTunes；iOS 反之。优先返回
-    名字对得上的（match=True）；都对不上返回 best-effort 首结果（match=False，供人工判）；全空返 None。
-    首结果启发式，故本函数只服务「出候选供人工核」，不做无人值守自动落库。"""
+    """游戏名 → 商店 app_id（零 ST）。先清洗名字（去书名号/括注），安卓/未知先 GP 搜索首结果、再
+    iTunes；iOS 反之。优先返回名字对得上的（match=True）；都对不上返回 best-effort 首结果
+    （match=False，供人工判）；全空返 None。首结果启发式，只服务「出候选供人工核」，不做无人值守落库。"""
+    name = _clean_query_name(name)
+    if not name:
+        return None
     fns = [_resolve_gp_by_name, _resolve_itunes_by_name]
     if platform_hint == "ios":
         fns = [_resolve_itunes_by_name, _resolve_gp_by_name]

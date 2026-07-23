@@ -10,6 +10,16 @@ def test_name_match():
     assert _name_match("", "x") is False
 
 
+def test_clean_query_name():
+    """抽取名的书名号/括注会打崩商店搜索——反解前必须清洗（实测 bug，2026-07-23 prod /scan-wechat）。"""
+    from app.services.discovery_triage import _clean_query_name
+    assert _clean_query_name("《Last Duo: Survival》") == "Last Duo: Survival"
+    assert _clean_query_name("《Desire City》") == "Desire City"
+    assert _clean_query_name("Age of Spirits（灵神祭祀）") == "Age of Spirits"
+    assert _clean_query_name("《Foo》（bar）") == "Foo"
+    assert _clean_query_name("  Plain Name  ") == "Plain Name"
+
+
 def test_no_sensor_tower_import():
     import pathlib
     import re
