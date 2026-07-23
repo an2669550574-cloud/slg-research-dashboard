@@ -14,7 +14,7 @@ from app.services.wechat_articles import seed_wechat_accounts_if_empty
 from app.logging_setup import configure_logging, RequestLoggingMiddleware
 from app.rate_limit import limiter
 from app.observability import init_sentry, deep_health
-from app.routers import games, history, materials, movements, newcomers, product, quota, tags, tag_analysis, publishers, alerts, wechat, wechat_login
+from app.routers import games, history, materials, movements, newcomers, product, quota, tags, tag_analysis, publishers, alerts, wechat, wechat_login, discovery
 
 configure_logging(settings.LOG_LEVEL)
 init_sentry()
@@ -87,6 +87,7 @@ app.include_router(publishers.router, dependencies=_protected)
 app.include_router(alerts.router, dependencies=_protected)
 app.include_router(wechat.router, dependencies=_protected)
 app.include_router(wechat_login.router, dependencies=_protected)
+app.include_router(discovery.router, dependencies=_protected)
 
 
 @app.get("/api/health")
