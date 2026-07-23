@@ -955,6 +955,49 @@ def build_radar_recent_lines(items: list[dict], cap: int,
     return out
 
 
+async def _recent_discovery_arrivals(days: int, cap: int = 8) -> list[dict]:
+    """发现层近 days 天的**人工线报影子行**（market_newcomer_log chart_type='discovery'，零 ST）
+    → 紧凑 dict。带 summary_cn / subgenre_cn（一夜 drain 已回填的）。is_slg=True 落库时人工已确认，
+    故这里**不再过 SLG probe 门控**（人工口径；autonomous 源接入时[期3+]再对那些源加门控）。"""
+    if days <= 0:
+        return []
+    from datetime import timedelta
+    from app.models.newcomer import MarketNewcomerLog
+    from app.services.newcomer_log import CHART_DISCOVERY
+    cutoff = utcnow_naive() - timedelta(days=days)
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(
+            select(MarketNewcomerLog)
+            .where(MarketNewcomerLog.chart_type == CHART_DISCOVERY,
+                   MarketNewcomerLog.is_slg.is_(True),
+                   MarketNewcomerLog.first_detected_at >= cutoff)
+            .order_by(MarketNewcomerLog.first_detected_at.desc())
+            .limit(cap))).scalars().all()
+    return [{"app_id": r.app_id, "name": r.name, "entity": r.publisher,
+             "platform": r.platform, "country": r.country, "genre": _genre_cn(r.genre),
+             "subgenre_cn": r.subgenre_cn, "summary": r.summary_cn,
+             "store_url": r.store_url} for r in rows]
+
+
+def build_discovery_lines(items: list[dict], cap: int) -> list[str]:
+    """【📮 发现层线报】段：人工线报核实的**未追踪主体**软启动新品（chart_type='discovery'）。
+    仅维护者卡——人工确认口径、非我方 tracked 竞品，与 RSS 早鸟 / 雷达同为「上榜前」信号，独立
+    段 + 明确标注。带中文摘要（drain 出）与商店直达。"""
+    out: list[str] = []
+    for it in items[:cap]:
+        pf = _PLATFORM_CN.get((it.get("platform") or "").lower(), it.get("platform") or "")
+        genre = f" · {it['genre']}" if it.get("genre") else ""
+        sg = f" · {it['subgenre_cn']}" if it.get("subgenre_cn") else ""
+        entity = f" — {_md_name(it['entity'])}" if it.get("entity") else ""
+        parts = [f"📮 **{_md_name(it['name'])}**{entity}（{pf}）{genre}{sg}"]
+        if it.get("summary"):
+            parts.append(f"📝 {_md_name(it['summary'], maxlen=60)}")
+        if it.get("store_url"):
+            parts.append(f"💻 [商店页]({it['store_url']})")   # 💻=外网，手机端受限（见底部图例）
+        out.append(_block(parts))
+    return out
+
+
 def _digest_tldr(per_combo: list[dict], version_changes, region_changes,
                  video_count: int, lead_items, own_match_count: int = 0) -> str:
     """开头一句话总览（TL;DR）：让领导打开卡片先有「今天整体什么情况」的锚点，不用读完
@@ -1214,6 +1257,7 @@ def build_daily_digest(per_combo: list[dict], today: str,
                        industry_articles: Optional[list] = None,
                        radar_items: Optional[list] = None,
                        rss_items: Optional[list[dict]] = None,
+                       discovery_items: Optional[list[dict]] = None,
                        quiet_day: bool = False,
                        probe_filtered: Optional[list[dict]] = None) -> Optional[tuple[str, str, list[tuple[str, str]]]]:
     """全 combo 检测结果 → (title, markdown, btns)。全空 → None（不发）。
@@ -1354,6 +1398,16 @@ def build_daily_digest(per_combo: list[dict], today: str,
             sections.append(
                 "【🛒 商店雷达 · 近期新上架】（厂商开发者账号清单 diff · 含软启动）"
                 "\n\n" + "\n\n".join(radar_lines))
+    # 发现层线报（切片1 落库出口）：人工核实的**未追踪主体**软启动新品——三层自动监测够不到
+    # 的长尾（新壳/仅 GP/榜下量级），经人工线报 → 分诊 → 落 discovery 影子行。**仅维护者卡**
+    # （人工确认口径、非我方 tracked 竞品）；领导卡不加（减量宪法，与 RSS 早鸟同）。
+    if discovery_items and not is_leader:
+        disc_lines = build_discovery_lines(discovery_items, cap)
+        if disc_lines:
+            total += len(disc_lines)
+            sections.append(
+                "【📮 发现层线报】（人工线报核实 · 未追踪主体软启动 · 零 ST）"
+                "\n\n" + "\n\n".join(disc_lines))
     # 平淡日「SLG 行业动态」兜底段（公众号广搜，见 send_daily_digest 的平淡日闸门）：
     # **非我方追踪竞品**的行业面背景，故独立段 + 明确标注。#178 上线时仅维护者卡（领导卡
     # 保持已核实竞品口径）；2026-07-03 应领导反馈「卡太单薄」改为**两卡都发**——段头
@@ -1892,6 +1946,9 @@ async def send_daily_digest() -> bool:
             except Exception:
                 logger.warning("wechat industry search (quiet-day filler) failed", exc_info=True)
 
+    # 发现层线报影子行（近 N 天，人工确认口径、零 ST 本地读）→ 维护者卡【📮 发现层线报】段。
+    discovery_items = await _recent_discovery_arrivals(settings.DIGEST_DISCOVERY_RECENT_DAYS)
+
     def _render(audience):
         return build_daily_digest(per_combo, today, articles=articles_by_app,
                                   entities=entities_by_app, version_changes=version_changes,
@@ -1899,8 +1956,8 @@ async def send_daily_digest() -> bool:
                                   summaries=summaries_by_app, lead_items=lead_items,
                                   audience=audience, own_matches=own_matches,
                                   industry_articles=industry_articles, radar_items=radar_items,
-                                  rss_items=rss_earlybird_items, quiet_day=is_quiet,
-                                  probe_filtered=probe_filtered)
+                                  rss_items=rss_earlybird_items, discovery_items=discovery_items,
+                                  quiet_day=is_quiet, probe_filtered=probe_filtered)
 
     sent_any = False
     # job 心跳自检（P1②）：关键定时 job 有成功记录却超期 → 维护者卡尾 ⚠️（补静默失败盲区，

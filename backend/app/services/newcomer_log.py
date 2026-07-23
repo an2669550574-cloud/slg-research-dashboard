@@ -286,6 +286,59 @@ async def record_radar_newcomers(rows: list[dict]) -> int:
     return written
 
 
+CHART_DISCOVERY = "discovery"
+
+
+async def record_discovery_newcomers(rows: list[dict]) -> int:
+    """把**人工线报核实**的未追踪主体新品写成 market_newcomer_log「影子行」（chart_type='discovery'）。
+
+    与 radar/rss 影子行同哲学（`record_radar_newcomers`）：写库后天然被 translate / subgenre /
+    视频 drain 捡起（都源自 market_newcomer_log、不按 chart_type 过滤），次日带中文摘要 / 子品类
+    进维护者卡【📮 发现层线报】段。区别只在源=人给的线报（发现层切片1 分诊工具的落库出口 B），
+    is_slg 由人工确认（True）。rank/revenue=NULL（非榜）。(country,platform,app_id,'discovery') 唯一
+    → 幂等（重复确认不重写）。**零 ST**——富化字段来自免费 enrich，不碰 game_rankings。
+
+    入参每行（来自分诊 draft/enrich）：app_id, platform, 可选 country(默认 WW)/name/publisher/
+    genre/description/store_url/rating/rating_count/release_date/subgenre_cn/is_slg(默认 True)。"""
+    if not rows:
+        return 0
+    today = utcnow_naive().strftime("%Y-%m-%d")
+    now = utcnow_naive()
+    written = 0
+    async with AsyncSessionLocal() as db:
+        for r in rows:
+            app_id = r.get("app_id")
+            if not app_id:
+                continue
+            country = (r.get("country") or "WW").upper()
+            platform = r.get("platform") or "android"
+            exists = (await db.execute(
+                select(MarketNewcomerLog.id).where(
+                    MarketNewcomerLog.country == country,
+                    MarketNewcomerLog.platform == platform,
+                    MarketNewcomerLog.app_id == app_id,
+                    MarketNewcomerLog.chart_type == CHART_DISCOVERY,
+                ))).scalar_one_or_none()
+            if exists is not None:
+                continue
+            db.add(MarketNewcomerLog(
+                country=country, platform=platform, app_id=app_id, chart_type=CHART_DISCOVERY,
+                as_of=today, name=r.get("name") or app_id, publisher=r.get("publisher"),
+                rank=None, revenue=None, is_slg=bool(r.get("is_slg", True)), is_reentry=False,
+                first_detected_at=now, store_url=r.get("store_url"),
+                release_date=r.get("release_date"), genre=r.get("genre"),
+                rating=r.get("rating"), rating_count=r.get("rating_count"),
+                description=r.get("description"), subgenre_cn=r.get("subgenre_cn"),
+                enrich_source=("gp" if platform == "android" else "itunes"), enriched_at=now,
+            ))
+            written += 1
+        if written:
+            await db.commit()
+    if written:
+        logger.info("discovery newcomers: %d shadow row(s) written to market_newcomer_log", written)
+    return written
+
+
 async def prune_newcomer_log(retention_days: Optional[int] = None) -> int:
     """删除 first_detected_at 早于保留窗口的检出日志，返回删除行数。
 

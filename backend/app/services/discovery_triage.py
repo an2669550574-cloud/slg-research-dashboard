@@ -24,7 +24,7 @@ from app.models.newcomer import MarketNewcomerLog
 from app.models.publisher import PublisherAppId, PublisherItunesApp
 # 下列名字 import 进本模块命名空间 → 测试可 monkeypatch dt.<name> 拦截外网。
 from app.services.newcomers import _load_ignore_keys
-from app.services.newcomer_log import enrich_fields
+from app.services.newcomer_log import enrich_fields, record_discovery_newcomers
 from app.services.newcomer_i18n import classify_subgenre, SLG_CORE_SUBGENRES
 from app.services.gp_releases import resolve_gp_developer_for_package
 from app.services.itunes_releases import resolve_artist_for_app
@@ -135,3 +135,80 @@ async def triage(tip: str, dry_run: bool = True) -> dict:
                  "雷达 diff。子品类未分类(mock/无描述/LLM 未给)时 is_slg 草稿为 False，需人工判。"),
     })
     return out
+
+
+async def log_tip(tip: str) -> dict:
+    """出口 B（期2）：人工确认线报 → 写 `chart_type='discovery'` 影子行。仅对**未追踪(unknown)**
+    线报有意义；已覆盖的短路返回不落库。is_slg=True（人工确认此为值得盯的 SLG 新品线索）——
+    一夜 drain 出中文摘要/子品类后，次日进维护者卡【📮 发现层线报】段。幂等（同 app 重复确认不重写）。"""
+    res = await triage(tip)
+    if not res.get("recognized"):
+        return {**res, "logged": False, "reason": "认不出线报，无法落库"}
+    if res.get("coverage") != "unknown":
+        return {**res, "logged": False,
+                "reason": f"coverage={res.get('coverage')}（非未追踪，无需落发现层）"}
+    enrich = res.get("enrich") or {}
+    dev = res.get("developer_account") or {}
+    row = {
+        "app_id": res["app_id"], "platform": res["platform"], "country": "WW",
+        "name": dev.get("app_name") or enrich.get("name") or res["app_id"],
+        "publisher": dev.get("artist_name"),
+        "genre": enrich.get("genre"), "description": enrich.get("description"),
+        "store_url": enrich.get("store_url"), "rating": enrich.get("rating"),
+        "release_date": enrich.get("release_date"),
+        "subgenre_cn": res.get("subgenre_cn"), "is_slg": True,
+    }
+    written = await record_discovery_newcomers([row])
+    return {**res, "logged": bool(written), "written": written,
+            "note": ("已写 discovery 影子行" if written else "该 app 已有 discovery 影子行（幂等跳过）")
+                    + "；一夜 drain（翻译/子品类/视频）后次日进维护者卡【📮 发现层线报】段。"}
+
+
+async def build_entity_from_tip(tip: str, name: Optional[str] = None,
+                                is_slg: Optional[bool] = None,
+                                hq_region: Optional[str] = None,
+                                brief: Optional[str] = None) -> dict:
+    """出口 A（期2.5）：人工确认线报 → 一键建 `PublisherEntity` + pin app_id + 挂开发者账号雷达。
+    建号后该开发者账号后续新品**自动进雷达 diff**（这正是手工给 Eastlume 做的那套）。仅对未追踪线报
+    建号（已覆盖的不重复建）。name/is_slg 可覆盖草稿；反解不出厂商名且未提供 name → 拒绝（要人给名）。
+    名称型开发者 id > 30 字符（`artist_id` 列限）→ 跳过雷达挂接、其余照建并提示。"""
+    from app.models.publisher import PublisherEntity, PublisherAppId, PublisherItunesArtist
+    from app.services.slg_publishers import load_index_from_db
+
+    res = await triage(tip)
+    if not res.get("recognized"):
+        return {**res, "built": False, "reason": "认不出线报，无法建号"}
+    if res.get("coverage") != "unknown":
+        return {**res, "built": False,
+                "reason": f"coverage={res.get('coverage')}（已覆盖，勿重复建号）"}
+    draft = res.get("draft_entity") or {}
+    ent_name = name or (draft.get("name") if draft.get("name") != "(待确认厂商名)" else None)
+    if not ent_name:
+        return {**res, "built": False,
+                "reason": "反解不出厂商名——请显式传 name 再建号（防建空壳档）"}
+    ent_is_slg = is_slg if is_slg is not None else bool(draft.get("is_slg"))
+    radar = draft.get("radar_account") or {}
+    radar_skipped = None
+    async with AsyncSessionLocal() as db:
+        e = PublisherEntity(name=ent_name, hq_region=hq_region, is_slg=ent_is_slg,
+                            brief=brief or draft.get("brief_stub"), sort_order=0)
+        db.add(e)
+        await db.flush()
+        db.add(PublisherAppId(entity_id=e.id, app_id=res["app_id"],
+                              note="发现层分诊建号 pin"))
+        if radar.get("artist_id"):
+            if len(str(radar["artist_id"])) <= 30:
+                db.add(PublisherItunesArtist(entity_id=e.id, artist_id=radar["artist_id"],
+                                             platform=radar.get("platform", "gp"),
+                                             label=ent_name))
+            else:
+                radar_skipped = f"开发者 id 超 30 字符列限（{radar['artist_id']}）——雷达未挂，需数字型 id"
+        await db.commit()
+        eid = e.id
+    await load_index_from_db()   # 刷新 is_slg 内存索引，pin 立即生效
+    return {**res, "built": True, "entity_id": eid, "entity_name": ent_name,
+            "is_slg": ent_is_slg, "radar_attached": bool(radar.get("artist_id")) and radar_skipped is None,
+            "radar_skipped": radar_skipped,
+            "note": "已建 entity + pin"
+                    + ("+ 挂 GP/iOS 雷达账号（后续新品自动 diff）" if radar_skipped is None and radar.get("artist_id") else "")
+                    + f"。回滚=DELETE /api/publishers/{eid}。"}
