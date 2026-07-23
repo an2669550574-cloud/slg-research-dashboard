@@ -65,6 +65,10 @@ async def list_materials(
         None,
         description="结构化二级标签分面筛选：二级标签 id 逗号分隔；同一维度内 OR、跨维度 AND",
     ),
+    has_dimensions: Optional[str] = Query(
+        None,
+        description="「仅看已打标」：一级标签 id 逗号分隔，素材在其中至少一个维度上有已打标记（维度间 OR）；与 tag_options 叠加为 AND",
+    ),
     q: Optional[str] = Query(None, description="模糊匹配 title 或 notes"),
     analysis_status: Optional[Literal["pending", "running", "done", "failed"]] = Query(
         None, description="按 LLM 分析状态筛选；AI 分析报告页用 done 拉已分析素材"
@@ -95,6 +99,8 @@ async def list_materials(
         )
     # 结构化分面筛选（P3）：同维度内 OR、跨维度 AND（与聚合分析 P4 共用同一 helper）。
     base = await tagging.apply_facet_filter(db, base, tag_options)
+    # 「仅看已打标」（标签包切片 2）：给定维度中至少一个有值，与分面叠加 AND。
+    base = tagging.apply_has_dimensions_filter(base, has_dimensions)
     if q:
         like = f"%{q}%"
         base = base.where((Material.title.ilike(like)) | (Material.notes.ilike(like)))
