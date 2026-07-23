@@ -9,6 +9,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.services.discovery_triage import triage, log_tip, build_entity_from_tip
+from app.services.discovery_wechat import scan as scan_wechat
 
 router = APIRouter(prefix="/api/discovery", tags=["discovery"])
 
@@ -43,3 +44,15 @@ async def build_entity(body: BuildEntityIn) -> dict:
     """出口A：人工确认未追踪线报 → 建 PublisherEntity + pin + 挂开发者账号雷达。"""
     return await build_entity_from_tip(body.tip, name=body.name, is_slg=body.is_slg,
                                        hq_region=body.hq_region, brief=body.brief)
+
+
+class ScanWechatIn(BaseModel):
+    days: int = 3            # 近 N 天文章
+    per_account: int = 5     # 每号取最近几篇
+
+
+@router.post("/scan-wechat")
+async def scan_wechat_sources(body: ScanWechatIn) -> dict:
+    """期5a（只读）：扫发现源公众号最近文 → LLM 抽 SLG 新品 → 名→商店反解 → 覆盖核查 → 候选表。
+    人工核 unknown 候选后走 /build-entity 或 /log。session 挂则探活门控空返。"""
+    return await scan_wechat(days=body.days, per_account=body.per_account)

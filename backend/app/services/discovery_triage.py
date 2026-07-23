@@ -15,7 +15,9 @@
 """
 import re
 from typing import Optional
+from urllib.parse import quote_plus
 
+import httpx
 from sqlalchemy import select
 
 from app.database import AsyncSessionLocal
@@ -84,6 +86,71 @@ async def _coverage(app_id: str) -> str:
                 MarketNewcomerLog.app_id == app_id).limit(1))).first():
             return "detected"
     return "unknown"
+
+
+_GP_SEARCH_PKG_RE = re.compile(r"/store/apps/details\?id=([a-zA-Z0-9._]+)")
+
+
+def _norm_name(s: str) -> str:
+    return re.sub(r"[^a-z0-9一-鿿]+", "", (s or "").lower())
+
+
+def _name_match(a: str, b: str) -> bool:
+    """两名是否够像（防搜索首结果张冠李戴）：规范化后互为子串，或前 6 字符命中。"""
+    na, nb = _norm_name(a), _norm_name(b)
+    if not na or not nb:
+        return False
+    return na in nb or nb in na or (len(na) >= 4 and na[:6] in nb)
+
+
+async def _resolve_gp_by_name(name: str) -> Optional[dict]:
+    from app.services.gp_releases import _get_html, app_page_url, parse_app_detail
+    url = f"https://play.google.com/store/search?q={quote_plus(name)}&c=apps&hl=en&gl=US"
+    try:
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+            pkgs = _GP_SEARCH_PKG_RE.findall(await _get_html(client, url))
+            if not pkgs:
+                return None
+            pkg = pkgs[0]   # 首结果（独特名准、泛名可能错，靠 match 标记提示）
+            detail = parse_app_detail(await _get_html(client, app_page_url(pkg)), pkg)
+    except Exception:
+        return None
+    store_name = detail.get("trackName") or pkg
+    return {"app_id": pkg, "platform": "android", "store_name": store_name,
+            "store_url": app_page_url(pkg), "match": _name_match(name, store_name)}
+
+
+async def _resolve_itunes_by_name(name: str) -> Optional[dict]:
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get("https://itunes.apple.com/search",
+                                 params={"term": name, "entity": "software", "limit": 3, "country": "us"})
+            results = r.json().get("results") or []
+    except Exception:
+        return None
+    if not results:
+        return None
+    top = results[0]
+    return {"app_id": str(top.get("trackId")), "platform": "ios",
+            "store_name": top.get("trackName"), "store_url": top.get("trackViewUrl"),
+            "publisher": top.get("artistName"), "match": _name_match(name, top.get("trackName") or "")}
+
+
+async def resolve_name_to_store(name: str, platform_hint: Optional[str] = None) -> Optional[dict]:
+    """游戏名 → 商店 app_id（零 ST）。安卓/未知先 GP 搜索首结果、再 iTunes；iOS 反之。优先返回
+    名字对得上的（match=True）；都对不上返回 best-effort 首结果（match=False，供人工判）；全空返 None。
+    首结果启发式，故本函数只服务「出候选供人工核」，不做无人值守自动落库。"""
+    fns = [_resolve_gp_by_name, _resolve_itunes_by_name]
+    if platform_hint == "ios":
+        fns = [_resolve_itunes_by_name, _resolve_gp_by_name]
+    best = None
+    for fn in fns:
+        res = await fn(name)
+        if res and res.get("app_id"):
+            if res.get("match"):
+                return res
+            best = best or res
+    return best
 
 
 async def triage(tip: str, dry_run: bool = True) -> dict:
