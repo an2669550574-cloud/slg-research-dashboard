@@ -203,6 +203,7 @@ export default function TagsManage() {
         <ProductScopeView
           dims={dims} games={allGames} gameMap={gameMap}
           inputClass={inputClass} onSaved={invalidate}
+          onGoTagView={() => { setViewMode('tag'); closeForm() }}
         />
       )}
 
@@ -780,14 +781,93 @@ function OptionScopeModal({ opt, dim, games, gameMap, inputClass, onClose, onSav
 // ── 产品视角（S4）：选一个产品 → 一屏批量把「通用」标签收窄成「该产品专属」──────
 // 语义只做干净的「通用 ⇄ 仅该产品」翻转；多产品 / 属他产品的复杂作用域只读展示，
 // 不让一键勾选误覆盖（白名单是加法语义，clobber 会抹掉别人的名单）。
+// ── 产品视角的标签包速览（只读 + 开关）─────────────────────────────────────
+// 刻意**不放编辑能力**：包是跨产品对象（一维度可属多包、一包可作用多产品），
+// 单产品视角编辑易"只见局部改了全局"，与复杂作用域行只读锁定同理。编辑收口
+// 到标签视角的包管理面板。开关是纯产品级语义，放这里正合适（素材库入口太深）。
+function PackSummaryStrip({ pid, dims, gameMap, onGoTagView }: {
+  pid: string
+  dims: TagDimension[]
+  gameMap: Record<string, string>
+  onGoTagView: () => void
+}) {
+  const t = useT()
+  const tt = t.tagsManage
+  const qc = useQueryClient()
+  // 与素材库同 queryKey，共享缓存
+  const { data: packs = [] } = useQuery({
+    queryKey: ['tagPacks', pid],
+    queryFn: () => tagsApi.listPacks(pid),
+  })
+  const { data: setting } = useQuery({
+    queryKey: ['tagPackSetting', pid],
+    queryFn: () => tagsApi.getPackSetting(pid),
+  })
+  const settingMut = useMutation({
+    mutationFn: (enabled: boolean) => tagsApi.putPackSetting(pid, enabled),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ['tagPackSetting', pid] })
+      toast.success(res.enabled ? t.materials.packEnabledToast : t.materials.packDisabledToast)
+    },
+  })
+  // 成员数按「该产品可见的维度」计（包可能含别的产品的维度，全量数会虚高）
+  const visibleDimIds = useMemo(() => new Set(
+    dims.filter(d => !(d.app_ids?.length) || (d.app_ids ?? []).includes(pid)).map(d => d.id)
+  ), [dims, pid])
+  const enabled = !!setting?.enabled
+
+  return (
+    <div className="bg-surface border border-default rounded-xl p-4 space-y-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="flex items-center gap-1.5 text-xs text-secondary">
+          <Layers size={13} className="text-brand-400" /> {tt.packsTitle}
+        </span>
+        {packs.length > 0 && (
+          <label className="flex items-center gap-1.5 text-xs text-secondary cursor-pointer select-none">
+            <input type="checkbox" checked={enabled} disabled={settingMut.isPending}
+              onChange={e => settingMut.mutate(e.target.checked)}
+              className="accent-brand-500" />
+            {tt.packMaterialsSwitch}
+          </label>
+        )}
+        <button type="button" onClick={onGoTagView}
+          className="text-[11px] text-muted hover:text-accent transition-colors ml-auto">
+          {tt.packGoEdit}
+        </button>
+      </div>
+      {packs.length === 0 ? (
+        <p className="text-[11px] text-muted">{tt.packSummaryEmpty}</p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          {packs.map(p => {
+            const n = p.dimension_ids.filter(id => visibleDimIds.has(id)).length
+            const universal = p.app_ids.length === 0
+            return (
+              <span key={p.id} title={universal ? tt.scopeUniversal : p.app_ids.map(a => gameMap[a] || a).join(' · ')}
+                className="inline-flex items-center gap-1 text-xs text-primary bg-elevated border border-default rounded-lg px-2.5 py-1">
+                {p.name}
+                <span className="text-[10px] text-muted">{tt.packMembersCount(n)}</span>
+                {universal
+                  ? <Globe2 size={10} className="text-muted" />
+                  : <Package size={10} className="text-accent" />}
+              </span>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 type ProductScopeViewProps = {
   dims: TagDimension[]
   games: GameOut[]
   gameMap: Record<string, string>
   inputClass: string
   onSaved: () => void
+  onGoTagView: () => void
 }
-function ProductScopeView({ dims, games, gameMap, inputClass, onSaved }: ProductScopeViewProps) {
+function ProductScopeView({ dims, games, gameMap, inputClass, onSaved, onGoTagView }: ProductScopeViewProps) {
   const t = useT()
   const tt = t.tagsManage
   const [pid, setPid] = useState('')
@@ -918,6 +998,11 @@ function ProductScopeView({ dims, games, gameMap, inputClass, onSaved }: Product
         </div>
         {pid && <p className="text-[11px] text-muted">{tt.productViewHint}</p>}
       </div>
+
+      {/* 标签包速览（只读）+ 素材库包视图开关；编辑收口到标签视角 */}
+      {pid && (
+        <PackSummaryStrip pid={pid} dims={dims} gameMap={gameMap} onGoTagView={onGoTagView} />
+      )}
 
       {/* 模板复制：给刚建档的新产品一键克隆另一产品的整套专属维度（复制后各自独立演进） */}
       {pid && templateSources.length > 0 && (
