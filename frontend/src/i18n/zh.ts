@@ -387,6 +387,7 @@ export const zh = {
     packUngrouped: (n: number) => `未分组（${n}）`,
     packEnabledToast: '已启用标签包视图',
     packDisabledToast: '已停用标签包视图',
+    editorPackHint: '只显示所选包的标签；必填标签始终显示',
     // 聚合分析（P4）
     aggTitle: '聚合分析',
     aggHint: '按结构化标签统计当前筛选范围内的素材分布',
