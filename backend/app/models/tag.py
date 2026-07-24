@@ -107,6 +107,25 @@ class TagPackDimension(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 
 
+class TagPackOption(Base):
+    """标签包 ↔ 二级标签 选项子集成员（migration 0047）。
+
+    与 TagPackDimension（整维度成员）互斥并存：整维度 = 全部选项 + 新增选项自动进包；
+    选项子集 = 固定名单。同包同维度两种形态互斥，API 写入时归一（整维度优先）。
+    删包 FK CASCADE；删选项/删维度时应用层显式连带清理（SQLite 不强制 FK）。
+    """
+    __tablename__ = "tag_pack_options"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    pack_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("tag_packs.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    option_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("tag_options.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
 class TagPackProduct(Base):
     """标签包 ↔ 产品(app_id) 作用域（migration 0046）。
 

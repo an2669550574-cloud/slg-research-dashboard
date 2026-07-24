@@ -129,8 +129,11 @@ PACK_NAME_MAX = 20
 class TagPackCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=PACK_NAME_MAX)
     sort_order: int = 0
-    # 成员一级标签 id 列表；空 = 空包（先建壳后圈维度）。
+    # 整维度成员 id 列表（含该维度全部二级标签，新增选项自动进包）；空 = 空包。
     dimension_ids: list[int] = []
+    # 选项子集成员 id 列表（0047）：只含勾中的二级标签，固定名单。
+    # 与 dimension_ids 归一：父维度已整包含的选项自动忽略（整维度优先）。
+    option_ids: list[int] = []
     # 包级产品作用域；空 = 通用。
     app_ids: list[str] = []
 
@@ -140,6 +143,8 @@ class TagPackUpdate(BaseModel):
     sort_order: Optional[int] = None
     # None = 不动；[] = 清空成员；非空 = replace-all。
     dimension_ids: Optional[list[int]] = None
+    # None = 不动；[] = 清空选项子集；非空 = replace-all（同样按整维度优先归一）。
+    option_ids: Optional[list[int]] = None
     # None = 不动；[] = 改回通用；非空 = replace-all。
     app_ids: Optional[list[str]] = None
 
@@ -151,8 +156,10 @@ class TagPackOut(BaseModel):
     name: str
     sort_order: int
     created_at: datetime
-    # 成员维度 id（全量，不按 app_id 收敛——前端浏览态自行与可见维度求交集）。
+    # 整维度成员 id（全量，不按 app_id 收敛——前端浏览态自行与可见维度求交集）。
     dimension_ids: list[int] = []
+    # 选项子集成员 id（0047）；其父维度即"部分包含"维度。
+    option_ids: list[int] = []
     # 包级作用域名单；空 = 通用。
     app_ids: list[str] = []
 

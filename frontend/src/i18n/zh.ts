@@ -745,7 +745,7 @@ export const zh = {
     packNameRequired: '请填写包名称',
     packNameTooLong: '包名称最多 20 个字',
     packMembersLabel: '包含的一级标签',
-    packMembersHint: '勾选属于该包的一级标签；不勾 = 空包，之后随时补',
+    packMembersHint: '勾整个标签 = 其下全部二级值、以后新增自动进包；展开只勾部分二级 = 固定名单',
     packMemberSearchPlaceholder: '搜索一级标签…',
     packMembersCount: (n: number) => `${n} 个标签`,
     packSaveFailed: '保存失败',

@@ -494,9 +494,18 @@ function PacksPanel({ dims, games, gameMap, inputClass }: PacksPanelProps) {
       ) : (
         <div className="border-t border-default pt-3 space-y-2">
           {packs.map((p, idx) => {
-            const memberNames = p.dimension_ids
+            const wholeNames = p.dimension_ids
               .map(id => dimNameMap.get(id))
               .filter((x): x is string => Boolean(x))
+            // 部分包含维度（0047）：按选项子集推父维度，显示「维度名(k)」
+            const partialByDim = new Map<number, number>()
+            for (const oid of p.option_ids ?? []) {
+              const dim = dims.find(d => d.options.some(o => o.id === oid))
+              if (dim) partialByDim.set(dim.id, (partialByDim.get(dim.id) ?? 0) + 1)
+            }
+            const partialNames = [...partialByDim.entries()]
+              .map(([did, k]) => `${dimNameMap.get(did) ?? did}(${k})`)
+            const memberNames = [...wholeNames, ...partialNames]
             return (
               <div key={p.id} className="flex items-center gap-2 bg-elevated border border-default rounded-lg px-3 py-2">
                 <div className="flex items-center gap-2 flex-wrap min-w-0 flex-1">
@@ -567,29 +576,64 @@ function PackFormModal({ mode, dims, games, gameMap, inputClass, onClose, onSave
   const tt = t.tagsManage
   const editing = mode.kind === 'edit' ? mode.pack : null
   const [name, setName] = useState(editing?.name ?? '')
+  // 两级成员（0047）：memberIds = 整维度（全部二级 + 新增自动进包）；optIds = 选项子集（固定名单）
   const [memberIds, setMemberIds] = useState<Set<number>>(new Set(editing?.dimension_ids ?? []))
+  const [optIds, setOptIds] = useState<Set<number>>(new Set(editing?.option_ids ?? []))
+  const [expandedDims, setExpandedDims] = useState<Set<number>>(
+    // 编辑态：有选项子集的维度默认展开，半选态一眼可见
+    () => {
+      const withPartial = new Set<number>()
+      const sel = new Set(editing?.option_ids ?? [])
+      for (const d of dims) if (d.options.some(o => sel.has(o.id))) withPartial.add(d.id)
+      return withPartial
+    })
   const [appIds, setAppIds] = useState<string[]>(editing?.app_ids ?? [])
   const [q, setQ] = useState('')
 
   const filteredDims = useMemo(() => {
     const k = q.trim().toLowerCase()
     if (!k) return dims
-    return dims.filter(d => d.name.toLowerCase().includes(k))
+    // 搜维度名或其任一二级标签值
+    return dims.filter(d =>
+      d.name.toLowerCase().includes(k) || d.options.some(o => o.value.toLowerCase().includes(k)))
   }, [dims, q])
 
   const mut = useMutation({
     mutationFn: () => {
-      // 成员顺序跟随维度列表顺序（sort_order），不引入包内自定义排序
+      // 成员顺序跟随维度/选项列表顺序（sort_order），不引入包内自定义排序
       const dimension_ids = dims.filter(d => memberIds.has(d.id)).map(d => d.id)
-      const payload = { name: name.trim(), dimension_ids, app_ids: appIds }
+      const option_ids = dims.flatMap(d => d.options.filter(o => optIds.has(o.id)).map(o => o.id))
+      const payload = { name: name.trim(), dimension_ids, option_ids, app_ids: appIds }
       return editing ? tagsApi.updatePack(editing.id, payload) : tagsApi.createPack(payload)
     },
     onSuccess: () => { toast.success(editing ? tt.packUpdated : tt.packAdded); onSaved() },
     onError: (e: any) => toast.error(e?.response?.data?.detail || tt.packSaveFailed),
   })
 
-  const toggleMember = (id: number) =>
-    setMemberIds(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const toggleExpand = (id: number) =>
+    setExpandedDims(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+  // 维度 checkbox：整选 ⇄ 不选；半选态点击 = 升级为整选（清其选项子集）
+  const toggleDim = (d: TagDimension) => {
+    if (memberIds.has(d.id)) {
+      setMemberIds(s => { const n = new Set(s); n.delete(d.id); return n })
+    } else {
+      setMemberIds(s => new Set(s).add(d.id))
+      setOptIds(s => { const n = new Set(s); for (const o of d.options) n.delete(o.id); return n })
+    }
+  }
+  // 选项 chip：整选态点某项 = 降级为「其余选项」的子集；子集态正常增删
+  const toggleOpt = (d: TagDimension, optId: number) => {
+    if (memberIds.has(d.id)) {
+      setMemberIds(s => { const n = new Set(s); n.delete(d.id); return n })
+      setOptIds(s => {
+        const n = new Set(s)
+        for (const o of d.options) if (o.id !== optId) n.add(o.id)
+        return n
+      })
+    } else {
+      setOptIds(s => { const n = new Set(s); n.has(optId) ? n.delete(optId) : n.add(optId); return n })
+    }
+  }
 
   const handleSave = () => {
     const nm = name.trim()
@@ -628,20 +672,56 @@ function PackFormModal({ mode, dims, games, gameMap, inputClass, onClose, onSave
               <p className="text-[11px] text-muted px-3 py-2">{t.common.noData}</p>
             ) : (
               <div className="divide-y divide-default">
-                {filteredDims.map(d => (
-                  <label key={d.id}
-                    className="flex items-center gap-2 px-3 py-1.5 text-xs text-secondary hover:bg-surface cursor-pointer">
-                    <input type="checkbox" checked={memberIds.has(d.id)} onChange={() => toggleMember(d.id)}
-                      className="accent-brand-500" />
-                    <span className="text-primary truncate">{d.name}</span>
-                    {(d.app_ids ?? []).length > 0 && (
-                      <span className="inline-flex items-center gap-0.5 text-[10px] text-accent ml-auto"
-                        title={(d.app_ids ?? []).map(a => gameMap[a] || a).join(' · ')}>
-                        <Package size={10} />{(d.app_ids ?? []).length}
-                      </span>
-                    )}
-                  </label>
-                ))}
+                {filteredDims.map(d => {
+                  const whole = memberIds.has(d.id)
+                  const partialN = d.options.filter(o => optIds.has(o.id)).length
+                  const canExpand = d.value_type === 'text' && d.options.length > 0
+                  const open = expandedDims.has(d.id)
+                  return (
+                    <div key={d.id}>
+                      <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-secondary hover:bg-surface">
+                        <input type="checkbox" checked={whole}
+                          ref={el => { if (el) el.indeterminate = !whole && partialN > 0 }}
+                          onChange={() => toggleDim(d)}
+                          className="accent-brand-500 cursor-pointer" />
+                        <button type="button" onClick={() => canExpand && toggleExpand(d.id)}
+                          className={`flex items-center gap-1.5 flex-1 min-w-0 text-left ${canExpand ? 'cursor-pointer' : 'cursor-default'}`}>
+                          <span className="text-primary truncate">{d.name}</span>
+                          {!whole && partialN > 0 && (
+                            <span className="text-[10px] text-accent shrink-0">{partialN}/{d.options.length}</span>
+                          )}
+                        </button>
+                        {(d.app_ids ?? []).length > 0 && (
+                          <span className="inline-flex items-center gap-0.5 text-[10px] text-accent shrink-0"
+                            title={(d.app_ids ?? []).map(a => gameMap[a] || a).join(' · ')}>
+                            <Package size={10} />{(d.app_ids ?? []).length}
+                          </span>
+                        )}
+                        {canExpand && (
+                          <button type="button" onClick={() => toggleExpand(d.id)}
+                            className="p-0.5 text-muted hover:text-primary transition-colors shrink-0">
+                            {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                          </button>
+                        )}
+                      </div>
+                      {canExpand && open && (
+                        <div className="flex flex-wrap gap-1.5 px-3 pb-2 pl-9">
+                          {d.options.map(o => {
+                            const active = whole || optIds.has(o.id)
+                            return (
+                              <button type="button" key={o.id} onClick={() => toggleOpt(d, o.id)}
+                                className={`px-2 py-0.5 rounded-md text-[11px] border transition-colors ${active
+                                  ? 'bg-accent/15 border-accent/40 text-accent'
+                                  : 'bg-surface border-default text-secondary hover:border-strong hover:text-primary'}`}>
+                                {o.value}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>
@@ -840,7 +920,13 @@ function PackSummaryStrip({ pid, dims, gameMap, onGoTagView }: {
       ) : (
         <div className="flex flex-wrap gap-1.5">
           {packs.map(p => {
-            const n = p.dimension_ids.filter(id => visibleDimIds.has(id)).length
+            // 整维度 + 选项子集的父维度，都按「该产品可见」收敛后计数
+            const partialDims = new Set(
+              (p.option_ids ?? [])
+                .map(oid => dims.find(d => d.options.some(o => o.id === oid))?.id)
+                .filter((x): x is number => x != null && visibleDimIds.has(x))
+            )
+            const n = p.dimension_ids.filter(id => visibleDimIds.has(id)).length + partialDims.size
             const universal = p.app_ids.length === 0
             return (
               <span key={p.id} title={universal ? tt.scopeUniversal : p.app_ids.map(a => gameMap[a] || a).join(' · ')}

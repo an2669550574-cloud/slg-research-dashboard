@@ -722,7 +722,7 @@ export const en: Translations = {
     packNameRequired: 'Pack name is required',
     packNameTooLong: 'Pack name must be at most 20 characters',
     packMembersLabel: 'Dimensions in this pack',
-    packMembersHint: 'Check the dimensions that belong to this pack; none = empty pack, add later anytime',
+    packMembersHint: 'Check a whole dimension = all its values, future ones auto-included; expand and check some values = fixed list',
     packMemberSearchPlaceholder: 'Search dimensions…',
     packMembersCount: (n: number) => `${n} dimension${n === 1 ? '' : 's'}`,
     packSaveFailed: 'Save failed',
