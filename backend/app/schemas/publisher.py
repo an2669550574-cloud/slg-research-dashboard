@@ -52,8 +52,8 @@ class PublisherItunesArtistCreate(BaseModel):
             raise ValueError("artist_id must not be empty")
         if self.platform == "ios" and not v.isdigit():
             raise ValueError("artist_id must be the numeric iTunes artistId, e.g. 1717022676")
-        if len(v) > 30:
-            raise ValueError("artist_id too long (max 30 chars)")
+        if len(v) > 255:
+            raise ValueError("artist_id too long (max 255 chars)")
         self.artist_id = v
         return self
 

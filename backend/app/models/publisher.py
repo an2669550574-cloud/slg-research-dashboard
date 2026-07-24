@@ -106,7 +106,7 @@ class PublisherItunesArtist(Base):
     entity_id: Mapped[int] = mapped_column(
         ForeignKey("publisher_entities.id", ondelete="CASCADE"), index=True
     )
-    artist_id: Mapped[str] = mapped_column(String(30), unique=True)  # 如 "1717022676"
+    artist_id: Mapped[str] = mapped_column(String(255), unique=True)  # iOS 数字型如 "1717022676"；GP 可为名称型长 id（如 "SINGAPORE JUST GAME TECHNOLOGY PTE. LTD."）
     # 'ios' = iTunes artistId；'gp' = Google Play 开发者页 id（名称型如 "GAME SPARK"
     # 或数字型）。GP 侧复用同一套清单 diff/基线语义，apps 行 storefronts 固定 'gp'。
     platform: Mapped[str] = mapped_column(String(10), default="ios", server_default="ios")
