@@ -147,6 +147,28 @@ async def test_products_include_radar_unranked(client):
 
 
 @pytest.mark.asyncio
+async def test_wire_gp_artist_accepts_long_name_id(client):
+    """GP 开发者账号 id 可为名称型长串（>30 字符），接入雷达应成功——
+    治「雷达覆盖建议」里 Just Game 这类名称型 GP dev id 点接入报 422（列限 + schema
+    双拦）。iOS 侧仍要求纯数字 artistId。"""
+    r = await client.post("/api/publishers/", json={"name": "长名称账号主体"})
+    eid = r.json()["id"]
+    long_gp_id = "SINGAPORE JUST GAME TECHNOLOGY PTE. LTD."  # 40 字符
+    assert len(long_gp_id) > 30
+    a = await client.post(f"/api/publishers/{eid}/itunes-artists",
+                          json={"artist_id": long_gp_id, "platform": "gp",
+                                "label": "Just Game Technology"})
+    assert a.status_code == 201, a.text
+    assert a.json()["artist_id"] == long_gp_id
+    assert a.json()["platform"] == "gp"
+
+    # iOS 侧名称型仍被拒（isdigit 校验先于唯一性检查触发 422）
+    bad = await client.post(f"/api/publishers/{eid}/itunes-artists",
+                            json={"artist_id": long_gp_id, "platform": "ios"})
+    assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_products_endpoint_includes_radar(client):
     """/products 端点也并入雷达未上榜产品——与卡片同口径，避免卡片有数抽屉为空。"""
     r = await client.post("/api/publishers/", json={"name": "雷达抽屉主体"})

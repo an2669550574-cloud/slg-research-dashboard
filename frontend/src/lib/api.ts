@@ -99,11 +99,25 @@ const api = axios.create({
   headers: apiKey ? { 'X-API-Key': apiKey } : {},
 })
 
+// FastAPI 的 detail 有两种形态：HTTPException 是字符串，pydantic 422 校验错误是
+// 数组 [{loc, msg, ...}]。直接模板字符串化数组会得到 "[object Object]"，故归一成可读文案。
+function formatErrorDetail(detail: unknown): string | null {
+  if (!detail) return null
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    const msgs = detail
+      .map(d => (d && typeof d === 'object' && 'msg' in d ? String((d as { msg: unknown }).msg) : null))
+      .filter((m): m is string => !!m)
+    if (msgs.length) return msgs.join('；')
+  }
+  return null
+}
+
 api.interceptors.response.use(
   r => r,
-  (error: AxiosError<{ detail?: string }>) => {
+  (error: AxiosError<{ detail?: unknown }>) => {
     // 全局错误兜底；mutation 自己若已 toast 也无妨（react-hot-toast 会去重展示）
-    const detail = error.response?.data?.detail
+    const detail = formatErrorDetail(error.response?.data?.detail)
     const status = error.response?.status
     const msg = detail || error.message || '请求失败'
     toast.error(status ? `${status} · ${msg}` : msg)
