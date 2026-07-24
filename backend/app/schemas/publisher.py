@@ -306,8 +306,8 @@ class PublisherIgnoreOut(BaseModel):
     """缺口忽略名单条目：被人工标为「非 SLG 主体」的发行商 / app，不再进缺口提示。"""
     model_config = ConfigDict(from_attributes=True)
     id: int
-    kind: Literal["publisher", "app_id"]
-    value: str               # publisher: corp_squash 归一键；app_id: 原始 app_id
+    kind: Literal["publisher", "app_id", "artist_id"]
+    value: str               # publisher: corp_squash 归一键；app_id/artist_id: 原始 id
     label: Optional[str] = None  # 展示用原始名（建条目时传入的 publisher 串 / app 名）
     note: Optional[str] = None
     created_at: datetime
@@ -316,8 +316,8 @@ class PublisherIgnoreOut(BaseModel):
 class PublisherIgnoreCreate(BaseModel):
     """新增忽略：raw_value 传原始串（publisher 名或 app_id）——publisher 粒度由后端
     归一成 corp_squash 键存储，原始串落到 label 供展示。"""
-    kind: Literal["publisher", "app_id"]
-    raw_value: str           # 原始 publisher 名 或 app_id
+    kind: Literal["publisher", "app_id", "artist_id"]
+    raw_value: str           # 原始 publisher 名 / app_id / 开发者账号 artist_id
     label: Optional[str] = None
     note: Optional[str] = None
 
