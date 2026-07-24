@@ -1022,7 +1022,7 @@ export interface PublisherDownloadLead {
 /** 缺口忽略名单条目：人工标过「非 SLG 主体」的发行商 / app，不再进缺口提示。 */
 export interface PublisherIgnore {
   id: number
-  kind: 'publisher' | 'app_id'
+  kind: 'publisher' | 'app_id' | 'artist_id'
   value: string          // publisher: 后端 corp_squash 归一键；app_id: 原始 app_id
   label: string | null   // 展示用原始名
   note: string | null
@@ -1031,7 +1031,7 @@ export interface PublisherIgnore {
 
 /** 新增忽略：raw_value 传原始串，publisher 粒度由后端归一成 squash 键。 */
 export interface PublisherIgnoreCreate {
-  kind: 'publisher' | 'app_id'
+  kind: 'publisher' | 'app_id' | 'artist_id'
   raw_value: string
   label?: string | null
   note?: string | null

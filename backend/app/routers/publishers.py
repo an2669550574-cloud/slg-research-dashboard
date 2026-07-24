@@ -896,6 +896,11 @@ async def list_itunes_artist_suggestions(
     ios_covered = {a.entity_id for a in artists if a.platform == "ios"}
     gp_covered = {a.entity_id for a in artists if a.platform == "gp"}
     seen_artist = {a.artist_id for a in artists}  # 已接入的全局占用（跨平台唯一）→ 不再建议
+    # 人工忽略的开发者账号（如发行/分发方账号，非任何自有主体，挂了会误归属其全部新品）
+    # 并入占用集 → 不再作为任何主体的建议出现。可在雷达区「已忽略」里恢复。
+    seen_artist |= {ig.value for ig in (await db.execute(
+        select(PublisherIgnore).where(PublisherIgnore.kind == "artist_id")
+    )).scalars().all()}
     pinned_ios: dict[int, list[str]] = {}   # iOS 数字 id
     pinned_gp: dict[int, list[str]] = {}    # 安卓包名（含 `.`、非纯数字）
     for a in app_ids:
@@ -1069,7 +1074,7 @@ async def list_publisher_ignores(db: AsyncSession = Depends(get_db)):
 @router.post("/ignores", response_model=PublisherIgnoreOut, status_code=201)
 async def create_publisher_ignore(data: PublisherIgnoreCreate, db: AsyncSession = Depends(get_db)):
     """新增忽略。publisher 粒度：raw_value 归一成 corp_squash 键存储、原串落 label；
-    app_id 粒度：原样存。已存在（kind+value 唯一）→ 幂等返回旧条目，不报错。"""
+    app_id / artist_id 粒度：原样存。已存在（kind+value 唯一）→ 幂等返回旧条目，不报错。"""
     if data.kind == "publisher":
         value = corp_squash(_toks(data.raw_value))
         if not value:

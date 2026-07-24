@@ -529,6 +529,47 @@ async def test_itunes_artist_suggestions_from_matched_products(client, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_itunes_artist_suggestions_excludes_ignored_artist(client, monkeypatch):
+    """人工忽略某开发者账号（kind=artist_id，如发行/分发方账号）后，它不再作为任何
+    主体的雷达建议出现——治「建议列表推荐接入不该接的账号（如华娱反解到 B 站账号）」。"""
+    from app.config import settings
+    import app.services.itunes_releases as svc
+    today = _today()
+    await _seed_rankings([
+        ("7002", today, 1, 800, 900.0, "US", "ios", "Mega War", "MegaCorp Studios"),
+    ])
+    eid = (await client.post("/api/publishers/", json={
+        "name": "兆业", "is_slg": True, "aliases": [{"keyword": "megacorp"}],
+    })).json()["id"]
+
+    async def fake_resolve(app_id):
+        return {"artist_id": "950", "artist_name": "MegaCorp", "app_name": "Mega War"}
+
+    async def _no_gp(pkg):
+        return None
+
+    monkeypatch.setattr(settings, "USE_MOCK_DATA", False)
+    monkeypatch.setattr(svc, "resolve_artist_for_app", fake_resolve)
+    monkeypatch.setattr("app.services.gp_releases.resolve_gp_developer_for_package", _no_gp)
+    monkeypatch.setattr("app.routers.publishers._SUGGEST_LOOKUP_DELAY_S", 0)
+
+    # 未忽略前：建议里有账号 950
+    sugg = (await client.get("/api/publishers/itunes-artist-suggestions")).json()
+    assert any(s["artist_id"] == "950" for s in sugg)
+
+    # 忽略账号 950（artist_id 粒度）→ 幂等、原样存 value
+    ig = await client.post("/api/publishers/ignores",
+                           json={"kind": "artist_id", "raw_value": "950", "label": "MegaCorp（950）"})
+    assert ig.status_code == 201
+    assert ig.json()["kind"] == "artist_id"
+    assert ig.json()["value"] == "950"
+
+    # 忽略后：账号 950 从建议里消失
+    sugg2 = (await client.get("/api/publishers/itunes-artist-suggestions")).json()
+    assert all(s["artist_id"] != "950" for s in sugg2)
+
+
+@pytest.mark.asyncio
 async def test_itunes_artist_suggestions_skips_occupied_artist_tries_next(client, monkeypatch):
     """旗舰反解出的开发者账号已被占用时，应试本主体下一候选而非放弃整主体
     （多候选结构下 break→continue 修漏报；单 pinned 时两者等价）。"""

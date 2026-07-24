@@ -1003,6 +1003,11 @@ export const zh = {
     radarWire: '接入雷达',
     radarWireHint: '把该开发者账号接到此主体，雷达即开始监测其 App Store 新上架',
     radarWiredDone: (name: string) => `已为「${name}」接入开发者账号雷达`,
+    radarIgnore: '忽略',
+    radarIgnoreHint: '这个开发者账号不是该主体自有（如发行 / 分发方账号），从建议里剔除、不再推荐接入（可在下方「已忽略」里恢复）',
+    radarIgnoredDone: (name: string) => `已忽略「${name}」· 不再建议接入雷达`,
+    radarIgnoredList: (n: number) => `已忽略 ${n} 个账号`,
+    radarRestoreHint: '取消忽略，下次扫描重新建议',
     // 下载榜早期信号（待建档新厂线索）
     leadsExpand: '展开早期信号',
     leadsCollapse: '收起早期信号',

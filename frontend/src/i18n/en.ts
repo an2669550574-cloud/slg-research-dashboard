@@ -967,6 +967,11 @@ export const en: Translations = {
     radarWire: 'Wire radar',
     radarWireHint: 'Attach this developer account to the entity; the radar starts tracking its App Store releases',
     radarWiredDone: (name: string) => `Wired developer-account radar for "${name}"`,
+    radarIgnore: 'Ignore',
+    radarIgnoreHint: 'This developer account is not owned by the entity (e.g. a publisher / distributor account); remove it from suggestions and stop recommending it (restorable under "Ignored" below)',
+    radarIgnoredDone: (name: string) => `Ignored "${name}" · no longer suggested for radar`,
+    radarIgnoredList: (n: number) => `${n} ignored`,
+    radarRestoreHint: 'Un-ignore; suggested again next scan',
     // Download-chart early signal (unarchived newcomer leads)
     leadsExpand: 'Show early signals',
     leadsCollapse: 'Hide early signals',

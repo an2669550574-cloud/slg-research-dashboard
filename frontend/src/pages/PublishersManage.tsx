@@ -133,6 +133,9 @@ export default function PublishersManage() {
     queryKey: IGNORES_QK,
     queryFn: () => publishersApi.ignores(),
   })
+  // 缺口忽略（publisher/app_id）与雷达账号忽略（artist_id）分区展示：各区块管各自类型。
+  const gapIgnores = ignores.filter(ig => ig.kind !== 'artist_id')
+  const radarIgnores = ignores.filter(ig => ig.kind === 'artist_id')
   const [gapsOpen, setGapsOpen] = useState(false)
   const [ignoredOpen, setIgnoredOpen] = useState(false)
 
@@ -140,6 +143,7 @@ export default function PublishersManage() {
   // 扫描会做若干次 iTunes lookup（~20-30 秒），故只在用户点「扫描」(radarScan=true) 后才发起。
   const [radarOpen, setRadarOpen] = useState(false)
   const [radarScan, setRadarScan] = useState(false)
+  const [radarIgnoredOpen, setRadarIgnoredOpen] = useState(false)
   const { data: radarSuggestions = [], isFetching: radarLoading } = useQuery({
     queryKey: ['publishers', 'artistSuggestions'],
     queryFn: () => publishersApi.artistSuggestions(40),
@@ -198,6 +202,21 @@ export default function PublishersManage() {
       qc.invalidateQueries({ queryKey: ['publishers', 'health'] })
       invalidate()
       toast.success(tt.radarWiredDone(s.entity_name))
+    },
+  })
+  // 忽略一条雷达建议：artist_id 粒度（该开发者账号非任何自有主体，如发行 / 分发方账号）。
+  // 忽略后后端并入建议端占用集、不再对任何主体建议；乐观移除该账号的行 + 刷新忽略名单。
+  const ignoreArtistMut = useMutation({
+    mutationFn: (s: PublisherArtistSuggestion) =>
+      publishersApi.addIgnore({
+        kind: 'artist_id', raw_value: s.artist_id,
+        label: s.artist_name ? `${s.artist_name}（id ${s.artist_id}）` : `id ${s.artist_id}`,
+      }),
+    onSuccess: (_o, s) => {
+      qc.setQueryData<PublisherArtistSuggestion[]>(['publishers', 'artistSuggestions'],
+        old => (old ?? []).filter(x => x.artist_id !== s.artist_id))
+      qc.invalidateQueries({ queryKey: IGNORES_QK })
+      toast.success(tt.radarIgnoredDone(s.artist_name ?? s.entity_name))
     },
   })
 
@@ -631,7 +650,7 @@ export default function PublishersManage() {
       {/* 调研缺口区块：近 30 天有收入、任何主体都未归属、未被忽略的 publisher。
           折叠态显示数量；展开列 top 20，每行可「建主体」（预填 alias）或「忽略」（剔出）。
           忽略名单把已知非 SLG 巨头收掉，让缺口收敛到可操作信号（#84 因噪声下线，现抬回）。 */}
-      {!isLoading && !isError && (gapsLoading || gaps.length > 0 || ignores.length > 0) && (
+      {!isLoading && !isError && (gapsLoading || gaps.length > 0 || gapIgnores.length > 0) && (
         <section className="border border-amber-500/30 bg-amber-500/[0.04] rounded-xl">
           <button
             onClick={() => setGapsOpen(o => !o)}
@@ -697,19 +716,20 @@ export default function PublishersManage() {
                   ))}
                 </div>
               )}
-              {/* 已忽略名单：折叠展示，可恢复（取消忽略后下次扫描重新进缺口）。 */}
-              {ignores.length > 0 && (
+              {/* 已忽略名单：折叠展示，可恢复（取消忽略后下次扫描重新进缺口）。artist_id 类
+                  （雷达账号忽略）另在雷达区展示，这里只列 publisher/app_id 缺口忽略。 */}
+              {gapIgnores.length > 0 && (
                 <div className="mt-3 pt-3 border-t border-amber-500/15">
                   <button
                     onClick={() => setIgnoredOpen(o => !o)}
                     className="inline-flex items-center gap-1.5 text-[11px] text-muted hover:text-secondary transition-colors"
                   >
                     {ignoredOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                    {tt.gapsIgnored(ignores.length)}
+                    {tt.gapsIgnored(gapIgnores.length)}
                   </button>
                   {ignoredOpen && (
                     <div className="mt-2 flex flex-wrap gap-1.5">
-                      {ignores.map(ig => (
+                      {gapIgnores.map(ig => (
                         <span
                           key={ig.id}
                           className="inline-flex items-center gap-1.5 text-[11px] text-secondary bg-elevated border border-default rounded-lg pl-2.5 pr-1 py-1"
@@ -793,6 +813,15 @@ export default function PublishersManage() {
                         </div>
                       </div>
                       <button
+                        onClick={() => ignoreArtistMut.mutate(s)}
+                        disabled={ignoreArtistMut.isPending}
+                        title={tt.radarIgnoreHint}
+                        className="shrink-0 inline-flex items-center gap-1 px-2 py-1.5 rounded-md text-[11px] font-medium text-muted border border-default/60 hover:text-amber-300 hover:border-amber-500/40 transition-colors disabled:opacity-50"
+                      >
+                        <EyeOff size={11} />
+                        {tt.radarIgnore}
+                      </button>
+                      <button
                         onClick={() => wireArtistMut.mutate(s)}
                         disabled={wireArtistMut.isPending}
                         title={tt.radarWireHint}
@@ -803,6 +832,37 @@ export default function PublishersManage() {
                       </button>
                     </div>
                   ))}
+                </div>
+              )}
+              {radarIgnores.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-sky-500/15">
+                  <button
+                    onClick={() => setRadarIgnoredOpen(o => !o)}
+                    className="inline-flex items-center gap-1.5 text-[11px] text-muted hover:text-secondary transition-colors"
+                  >
+                    {radarIgnoredOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                    {tt.radarIgnoredList(radarIgnores.length)}
+                  </button>
+                  {radarIgnoredOpen && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {radarIgnores.map(ig => (
+                        <span
+                          key={ig.id}
+                          className="inline-flex items-center gap-1.5 text-[11px] text-secondary bg-elevated border border-default rounded-lg pl-2.5 pr-1 py-1"
+                        >
+                          <span className="truncate max-w-[180px]">{ig.label ?? ig.value}</span>
+                          <button
+                            onClick={() => restoreMut.mutate(ig)}
+                            disabled={restoreMut.isPending}
+                            title={tt.radarRestoreHint}
+                            className="inline-flex items-center gap-0.5 text-muted hover:text-brand-400 transition-colors disabled:opacity-50"
+                          >
+                            <RotateCcw size={11} />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
