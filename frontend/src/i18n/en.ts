@@ -364,6 +364,7 @@ export const en: Translations = {
     packUngrouped: (n: number) => `Ungrouped (${n})`,
     packEnabledToast: 'Tag-pack view enabled',
     packDisabledToast: 'Tag-pack view disabled',
+    editorPackHint: 'Showing only tags in the selected packs; required tags always shown',
     // aggregation analysis (P4)
     aggTitle: 'Aggregation',
     aggHint: 'Material distribution across structured tags within the current filter scope',

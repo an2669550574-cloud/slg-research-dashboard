@@ -1,7 +1,9 @@
+import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Asterisk, Calendar } from 'lucide-react'
+import { Asterisk, Calendar, Layers } from 'lucide-react'
 import { tagsApi } from '../lib/api'
 import { useT } from '../i18n'
+import { useLocalStorageState } from '../lib/hooks'
 import type { TagDimension, MaterialTagValueItem, MaterialTagValueInput } from '../lib/types'
 
 /** 表单内的结构化标签选择态：维度 id → 已选 option(text) / 日期(date)。 */
@@ -62,6 +64,42 @@ export function StructuredTagEditor({ materialType, appId, value, onChange }: Pr
     queryFn: () => tagsApi.listDimensions(materialType || undefined, appId || undefined),
   })
 
+  // ── 标签包多选过滤：维度多的产品勾包收窄编辑器，不再一屏铺满全部标签 ──
+  // 跟随该产品的包视图开关（与素材库同一开关、同一 queryKey 共享缓存）；
+  // 不勾任何包 = 现状全显。注意：所有 hooks 必须在下方 early return 之前。
+  const { data: packSetting } = useQuery({
+    queryKey: ['tagPackSetting', appId],
+    queryFn: () => tagsApi.getPackSetting(appId!),
+    enabled: !!appId,
+  })
+  const { data: packs = [] } = useQuery({
+    queryKey: ['tagPacks', appId],
+    queryFn: () => tagsApi.listPacks(appId),
+    enabled: !!appId && !!packSetting?.enabled,
+  })
+  // 勾选记忆按产品分槽存一个固定 key（hook 的 key 只在挂载时读一次，不能动态拼 appId）
+  const [packSelMap, setPackSelMap] = useLocalStorageState<Record<string, number[]>>('mat.editorPacks', {})
+  const packsOn = !!appId && !!packSetting?.enabled && packs.length > 0
+  // 被删的包自动失效：与在世包求交集
+  const selectedPackIds = useMemo(() => {
+    if (!packsOn) return []
+    const alive = new Set(packs.map(p => p.id))
+    return (packSelMap[appId!] ?? []).filter(id => alive.has(id))
+  }, [packsOn, packs, packSelMap, appId])
+  const togglePack = (id: number) => {
+    if (!appId) return
+    const cur = packSelMap[appId] ?? []
+    const next = cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id]
+    setPackSelMap({ ...packSelMap, [appId]: next })
+  }
+  const clearPacks = () => { if (appId) setPackSelMap({ ...packSelMap, [appId]: [] }) }
+  // 勾了包 → 成员维度并集 + 必填维度恒显（否则提交被必填校验卡住却看不见字段）
+  const visibleDims = useMemo(() => {
+    if (!packsOn || selectedPackIds.length === 0) return dims
+    const member = new Set(packs.filter(p => selectedPackIds.includes(p.id)).flatMap(p => p.dimension_ids))
+    return dims.filter(d => member.has(d.id) || d.is_required)
+  }, [dims, packs, packsOn, selectedPackIds])
+
   if (isLoading || dims.length === 0) return null
 
   const toggleOption = (d: TagDimension, optId: number) => {
@@ -81,7 +119,35 @@ export function StructuredTagEditor({ materialType, appId, value, onChange }: Pr
   return (
     <div className="space-y-3 rounded-xl border border-default bg-elevated/30 p-4">
       <div className="eyebrow text-muted">{tm.structuredTagsLabel}</div>
-      {dims.map(d => {
+      {/* 标签包多选过滤：勾包只展示成员标签（并集），必填标签始终显示 */}
+      {packsOn && (
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-default/50 pb-2.5">
+          <span className="flex items-center gap-1 text-[11px] text-muted">
+            <Layers size={12} /> {tm.packSwitchLabel}
+          </span>
+          <button type="button" onClick={clearPacks}
+            className={`px-2.5 py-0.5 rounded-md text-xs border transition-colors ${selectedPackIds.length === 0
+              ? 'bg-accent/15 border-accent/40 text-accent'
+              : 'border-default text-secondary hover:border-strong hover:text-primary'}`}>
+            {tm.packAll}
+          </button>
+          {packs.map(p => {
+            const active = selectedPackIds.includes(p.id)
+            return (
+              <button type="button" key={p.id} onClick={() => togglePack(p.id)} title={p.name}
+                className={`px-2.5 py-0.5 rounded-md text-xs border transition-colors ${active
+                  ? 'bg-accent/15 border-accent/40 text-accent'
+                  : 'border-default text-secondary hover:border-strong hover:text-primary'}`}>
+                {p.name}
+              </button>
+            )
+          })}
+          {selectedPackIds.length > 0 && (
+            <span className="text-[10px] text-muted">{tm.editorPackHint}</span>
+          )}
+        </div>
+      )}
+      {visibleDims.map(d => {
         const sel = value[d.id] ?? { optionIds: [], valueDate: null }
         return (
           <div key={d.id} className="space-y-1.5">
