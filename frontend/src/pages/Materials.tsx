@@ -137,9 +137,25 @@ export default function Materials() {
       toast.success(res.enabled ? t.materials.packEnabledToast : t.materials.packDisabledToast)
     },
   })
+  // 分面维度 query 前置于 hasDimsKey：包成员含选项子集（0047）时要靠它反解父维度
+  const { data: facetDims = [] } = useQuery({
+    queryKey: ['tagDimensions', filterType || 'all', filterGame || 'any'],
+    queryFn: () => tagsApi.listDimensions(filterType || undefined, filterGame || undefined),
+  })
+  // 当前包的成员维度全集 = 整维度 + 选项子集的父维度（「仅看已打标」按维度级判定）
+  const packMemberDimIds = useMemo(() => {
+    if (!currentPack) return null
+    const optDim = new Map(facetDims.flatMap(d => d.options.map(o => [o.id, d.id] as const)))
+    const s = new Set(currentPack.dimension_ids)
+    for (const oid of currentPack.option_ids ?? []) {
+      const did = optDim.get(oid)
+      if (did != null) s.add(did)
+    }
+    return s
+  }, [currentPack, facetDims])
   // 「仅看已打标」请求参数：当前包成员维度 id 排序拼接（稳定 key，兼当 queryKey）
-  const hasDimsKey = currentPack && packTaggedOnly
-    ? [...currentPack.dimension_ids].sort((a, b) => a - b).join(',')
+  const hasDimsKey = packMemberDimIds && packTaggedOnly
+    ? [...packMemberDimIds].sort((a, b) => a - b).join(',')
     : ''
 
   useEffect(() => { setOffset(0) }, [debouncedSearch, filterPlatform, filterType, filterGame, filterTag, facetKey, hasDimsKey, sort])
@@ -197,20 +213,15 @@ export default function Materials() {
   })
 
   // 分面筛选维度（P3 + S3）：跟随类型 + 当前游戏筛选取适用的一级标签；只用文字型(有二级选项)做分面。
-  // 选了游戏时按产品作用域收敛：只显示该游戏可见的维度/选项，与打标签编辑器口径一致。
-  // 与编辑器/表单共享 ['tagDimensions', type, appId] 缓存。零 ST 配额。
-  const { data: facetDims = [] } = useQuery({
-    queryKey: ['tagDimensions', filterType || 'all', filterGame || 'any'],
-    queryFn: () => tagsApi.listDimensions(filterType || undefined, filterGame || undefined),
-  })
+  // 选了游戏时按产品作用域收敛；query 本体已前置到 hasDimsKey 之前（0047）。
   const facetable = facetDims.filter(d => d.value_type === 'text' && d.options.length > 0)
   const toggleFacet = (optId: number) => setFilterOptions(prev => {
     const next = new Set(prev)
     next.has(optId) ? next.delete(optId) : next.add(optId)
     return next
   })
-  // 选包时分面只剩成员维度；其余进「未分组」折叠段（默认收起，防"进包视图就找不到维度"）
-  const packDimIds = currentPack ? new Set(currentPack.dimension_ids) : null
+  // 选包时分面只剩成员维度（整维度 + 选项子集的父维度）；其余进「未分组」折叠段
+  const packDimIds = packMemberDimIds
   const effectiveFacetable = packDimIds ? facetable.filter(d => packDimIds.has(d.id)) : facetable
   const ungroupedFacetable = packDimIds ? facetable.filter(d => !packDimIds.has(d.id)) : []
   const ungroupedActiveCount = ungroupedFacetable.reduce(

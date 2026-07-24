@@ -685,8 +685,10 @@ export interface TagPack {
   name: string
   sort_order: number
   created_at: IsoDateString
-  /** 成员维度 id（全量，不按产品收敛）；浏览态前端自行与可见维度求交集。 */
+  /** 整维度成员 id（含全部二级标签，新增选项自动进包）；浏览态前端自行与可见维度求交集。 */
   dimension_ids: number[]
+  /** 选项子集成员 id（0047）：只含勾中的二级标签，固定名单；其父维度即"部分包含"维度。 */
+  option_ids: number[]
   app_ids: string[]
 }
 
@@ -694,6 +696,7 @@ export interface TagPackCreate {
   name: string
   sort_order?: number
   dimension_ids?: number[]
+  option_ids?: number[]
   app_ids?: string[]
 }
 

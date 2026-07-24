@@ -15,7 +15,7 @@ from app.models.material import Material
 from app.models.tag import (
     TagDimension, TagOption, MaterialTagValue,
     TagDimensionProduct, TagOptionProduct,
-    TagPack, TagPackDimension, TagPackProduct, TagPackSetting,
+    TagPack, TagPackDimension, TagPackOption, TagPackProduct, TagPackSetting,
 )
 from app.schemas import (
     TagDimensionCreate, TagDimensionUpdate, TagDimensionOut,
@@ -344,6 +344,7 @@ async def delete_dimension(dim_id: int, db: AsyncSession = Depends(get_db)):
     )).scalars().all()
     if opt_ids:
         await db.execute(sa_delete(TagOptionProduct).where(TagOptionProduct.option_id.in_(opt_ids)))
+        await db.execute(sa_delete(TagPackOption).where(TagPackOption.option_id.in_(opt_ids)))
     await db.execute(sa_delete(TagOption).where(TagOption.dimension_id == dim_id))
     await db.execute(sa_delete(TagDimensionProduct).where(TagDimensionProduct.dimension_id == dim_id))
     # 标签包成员关系一并摘除（包本身保留，允许空包）
@@ -491,6 +492,56 @@ async def _set_pack_dim_ids(pack_id: int, dim_ids: list[int], db: AsyncSession) 
         db.add(TagPackDimension(pack_id=pack_id, dimension_id=did))
 
 
+async def _pack_opt_ids(pack_ids: list[int], db: AsyncSession) -> dict[int, list[int]]:
+    """{pack_id: [option_id, ...]}（选项子集成员，0047），按加入顺序稳定输出。"""
+    if not pack_ids:
+        return {}
+    rows = (await db.execute(
+        select(TagPackOption.pack_id, TagPackOption.option_id)
+        .where(TagPackOption.pack_id.in_(pack_ids))
+        .order_by(TagPackOption.id)
+    )).all()
+    by_pack: dict[int, list[int]] = {}
+    for pid, oid in rows:
+        by_pack.setdefault(pid, []).append(oid)
+    return by_pack
+
+
+async def _set_pack_opt_ids(pack_id: int, opt_ids: list[int], db: AsyncSession) -> None:
+    """replace-all 重设包的选项子集成员。任一 id 不存在 → 404 整体回滚。"""
+    uniq: list[int] = []
+    seen: set[int] = set()
+    for oid in opt_ids:
+        if oid not in seen:
+            seen.add(oid)
+            uniq.append(oid)
+    if uniq:
+        found = set((await db.execute(
+            select(TagOption.id).where(TagOption.id.in_(uniq))
+        )).scalars().all())
+        missing = [i for i in uniq if i not in found]
+        if missing:
+            raise HTTPException(status_code=404, detail=f"二级标签不存在：{missing}")
+    await db.execute(sa_delete(TagPackOption).where(TagPackOption.pack_id == pack_id))
+    for oid in uniq:
+        db.add(TagPackOption(pack_id=pack_id, option_id=oid))
+
+
+async def _normalize_pack_options(pack_id: int, db: AsyncSession) -> None:
+    """归一：同包同维度「整维度 vs 选项子集」互斥，整维度优先——
+    摘除父维度已整包含的选项子集行。create/update 提交前统一调一次。"""
+    await db.execute(
+        sa_delete(TagPackOption).where(
+            TagPackOption.pack_id == pack_id,
+            TagPackOption.option_id.in_(
+                select(TagOption.id)
+                .join(TagPackDimension, TagPackDimension.dimension_id == TagOption.dimension_id)
+                .where(TagPackDimension.pack_id == pack_id)
+            ),
+        )
+    )
+
+
 async def _pack_app_ids(pack_ids: list[int], db: AsyncSession) -> dict[int, list[str]]:
     """{pack_id: [app_id, ...]}。空列表 = 通用包（无作用域名单）。"""
     if not pack_ids:
@@ -517,9 +568,11 @@ async def _set_pack_app_ids(pack_id: int, app_ids: list[str], db: AsyncSession) 
         db.add(TagPackProduct(pack_id=pack_id, app_id=aid))
 
 
-def _pack_out(p: TagPack, dim_ids: list[int], app_ids: list[str]) -> TagPackOut:
+def _pack_out(p: TagPack, dim_ids: list[int], app_ids: list[str],
+              opt_ids: list[int] | None = None) -> TagPackOut:
     out = TagPackOut.model_validate(p)
     out.dimension_ids = list(dim_ids)
+    out.option_ids = list(opt_ids or [])
     out.app_ids = list(app_ids)
     return out
 
@@ -548,7 +601,11 @@ async def list_packs(app_id: Optional[str] = None, db: AsyncSession = Depends(ge
     if app_id:
         packs = [p for p in packs if not app_map.get(p.id) or app_id in app_map[p.id]]
     dim_map = await _pack_dim_ids([p.id for p in packs], db)
-    return [_pack_out(p, dim_map.get(p.id, []), app_map.get(p.id, [])) for p in packs]
+    opt_map = await _pack_opt_ids([p.id for p in packs], db)
+    return [
+        _pack_out(p, dim_map.get(p.id, []), app_map.get(p.id, []), opt_map.get(p.id, []))
+        for p in packs
+    ]
 
 
 @router.post("/packs", response_model=TagPackOut, status_code=201)
@@ -561,13 +618,17 @@ async def create_pack(data: TagPackCreate, db: AsyncSession = Depends(get_db)):
     db.add(p)
     await db.flush()  # 拿 p.id 写成员/作用域
     await _set_pack_dim_ids(p.id, data.dimension_ids, db)
+    if data.option_ids:
+        await _set_pack_opt_ids(p.id, data.option_ids, db)
+        await _normalize_pack_options(p.id, db)  # 整维度优先：已整包含维度的选项剔除
     if data.app_ids:
         await _set_pack_app_ids(p.id, data.app_ids, db)
     await db.commit()
     await db.refresh(p)
     dim_ids = (await _pack_dim_ids([p.id], db)).get(p.id, [])
+    opt_ids = (await _pack_opt_ids([p.id], db)).get(p.id, [])
     app_ids = (await _pack_app_ids([p.id], db)).get(p.id, [])
-    return _pack_out(p, dim_ids, app_ids)
+    return _pack_out(p, dim_ids, app_ids, opt_ids)
 
 
 @router.put("/packs/reorder", response_model=TagReorderOutput)
@@ -620,6 +681,7 @@ async def update_pack(pack_id: int, data: TagPackUpdate, db: AsyncSession = Depe
     p = await _pack_or_404(pack_id, db)
     patch = data.model_dump(exclude_none=True)
     new_dim_ids = patch.pop("dimension_ids", None)
+    new_opt_ids = patch.pop("option_ids", None)
     new_app_ids = patch.pop("app_ids", None)
     if "name" in patch:
         name = patch["name"].strip()
@@ -631,13 +693,19 @@ async def update_pack(pack_id: int, data: TagPackUpdate, db: AsyncSession = Depe
         p.sort_order = patch["sort_order"]
     if new_dim_ids is not None:
         await _set_pack_dim_ids(pack_id, new_dim_ids, db)
+    if new_opt_ids is not None:
+        await _set_pack_opt_ids(pack_id, new_opt_ids, db)
+    if new_dim_ids is not None or new_opt_ids is not None:
+        # 归一（整维度优先）：升级为整维度的老选项子集、或新子集撞上整维度，都在这里摘掉
+        await _normalize_pack_options(pack_id, db)
     if new_app_ids is not None:
         await _set_pack_app_ids(pack_id, new_app_ids, db)
     await db.commit()
     await db.refresh(p)
     dim_ids = (await _pack_dim_ids([pack_id], db)).get(pack_id, [])
+    opt_ids = (await _pack_opt_ids([pack_id], db)).get(pack_id, [])
     app_ids = (await _pack_app_ids([pack_id], db)).get(pack_id, [])
-    return _pack_out(p, dim_ids, app_ids)
+    return _pack_out(p, dim_ids, app_ids, opt_ids)
 
 
 @router.delete("/packs/{pack_id}")
@@ -649,6 +717,7 @@ async def delete_pack(pack_id: int, db: AsyncSession = Depends(get_db)):
         select(func.count()).select_from(TagPackDimension).where(TagPackDimension.pack_id == pack_id)
     )).scalar() or 0
     await db.execute(sa_delete(TagPackDimension).where(TagPackDimension.pack_id == pack_id))
+    await db.execute(sa_delete(TagPackOption).where(TagPackOption.pack_id == pack_id))
     await db.execute(sa_delete(TagPackProduct).where(TagPackProduct.pack_id == pack_id))
     await db.delete(p)
     await db.commit()
@@ -718,6 +787,7 @@ async def delete_option(opt_id: int, db: AsyncSession = Depends(get_db)):
     )).scalar() or 0
     await db.execute(sa_delete(MaterialTagValue).where(MaterialTagValue.option_id == opt_id))
     await db.execute(sa_delete(TagOptionProduct).where(TagOptionProduct.option_id == opt_id))
+    await db.execute(sa_delete(TagPackOption).where(TagPackOption.option_id == opt_id))
     await db.delete(o)
     await db.commit()
     return {"message": "已删除", "id": opt_id, "removed_material_tags": used}

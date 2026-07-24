@@ -93,10 +93,17 @@ export function StructuredTagEditor({ materialType, appId, value, onChange }: Pr
     setPackSelMap({ ...packSelMap, [appId]: next })
   }
   const clearPacks = () => { if (appId) setPackSelMap({ ...packSelMap, [appId]: [] }) }
-  // 勾了包 → 成员维度并集 + 必填维度恒显（否则提交被必填校验卡住却看不见字段）
+  // 勾了包 → 成员维度并集（整维度 + 选项子集的父维度，0047）+ 必填维度恒显
+  // （否则提交被必填校验卡住却看不见字段）。选项级细化显示在切片 2。
   const visibleDims = useMemo(() => {
     if (!packsOn || selectedPackIds.length === 0) return dims
-    const member = new Set(packs.filter(p => selectedPackIds.includes(p.id)).flatMap(p => p.dimension_ids))
+    const sel = packs.filter(p => selectedPackIds.includes(p.id))
+    const member = new Set(sel.flatMap(p => p.dimension_ids))
+    const optDim = new Map(dims.flatMap(d => d.options.map(o => [o.id, d.id] as const)))
+    for (const oid of sel.flatMap(p => p.option_ids ?? [])) {
+      const did = optDim.get(oid)
+      if (did != null) member.add(did)
+    }
     return dims.filter(d => member.has(d.id) || d.is_required)
   }, [dims, packs, packsOn, selectedPackIds])
 
