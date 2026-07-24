@@ -94,7 +94,7 @@ export function StructuredTagEditor({ materialType, appId, value, onChange }: Pr
   }
   const clearPacks = () => { if (appId) setPackSelMap({ ...packSelMap, [appId]: [] }) }
   // 勾了包 → 成员维度并集（整维度 + 选项子集的父维度，0047）+ 必填维度恒显
-  // （否则提交被必填校验卡住却看不见字段）。选项级细化显示在切片 2。
+  // （否则提交被必填校验卡住却看不见字段）。
   const visibleDims = useMemo(() => {
     if (!packsOn || selectedPackIds.length === 0) return dims
     const sel = packs.filter(p => selectedPackIds.includes(p.id))
@@ -105,6 +105,22 @@ export function StructuredTagEditor({ materialType, appId, value, onChange }: Pr
       if (did != null) member.add(did)
     }
     return dims.filter(d => member.has(d.id) || d.is_required)
+  }, [dims, packs, packsOn, selectedPackIds])
+  // 部分包含维度的允许选项名单（0047）：任一选中包整包含该维度 → 不限制（不进 map）；
+  // 否则 = 各包子集中属于该维度的选项并集。必填维度渲染时豁免（恒显全部选项）。
+  const packOptionAllow = useMemo(() => {
+    if (!packsOn || selectedPackIds.length === 0) return null
+    const sel = packs.filter(p => selectedPackIds.includes(p.id))
+    const whole = new Set(sel.flatMap(p => p.dimension_ids))
+    const optDim = new Map(dims.flatMap(d => d.options.map(o => [o.id, d.id] as const)))
+    const m = new Map<number, Set<number>>()
+    for (const oid of sel.flatMap(p => p.option_ids ?? [])) {
+      const did = optDim.get(oid)
+      if (did == null || whole.has(did)) continue
+      if (!m.has(did)) m.set(did, new Set())
+      m.get(did)!.add(oid)
+    }
+    return m
   }, [dims, packs, packsOn, selectedPackIds])
 
   if (isLoading || dims.length === 0) return null
@@ -186,7 +202,11 @@ export function StructuredTagEditor({ materialType, appId, value, onChange }: Pr
               <p className="text-[11px] text-muted/70">{tm.tagNoOptions}</p>
             ) : (
               <div className="flex flex-wrap gap-1.5">
-                {d.options.map(o => {
+                {(d.is_required ? d.options
+                  : packOptionAllow?.get(d.id)
+                    ? d.options.filter(o => packOptionAllow.get(d.id)!.has(o.id))
+                    : d.options
+                ).map(o => {
                   const active = sel.optionIds.includes(o.id)
                   return (
                     <button type="button" key={o.id} onClick={() => toggleOption(d, o.id)}

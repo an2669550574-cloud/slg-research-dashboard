@@ -50,14 +50,17 @@ function computeRenamePlan(mats: MaterialOut[]): RenamePlanItem[] {
   return plan
 }
 
-/** 分面栏单个维度行：维度名 + 一排可点二级标签 chip（通用组/产品组共用）。 */
-function FacetRow({ d, filterOptions, onToggle }: {
+/** 分面栏单个维度行：维度名 + 一排可点二级标签 chip（通用组/产品组共用）。
+ *  allowedOptions 给定时只渲染名单内选项（标签包「部分包含」维度，0047）。 */
+function FacetRow({ d, filterOptions, onToggle, allowedOptions }: {
   d: TagDimension; filterOptions: Set<number>; onToggle: (id: number) => void
+  allowedOptions?: Set<number> | null
 }) {
+  const options = allowedOptions ? d.options.filter(o => allowedOptions.has(o.id)) : d.options
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <span className="text-[11px] text-secondary min-w-[52px]">{d.name}</span>
-      {d.options.map(o => {
+      {options.map(o => {
         const active = filterOptions.has(o.id)
         return (
           <button key={o.id} onClick={() => onToggle(o.id)} title={o.value}
@@ -152,6 +155,20 @@ export default function Materials() {
       if (did != null) s.add(did)
     }
     return s
+  }, [currentPack, facetDims])
+  // 部分包含维度的允许选项名单（0047）：{dimId: Set<optId>}；整包含维度不进 map = 全显
+  const packOptionAllow = useMemo(() => {
+    if (!currentPack) return null
+    const whole = new Set(currentPack.dimension_ids)
+    const optDim = new Map(facetDims.flatMap(d => d.options.map(o => [o.id, d.id] as const)))
+    const m = new Map<number, Set<number>>()
+    for (const oid of currentPack.option_ids ?? []) {
+      const did = optDim.get(oid)
+      if (did == null || whole.has(did)) continue
+      if (!m.has(did)) m.set(did, new Set())
+      m.get(did)!.add(oid)
+    }
+    return m
   }, [currentPack, facetDims])
   // 「仅看已打标」请求参数：当前包成员维度 id 排序拼接（稳定 key，兼当 queryKey）
   const hasDimsKey = packMemberDimIds && packTaggedOnly
@@ -1090,9 +1107,10 @@ export default function Materials() {
                 </button>
               )}
             </div>
-            {/* 通用维度：常驻显示 */}
+            {/* 通用维度：常驻显示；部分包含维度只显示包内选项（0047） */}
             {facetGroups.universal.map(d => (
-              <FacetRow key={d.id} d={d} filterOptions={filterOptions} onToggle={toggleFacet} />
+              <FacetRow key={d.id} d={d} filterOptions={filterOptions} onToggle={toggleFacet}
+                allowedOptions={packOptionAllow?.get(d.id) ?? null} />
             ))}
             {/* 各产品专属维度：分组折叠（默认收起，含已选项或手动展开则显示） */}
             {facetGroups.groups.map(g => {
@@ -1110,7 +1128,8 @@ export default function Materials() {
                   {open && (
                     <div className="space-y-1.5 mt-1.5">
                       {g.dims.map(d => (
-                        <FacetRow key={d.id} d={d} filterOptions={filterOptions} onToggle={toggleFacet} />
+                        <FacetRow key={d.id} d={d} filterOptions={filterOptions} onToggle={toggleFacet}
+                          allowedOptions={packOptionAllow?.get(d.id) ?? null} />
                       ))}
                     </div>
                   )}
