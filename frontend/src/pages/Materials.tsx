@@ -92,7 +92,8 @@ export default function Materials() {
   const [offset, setOffset] = useState(0)
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState(emptyForm)
-  const [mode, setMode] = useState<'link' | 'upload'>('link')
+  // 默认「上传文件」：团队实际几乎只用上传，外链既少用也拉不回视频文件，故排后
+  const [mode, setMode] = useState<'link' | 'upload'>('upload')
   const [editing, setEditing] = useState<MaterialOut | null>(null)
   const [tagValues, setTagValues] = useState<TagValueState>(emptyTagState())
   const [analyzing, setAnalyzing] = useState<MaterialOut | null>(null)
@@ -274,7 +275,7 @@ export default function Materials() {
 
   const closeForm = () => {
     setShowForm(false); setEditing(null)
-    setForm(emptyForm); setMode('link'); setFiles([]); setQueue([])
+    setForm(emptyForm); setMode('upload'); setFiles([]); setQueue([])
     setTagValues(emptyTagState())
     if (fileInputRef.current) fileInputRef.current.value = ''
     if (folderInputRef.current) folderInputRef.current.value = ''
@@ -775,7 +776,7 @@ export default function Materials() {
 
           {!editing && (
             <div className="inline-flex gap-1 bg-elevated rounded-lg p-1 border border-default">
-              {(['link', 'upload'] as const).map(md => (
+              {(['upload', 'link'] as const).map(md => (
                 <button type="button" key={md} onClick={() => setMode(md)}
                   className={`px-3.5 py-1.5 rounded-md font-data text-xs transition-colors ${mode === md ? 'bg-accent text-white' : 'text-secondary hover:text-primary'}`}>
                   {md === 'link' ? t.materials.sourceLink : t.materials.sourceUpload}
